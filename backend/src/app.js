@@ -16,6 +16,10 @@ const { getWhatsAppHealth } = require('./services/whatsappService')
 
 const app = express()
 
+// Trust the first proxy (Railway's load balancer) so req.secure is correct.
+// Required for session cookie.secure to work in production.
+app.set('trust proxy', 1)
+
 // ── Middleware ──────────────────────────────────────────────────────────────
 
 // CORS — credentials: true is required so the browser sends the session cookie
@@ -53,7 +57,7 @@ app.use(session({
     // SameSite=None + Secure=true is required so the session cookie reaches the backend.
     secure: process.env.NODE_ENV === 'production',
     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 8 * 60 * 60 * 1000, // Session lasts 8 hours
+    maxAge: 1000 * 60 * 60 * 24 * 7, // Session lasts 7 days
   },
 }))
 
