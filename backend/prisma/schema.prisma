@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// Skincare enquiries from TikTok / Instagram visitors
+model Lead {
+  id             String   @id @default(cuid())
+  fullName       String
+  email          String?
+  phone          String?
+  sourcePlatform String   // TikTok | Instagram | Other
+  sourceType     String?  // bio_form | dm | comment | story_reply | manual
+  handle         String?  // Instagram / TikTok username
+  campaign       String?  // campaign slug from bio link or ad
+  intentTag      String?  // free-form intent label
+  skinConcern    String   // acne | dark_spots | stretch_marks | dry_skin | hyperpigmentation | body_care | other
+  message        String
+  status         String   @default("new") // new | contacted | engaged | interested | closed
+  priority       String   @default("low") // high | medium | low
+  suggestedReply String?  // auto-generated reply message on lead creation
+  followUp1      DateTime? // +1 hour
+  followUp2      DateTime? // +6 hours
+  followUp3      DateTime? // +24 hours
+  initialMessageSent  Boolean   @default(false) // auto initial message sent?
+  followUp1Sent       Boolean   @default(false) // scheduler alerted for follow-up 1?
+  followUp2Sent       Boolean   @default(false) // scheduler alerted for follow-up 2?
+  followUp3Sent       Boolean   @default(false) // scheduler alerted for follow-up 3?
+  initialReplySentAt  DateTime?                 // when initial reply was executed via CRM
+  followUp1SentAt     DateTime?                 // when follow-up 1 was executed via CRM
+  followUp2SentAt     DateTime?                 // when follow-up 2 was executed via CRM
+  followUp3SentAt     DateTime?                 // when follow-up 3 was executed via CRM
+  lastMessageSentAt    DateTime?                // timestamp of last executed send
+  lastMessageChannel   String?                  // channel of last executed send (e.g. telegram)
+  lastDeliveryChannel  String?                  // actual channel used to reach lead: email | whatsapp | telegram_fallback
+  lastDeliveredAt      DateTime?                // when the message was actually delivered to the lead
+  lastDeliveryStatus   String?                  // sent | skipped | failed
+  autoReplyEnabled    Boolean   @default(true)  // whether auto-reply is enabled for this lead
+  replyLock           Boolean   @default(false) // transient lock held by auto-trigger during send
+  utmSource      String?
+  replies        Reply[]
+  utmMedium      String?
+  utmCampaign    String?
+  utmContent     String?
+  utmTerm        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("leads")
+}
+
+// Academy masterclass sign-ups
+model AcademyRegistration {
+  id              String   @id @default(cuid())
+  fullName        String
+  email           String
+  phone           String?
+  businessType    String?
+  experienceLevel String   // beginner | intermediate | advanced
+  goals           String
+  sourcePlatform  String   // TikTok | Instagram | Other
+  sourceType      String?  // bio_form | dm | comment | story_reply | manual
+  handle          String?  // Instagram / TikTok username
+  campaign        String?
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
+  utmContent      String?
+  utmTerm         String?
+  status          String   @default("new") // new | contacted | paid | onboarded | closed
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("academy_registrations")
+}
+
+// Incoming replies from leads (via webhook or manual CRM entry)
+model Reply {
+  id             String   @id @default(cuid())
+  leadId         String
+  message        String
+  channel        String   // telegram | instagram | tiktok | manual
+  detectedIntent String?  // PRICE | HOT | DELAY | DEAD | UNKNOWN
+  createdAt      DateTime @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id])
+
+  @@map("replies")
+}
+
+// Tracks every outbound message sent to a lead or registrant
+model MessageLog {
+  id               String   @id @default(cuid())
+  type             String   // lead | academy
+  recordId         String   // id of the Lead or AcademyRegistration
+  channel          String   // telegram | email | whatsapp | sms | other
+  status           String   // sent | failed | skipped
+  providerResponse String?  // raw JSON response from provider on success
+  error            String?  // error message when status is failed
+  auto             Boolean  @default(false)  // true when triggered by auto-trigger service
+  triggerReason    String?                   // initial_auto | fu1_auto | manual
+  recipient        String?                   // actual recipient: email address, phone, or 'telegram_admin'
+  deliveryChannel  String?                   // actual channel used: email | whatsapp | telegram_fallback
+  fallbackUsed     Boolean  @default(false)  // true when telegram admin fallback was used instead of direct channel
+  createdAt        DateTime @default(now())
+
+  @@map("message_logs")
+}

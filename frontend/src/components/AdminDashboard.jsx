@@ -1,0 +1,919 @@
+import { useState, useEffect, useCallback } from 'react'
+import {
+  fetchStats,
+  fetchLeads,
+  fetchRegistrations,
+  updateLeadStatus,
+  updateRegistrationStatus,
+  sendInitialReply,
+  sendFollowUp,
+} from '../api/index.js'
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+const LEAD_STATUSES = ['new', 'contacted', 'engaged', 'interested', 'closed']
+const ACADEMY_STATUSES = ['new', 'contacted', 'paid', 'onboarded', 'closed']
+const PLATFORMS = ['TikTok', 'Instagram', 'Other']
+const SOURCE_TYPES = ['bio_form', 'dm', 'comment', 'story_reply', 'manual']
+const PRIORITIES = ['high', 'medium', 'low']
+// Statuses that block CRM-triggered sends (mirrors backend STOP_STATUSES)
+const STOP_STATUSES = ['engaged', 'interested', 'closed']
+
+const STATUS_STYLE = {
+  new: 'bg-gray-100 text-gray-700',
+  contacted: 'bg-blue-100 text-blue-700',
+  engaged: 'bg-yellow-100 text-yellow-800',
+  interested: 'bg-green-100 text-green-700',
+  // legacy statuses kept for existing data
+  qualified: 'bg-yellow-100 text-yellow-800',
+  converted: 'bg-green-100 text-green-700',
+  paid: 'bg-emerald-100 text-emerald-700',
+  onboarded: 'bg-purple-100 text-purple-700',
+  closed: 'bg-red-100 text-red-600',
+}
+
+const PRIORITY_STYLE = {
+  high: 'bg-red-100 text-red-700',
+  medium: 'bg-yellow-100 text-yellow-700',
+  low: 'bg-gray-100 text-gray-500',
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function StatusBadge({ status }) {
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${STATUS_STYLE[status] || 'bg-gray-100 text-gray-600'}`}>
+      {status}
+    </span>
+  )
+}
+
+function PriorityBadge({ priority }) {
+  const label = priority || 'low'
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${PRIORITY_STYLE[label] || 'bg-gray-100 text-gray-500'}`}>
+      {label}
+    </span>
+  )
+}
+
+function fmtDate(iso) {
+  return new Date(iso).toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return null
+  return new Date(iso).toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+/** Returns the earliest upcoming follow-up time, or null if all have passed. */
+function nextFollowUp(lead) {
+  const now = Date.now()
+  return [lead.followUp1, lead.followUp2, lead.followUp3]
+    .filter(Boolean)
+    .map((t) => new Date(t))
+    .filter((t) => t.getTime() > now)
+    .sort((a, b) => a - b)[0] || null
+}
+
+/**
+ * Returns follow-up status for the "Follow-up Due" column.
+ * Checks sent flags so completed slots are not shown as overdue.
+ * Returns { type: 'overdue'|'upcoming', time: Date } or null.
+ */
+function followUpStatus(lead) {
+  const now = Date.now()
+  const slots = [
+    { time: lead.followUp1, sent: lead.followUp1Sent || !!lead.followUp1SentAt },
+    { time: lead.followUp2, sent: lead.followUp2Sent || !!lead.followUp2SentAt },
+    { time: lead.followUp3, sent: lead.followUp3Sent || !!lead.followUp3SentAt },
+  ]
+  // Earliest overdue slot that hasn't been sent
+  const overdue = slots
+    .filter((s) => s.time && !s.sent && new Date(s.time).getTime() <= now)
+    .sort((a, b) => new Date(a.time) - new Date(b.time))[0]
+  if (overdue) return { type: 'overdue', time: overdue.time }
+  // Next upcoming slot that hasn't been sent
+  const upcoming = slots
+    .filter((s) => s.time && !s.sent && new Date(s.time).getTime() > now)
+    .sort((a, b) => new Date(a.time) - new Date(b.time))[0]
+  if (upcoming) return { type: 'upcoming', time: upcoming.time }
+  return null
+}
+
+// ── Overview Tab ─────────────────────────────────────────────────────────────
+
+function OverviewTab() {
+  const [stats, setStats] = useState(null)
+  const [recentLeads, setRecentLeads] = useState([])
+  const [recentAcademy, setRecentAcademy] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    Promise.all([
+      fetchStats(),
+      fetchLeads({ limit: 5 }),
+      fetchRegistrations({ limit: 5 }),
+    ])
+      .then(([s, l, a]) => {
+        setStats(s.data)
+        setRecentLeads(l.data)
+        setRecentAcademy(a.data)
+      })
+      .catch(() => setError('Failed to load overview data'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="py-12 text-center text-gray-400 text-sm">Loading...</div>
+  if (error) return <div className="py-12 text-center text-red-500 text-sm">{error}</div>
+
+  return (
+    <div className="space-y-8">
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <StatCard label="Total Leads" value={stats.leads.total} color="brand" />
+        <StatCard label="Total Academy" value={stats.academy.total} color="purple" />
+        <StatCard
+          label="Leads Interested"
+          value={(stats.leads.byStatus?.interested || 0) + (stats.leads.byStatus?.converted || 0)}
+          color="green"
+        />
+        <StatCard
+          label="Academy Paid"
+          value={stats.academy.byStatus?.paid || 0}
+          color="emerald"
+        />
+      </div>
+
+      {/* Status breakdowns */}
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+        <StatusBreakdown
+          title="Leads by Status"
+          byStatus={stats.leads.byStatus}
+          statuses={LEAD_STATUSES}
+        />
+        <StatusBreakdown
+          title="Academy by Status"
+          byStatus={stats.academy.byStatus}
+          statuses={ACADEMY_STATUSES}
+        />
+      </div>
+
+      {/* Recent entries */}
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+        <RecentList title="Latest Leads" items={recentLeads} type="lead" />
+        <RecentList title="Latest Academy" items={recentAcademy} type="academy" />
+      </div>
+    </div>
+  )
+}
+
+function StatCard({ label, value, color }) {
+  const colors = {
+    brand: 'bg-brand-50 border-brand-200 text-brand-600',
+    purple: 'bg-purple-50 border-purple-200 text-purple-600',
+    green: 'bg-green-50 border-green-200 text-green-600',
+    emerald: 'bg-emerald-50 border-emerald-200 text-emerald-600',
+  }
+  return (
+    <div className={`rounded-xl border p-4 ${colors[color] || colors.brand}`}>
+      <p className="text-xs font-medium uppercase tracking-wide opacity-70">{label}</p>
+      <p className="mt-1 text-3xl font-bold">{value}</p>
+    </div>
+  )
+}
+
+function StatusBreakdown({ title, byStatus, statuses }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <h3 className="mb-3 text-sm font-semibold text-gray-700">{title}</h3>
+      <div className="space-y-2">
+        {statuses.map((s) => {
+          const count = byStatus?.[s] || 0
+          return (
+            <div key={s} className="flex items-center justify-between text-sm">
+              <StatusBadge status={s} />
+              <span className="font-medium text-gray-700">{count}</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function RecentList({ title, items, type }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <h3 className="mb-3 text-sm font-semibold text-gray-700">{title}</h3>
+      {items.length === 0 ? (
+        <p className="text-xs text-gray-400">No entries yet</p>
+      ) : (
+        <ul className="divide-y divide-gray-100">
+          {items.map((item) => (
+            <li key={item.id} className="py-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-gray-800">{item.fullName}</p>
+                  <p className="truncate text-xs text-gray-400">
+                    {type === 'lead' ? item.skinConcern : item.experienceLevel} · {item.sourcePlatform}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <StatusBadge status={item.status} />
+                  <span className="text-xs text-gray-400">{fmtDate(item.createdAt)}</span>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+// ── Leads Tab ────────────────────────────────────────────────────────────────
+
+function LeadsTab() {
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [sourceFilter, setSourceFilter] = useState('')
+  const [sourceTypeFilter, setSourceTypeFilter] = useState('')
+  const [priorityFilter, setPriorityFilter] = useState('')
+  const [intentTagFilter, setIntentTagFilter] = useState('')
+  const [needsFollowUp, setNeedsFollowUp] = useState(false)
+  const [page, setPage] = useState(1)
+  const [result, setResult] = useState({ data: [], total: 0, pages: 1 })
+  const [loading, setLoading] = useState(true)
+  const [updatingId, setUpdatingId] = useState(null)
+  const [sendingId, setSendingId] = useState(null)
+  const [expandedId, setExpandedId] = useState(null)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    fetchLeads({
+      search,
+      status: statusFilter,
+      source: sourceFilter,
+      sourceType: sourceTypeFilter,
+      priority: priorityFilter,
+      intentTag: intentTagFilter,
+      needsFollowUp: needsFollowUp ? 'true' : undefined,
+      page,
+      limit: 15,
+    })
+      .then(setResult)
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [search, statusFilter, sourceFilter, sourceTypeFilter, priorityFilter, intentTagFilter, needsFollowUp, page])
+
+  useEffect(() => { load() }, [load])
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1) }, [search, statusFilter, sourceFilter, sourceTypeFilter, priorityFilter, intentTagFilter, needsFollowUp])
+
+  async function handleStatusChange(id, status) {
+    setUpdatingId(id)
+    try {
+      await updateLeadStatus(id, status)
+      load()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  async function handleSend(leadId, action) {
+    const key = `${action}-${leadId}`
+    setSendingId(key)
+    try {
+      if (action === 'initial') await sendInitialReply(leadId)
+      else if (action === 'fu1') await sendFollowUp(leadId, 1)
+      else if (action === 'fu2') await sendFollowUp(leadId, 2)
+      else if (action === 'fu3') await sendFollowUp(leadId, 3)
+      load()
+    } catch (e) {
+      console.error('[Send]', e?.message || e)
+    } finally {
+      setSendingId(null)
+    }
+  }
+
+  function clearAll() {
+    setPriorityFilter('')
+    setStatusFilter('')
+    setSourceFilter('')
+    setSourceTypeFilter('')
+    setIntentTagFilter('')
+    setSearch('')
+    setNeedsFollowUp(false)
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Quick-view buttons */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => { setPriorityFilter('high'); setStatusFilter(''); setNeedsFollowUp(false) }}
+          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${priorityFilter === 'high' && !needsFollowUp ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+        >
+          High Priority
+        </button>
+        <button
+          onClick={() => { setNeedsFollowUp(true); setStatusFilter(''); setPriorityFilter('') }}
+          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${needsFollowUp ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+        >
+          Follow-up Due Now
+        </button>
+        <button
+          onClick={clearAll}
+          className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-400 hover:bg-gray-50 transition-colors"
+        >
+          Clear all
+        </button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-2">
+        <input
+          type="text"
+          placeholder="Search name, email, phone…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-200 flex-1 min-w-[200px]"
+        />
+        <select
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(e.target.value)}
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand-400"
+        >
+          <option value="">All priorities</option>
+          {PRIORITIES.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand-400"
+        >
+          <option value="">All statuses</option>
+          {LEAD_STATUSES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value)}
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand-400"
+        >
+          <option value="">All platforms</option>
+          {PLATFORMS.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+        <select
+          value={sourceTypeFilter}
+          onChange={(e) => setSourceTypeFilter(e.target.value)}
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand-400"
+        >
+          <option value="">All source types</option>
+          {SOURCE_TYPES.map((t) => (
+            <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          placeholder="Intent tag…"
+          value={intentTagFilter}
+          onChange={(e) => setIntentTagFilter(e.target.value)}
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand-400 w-32"
+        />
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+              <th className="px-4 py-3">Name</th>
+              <th className="px-4 py-3">Contact</th>
+              <th className="px-4 py-3">Source</th>
+              <th className="px-4 py-3">Concern</th>
+              <th className="px-4 py-3">Priority</th>
+              <th className="px-4 py-3">Follow-up Due</th>
+              <th className="px-4 py-3">Date</th>
+              <th className="px-4 py-3">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {loading ? (
+              <tr>
+                <td colSpan={8} className="py-8 text-center text-gray-400">Loading…</td>
+              </tr>
+            ) : result.data.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="py-8 text-center text-gray-400">No leads found</td>
+              </tr>
+            ) : result.data.map((lead) => {
+              const fup = followUpStatus(lead)
+              const isExpanded = expandedId === lead.id
+              return (
+                <>
+                  <tr
+                    key={lead.id}
+                    className={`hover:bg-gray-50 transition-colors cursor-pointer${fup?.type === 'overdue' ? ' bg-red-50/30' : ''}`}
+                    onClick={() => setExpandedId(isExpanded ? null : lead.id)}
+                  >
+                    <td className="px-4 py-3 font-medium text-gray-800">
+                      <div className="flex items-center gap-1">
+                        <span>{lead.fullName}</span>
+                        {lead.suggestedReply && (
+                          <span className="text-gray-300 text-xs" title="Has suggested reply">💬</span>
+                        )}
+                      </div>
+                      {lead.intentTag && <div className="text-xs text-gray-400 mt-0.5">{lead.intentTag}</div>}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500">
+                      <div>{lead.email || '—'}</div>
+                      {lead.phone && <div className="text-xs">{lead.phone}</div>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="text-gray-600">{lead.sourcePlatform}</div>
+                      {lead.sourceType && <div className="text-xs text-gray-400">{lead.sourceType.replace(/_/g, ' ')}</div>}
+                      {lead.handle && <div className="text-xs text-gray-400">@{lead.handle}</div>}
+                      {lead.campaign && <div className="text-xs text-gray-400">{lead.campaign}</div>}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600 capitalize">{lead.skinConcern?.replace(/_/g, ' ')}</td>
+                    <td className="px-4 py-3"><PriorityBadge priority={lead.priority} /></td>
+                    <td className="px-4 py-3 text-xs">
+                      {fup?.type === 'overdue' ? (
+                        <span className="inline-flex items-center gap-1 flex-wrap">
+                          <span className="text-red-600 font-semibold">{fmtDateTime(fup.time)}</span>
+                          <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-bold text-red-600 uppercase tracking-wide">overdue</span>
+                        </span>
+                      ) : fup?.type === 'upcoming' ? (
+                        <span className="text-orange-500 font-medium">{fmtDateTime(fup.time)}</span>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-400 text-xs">{fmtDate(lead.createdAt)}</td>
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <select
+                        value={lead.status}
+                        disabled={updatingId === lead.id}
+                        onChange={(e) => handleStatusChange(lead.id, e.target.value)}
+                        className="rounded border border-gray-200 bg-white px-2 py-1 text-xs outline-none focus:border-brand-400 disabled:opacity-50"
+                      >
+                        {LEAD_STATUSES.map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                  {isExpanded && (
+                    <tr key={`${lead.id}-detail`} className="bg-blue-50">
+                      <td colSpan={8} className="px-4 py-3 space-y-3">
+                        {/* Suggested Reply */}
+                        {lead.suggestedReply ? (
+                          <div className="flex items-start gap-3">
+                            <span className="shrink-0 text-xs font-semibold text-blue-600 uppercase tracking-wide pt-0.5">Suggested Reply</span>
+                            <p className="text-sm text-blue-900 leading-snug flex-1">{lead.suggestedReply}</p>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lead.suggestedReply) }}
+                              className="shrink-0 rounded border border-blue-200 px-2 py-0.5 text-xs text-blue-600 hover:bg-blue-100 transition-colors"
+                            >
+                              Copy Reply
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-blue-400 italic">No suggested reply for this lead</p>
+                        )}
+
+                        {/* Follow-up schedule with sent / overdue indicators */}
+                        {(lead.followUp1 || lead.followUp2 || lead.followUp3) && (
+                          <div className="flex flex-wrap gap-4 text-xs">
+                            {[
+                              { label: '1h',  time: lead.followUp1, sent: lead.followUp1Sent || !!lead.followUp1SentAt, sentAt: lead.followUp1SentAt },
+                              { label: '6h',  time: lead.followUp2, sent: lead.followUp2Sent || !!lead.followUp2SentAt, sentAt: lead.followUp2SentAt },
+                              { label: '24h', time: lead.followUp3, sent: lead.followUp3Sent || !!lead.followUp3SentAt, sentAt: lead.followUp3SentAt },
+                            ].filter((s) => s.time).map(({ label, time, sent, sentAt }) => {
+                              const isOverdue = !sent && new Date(time).getTime() <= Date.now()
+                              return (
+                                <span
+                                  key={label}
+                                  className={
+                                    sent
+                                      ? 'text-gray-400 line-through'
+                                      : isOverdue
+                                        ? 'text-red-600 font-semibold'
+                                        : 'text-blue-700'
+                                  }
+                                >
+                                  {label} → {fmtDateTime(time)}
+                                  {sent
+                                    ? ` ✓${sentAt ? ` (${fmtDateTime(sentAt)})` : ''}`
+                                    : isOverdue ? ' ●' : ''}
+                                </span>
+                              )
+                            })}
+                          </div>
+                        )}
+
+                        {/* Last message sent info */}
+                        {(lead.lastMessageSentAt || lead.initialReplySentAt) && (
+                          <div className="text-xs text-gray-500 flex flex-wrap gap-3">
+                            {lead.initialReplySentAt && (
+                              <span>
+                                <span className="font-medium text-gray-600">Initial sent:</span>{' '}
+                                {fmtDateTime(lead.initialReplySentAt)}
+                              </span>
+                            )}
+                            {lead.lastMessageSentAt && (
+                              <span>
+                                <span className="font-medium text-gray-600">Last sent:</span>{' '}
+                                {fmtDateTime(lead.lastMessageSentAt)}
+                                {lead.lastMessageChannel && (
+                                  <span className="ml-1 rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500 capitalize">
+                                    {lead.lastMessageChannel}
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Send Actions */}
+                        <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          <span className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Send:</span>
+
+                          {/* Send Initial */}
+                          {(() => {
+                            const isSent = !!(lead.initialReplySentAt || lead.initialMessageSent)
+                            const isBlocked = STOP_STATUSES.includes(lead.status)
+                            const isSending = sendingId === `initial-${lead.id}`
+                            const disabled = isSent || isBlocked || isSending
+                            return (
+                              <button
+                                disabled={disabled}
+                                onClick={() => handleSend(lead.id, 'initial')}
+                                title={
+                                  isSent    ? `Sent ${fmtDateTime(lead.initialReplySentAt) || ''}` :
+                                  isBlocked ? `Blocked — lead is ${lead.status}` :
+                                  'Send initial reply via Telegram'
+                                }
+                                className={`rounded border px-2 py-0.5 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
+                                  isSent    ? 'border-green-200 bg-green-50 text-green-700 opacity-70' :
+                                  isBlocked ? 'border-gray-200 text-gray-400 opacity-50' :
+                                              'border-brand-300 text-brand-700 hover:bg-brand-50'
+                                }`}
+                              >
+                                {isSending ? '…' : isSent ? '✓ Initial Sent' : 'Send Initial'}
+                              </button>
+                            )
+                          })()}
+
+                          {/* Send FU1 / FU2 / FU3 */}
+                          {[
+                            { key: 'fu1', label: 'FU1', num: 1, time: lead.followUp1, sentAt: lead.followUp1SentAt, boolSent: lead.followUp1Sent },
+                            { key: 'fu2', label: 'FU2', num: 2, time: lead.followUp2, sentAt: lead.followUp2SentAt, boolSent: lead.followUp2Sent },
+                            { key: 'fu3', label: 'FU3', num: 3, time: lead.followUp3, sentAt: lead.followUp3SentAt, boolSent: lead.followUp3Sent },
+                          ].map(({ key, label, time, sentAt, boolSent }) => {
+                            const isSent      = !!(sentAt || boolSent)
+                            const isDue       = time && new Date(time).getTime() <= Date.now()
+                            const isBlocked   = STOP_STATUSES.includes(lead.status)
+                            const notScheduled = !time
+                            const notDue      = time && !isDue
+                            const isSending   = sendingId === `${key}-${lead.id}`
+                            const disabled    = isSent || isBlocked || notScheduled || notDue || isSending
+
+                            let btnLabel = `Send ${label}`
+                            if (isSent)        btnLabel = `✓ ${label} Sent`
+                            else if (notScheduled) btnLabel = `${label} N/A`
+                            else if (notDue)   btnLabel = `${label} Not Due`
+                            else if (isBlocked) btnLabel = `${label} Blocked`
+
+                            return (
+                              <button
+                                key={key}
+                                disabled={disabled}
+                                onClick={() => handleSend(lead.id, key)}
+                                title={
+                                  isSent        ? `Sent ${fmtDateTime(sentAt)}` :
+                                  notDue        ? `Due ${fmtDateTime(time)}` :
+                                  isBlocked     ? `Blocked — lead is ${lead.status}` :
+                                  notScheduled  ? 'No follow-up scheduled' :
+                                  'Send via Telegram'
+                                }
+                                className={`rounded border px-2 py-0.5 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
+                                  isSent        ? 'border-green-200 bg-green-50 text-green-700 opacity-70' :
+                                  disabled      ? 'border-gray-200 text-gray-400 opacity-50' :
+                                                  'border-purple-300 text-purple-700 hover:bg-purple-50'
+                                }`}
+                              >
+                                {isSending ? '…' : btnLabel}
+                              </button>
+                            )
+                          })}
+                        </div>
+
+                        {/* Quick action buttons */}
+                        <div className="flex flex-wrap items-center gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+                          <span className="text-xs text-gray-400 font-medium">Quick action:</span>
+                          {[
+                            { s: 'contacted', label: 'Mark Contacted', cls: 'border-blue-200 text-blue-600 hover:bg-blue-100' },
+                            { s: 'engaged', label: 'Mark Engaged', cls: 'border-yellow-200 text-yellow-700 hover:bg-yellow-50' },
+                            { s: 'interested', label: 'Mark Interested', cls: 'border-green-200 text-green-700 hover:bg-green-50' },
+                            { s: 'closed', label: 'Mark Closed', cls: 'border-red-200 text-red-500 hover:bg-red-50' },
+                          ].map(({ s, label, cls }) => (
+                            <button
+                              key={s}
+                              disabled={updatingId === lead.id || lead.status === s}
+                              onClick={() => handleStatusChange(lead.id, s)}
+                              className={`rounded border px-2 py-0.5 text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${cls}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      <Pagination
+        page={page}
+        pages={result.pages}
+        total={result.total}
+        onPage={setPage}
+      />
+    </div>
+  )
+}
+
+// ── Academy Tab ───────────────────────────────────────────────────────────────
+
+function AcademyTab() {
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [sourceFilter, setSourceFilter] = useState('')
+  const [sourceTypeFilter, setSourceTypeFilter] = useState('')
+  const [page, setPage] = useState(1)
+  const [result, setResult] = useState({ data: [], total: 0, pages: 1 })
+  const [loading, setLoading] = useState(true)
+  const [updatingId, setUpdatingId] = useState(null)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    fetchRegistrations({ search, status: statusFilter, source: sourceFilter, sourceType: sourceTypeFilter, page, limit: 15 })
+      .then(setResult)
+      .catch(console.error)
+      .finally(() => setLoading(false))
+  }, [search, statusFilter, sourceFilter, sourceTypeFilter, page])
+
+  useEffect(() => { load() }, [load])
+
+  useEffect(() => { setPage(1) }, [search, statusFilter, sourceFilter, sourceTypeFilter])
+
+  async function handleStatusChange(id, status) {
+    setUpdatingId(id)
+    try {
+      await updateRegistrationStatus(id, status)
+      load()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Filters */}
+      <div className="flex flex-wrap gap-2">
+        <input
+          type="text"
+          placeholder="Search name, email, phone…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-200 flex-1 min-w-[200px]"
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand-400"
+        >
+          <option value="">All statuses</option>
+          {ACADEMY_STATUSES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value)}
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand-400"
+        >
+          <option value="">All platforms</option>
+          {PLATFORMS.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+        <select
+          value={sourceTypeFilter}
+          onChange={(e) => setSourceTypeFilter(e.target.value)}
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand-400"
+        >
+          <option value="">All source types</option>
+          {SOURCE_TYPES.map((t) => (
+            <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+              <th className="px-4 py-3">Name</th>
+              <th className="px-4 py-3">Email</th>
+              <th className="px-4 py-3">Level</th>
+              <th className="px-4 py-3">Source</th>
+              <th className="px-4 py-3">Date</th>
+              <th className="px-4 py-3">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {loading ? (
+              <tr>
+                <td colSpan={6} className="py-8 text-center text-gray-400">Loading…</td>
+              </tr>
+            ) : result.data.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="py-8 text-center text-gray-400">No registrations found</td>
+              </tr>
+            ) : result.data.map((reg) => (
+              <tr key={reg.id} className="hover:bg-gray-50 transition-colors">
+                <td className="px-4 py-3 font-medium text-gray-800">
+                  {reg.fullName}
+                  {reg.businessType && (
+                    <div className="text-xs text-gray-400">{reg.businessType}</div>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-gray-500">
+                  <div>{reg.email}</div>
+                  {reg.phone && <div className="text-xs">{reg.phone}</div>}
+                </td>
+                <td className="px-4 py-3 text-gray-600 capitalize">{reg.experienceLevel}</td>
+                <td className="px-4 py-3">
+                  <div className="text-gray-600">{reg.sourcePlatform}</div>
+                  {reg.sourceType && <div className="text-xs text-gray-400">{reg.sourceType.replace(/_/g, ' ')}</div>}
+                  {reg.handle && <div className="text-xs text-gray-400">@{reg.handle}</div>}
+                  {reg.campaign && <div className="text-xs text-gray-400">{reg.campaign}</div>}
+                </td>
+                <td className="px-4 py-3 text-gray-400 text-xs">{fmtDate(reg.createdAt)}</td>
+                <td className="px-4 py-3">
+                  <select
+                    value={reg.status}
+                    disabled={updatingId === reg.id}
+                    onChange={(e) => handleStatusChange(reg.id, e.target.value)}
+                    className="rounded border border-gray-200 bg-white px-2 py-1 text-xs outline-none focus:border-brand-400 disabled:opacity-50"
+                  >
+                    {ACADEMY_STATUSES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      <Pagination
+        page={page}
+        pages={result.pages}
+        total={result.total}
+        onPage={setPage}
+      />
+    </div>
+  )
+}
+
+// ── Pagination ────────────────────────────────────────────────────────────────
+
+function Pagination({ page, pages, total, onPage }) {
+  if (pages <= 1) return (
+    <p className="text-xs text-gray-400">{total} record{total !== 1 ? 's' : ''}</p>
+  )
+  return (
+    <div className="flex items-center justify-between text-sm">
+      <p className="text-xs text-gray-400">{total} record{total !== 1 ? 's' : ''}</p>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => onPage(page - 1)}
+          disabled={page <= 1}
+          className="rounded border border-gray-200 px-3 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Prev
+        </button>
+        <span className="text-xs text-gray-500">
+          {page} / {pages}
+        </span>
+        <button
+          onClick={() => onPage(page + 1)}
+          disabled={page >= pages}
+          className="rounded border border-gray-200 px-3 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Main Dashboard ────────────────────────────────────────────────────────────
+
+const TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'leads', label: 'Leads' },
+  { id: 'academy', label: 'Academy' },
+]
+
+export default function AdminDashboard({ onBack, onLogout }) {
+  const [activeTab, setActiveTab] = useState('overview')
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Top bar */}
+      <header className="border-b border-gray-200 bg-white">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
+          <div>
+            <h1 className="text-lg font-bold text-gray-900">MICAHSKIN <span className="text-brand-600">CRM</span></h1>
+            <p className="text-xs text-gray-400">Internal dashboard</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onBack}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              ← Back to site
+            </button>
+            <button
+              onClick={onLogout}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors"
+            >
+              Sign out
+            </button>
+          </div>
+        </div>
+
+        {/* Tab nav */}
+        <div className="mx-auto max-w-6xl px-4">
+          <nav className="flex gap-1">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+                  activeTab === tab.id
+                    ? 'border-brand-500 text-brand-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+        </div>
+      </header>
+
+      {/* Content */}
+      <main className="mx-auto max-w-6xl px-4 py-8">
+        {activeTab === 'overview' && <OverviewTab />}
+        {activeTab === 'leads' && <LeadsTab />}
+        {activeTab === 'academy' && <AcademyTab />}
+      </main>
+    </div>
+  )
+}
