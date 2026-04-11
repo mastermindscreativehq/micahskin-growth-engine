@@ -48,8 +48,11 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,            // Not accessible from JavaScript (prevents XSS theft)
-    secure: false,             // Set to true in production when running behind HTTPS
-    sameSite: 'lax',           // Protects against CSRF; lax allows top-level GET navigations
+    // Cross-site setup: Vercel frontend (vercel.app) → Railway backend (railway.app).
+    // Browsers refuse to forward SameSite=Lax cookies on cross-site fetch/XHR calls.
+    // SameSite=None + Secure=true is required so the session cookie reaches the backend.
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     maxAge: 8 * 60 * 60 * 1000, // Session lasts 8 hours
   },
 }))
