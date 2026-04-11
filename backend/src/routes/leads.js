@@ -8,6 +8,7 @@ const {
   executeSendFollowUp1,
   executeSendFollowUp2,
   executeSendFollowUp3,
+  scanPosts,
 } = require('../controllers/leadsController')
 const requireAuth = require('../middleware/requireAuth')
 
@@ -18,6 +19,10 @@ router.post('/', createLead)
 
 // Protected: admin CRM access only
 router.get('/', requireAuth, listLeads)
+
+// Scan — must be declared before /:id routes so "scan" isn't treated as an id param
+router.post('/scan', requireAuth, scanPosts)
+
 router.patch('/:id/status', requireAuth, updateLeadStatus)
 
 // Phase 6 — Phase 3: reply detected → set status to engaged, stops follow-ups

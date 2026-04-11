@@ -431,4 +431,69 @@ async function updateLeadStatus(id, status) {
   return prisma.lead.update({ where: { id }, data: { status } })
 }
 
-module.exports = { createLead, getAllLeads, updateLeadStatus, sendInitialReply, sendFollowUp, generateFollowUpMessage }
+/**
+ * Detects the most likely skin concern from a post's text.
+ */
+function detectSkinConcern(text = '') {
+  const t = text.toLowerCase()
+  if (t.includes('dark spot') || t.includes('darkspot')) return 'dark_spots'
+  if (t.includes('acne') || t.includes('pimple') || t.includes('breakout')) return 'acne'
+  if (t.includes('stretch mark') || t.includes('stretchmark')) return 'stretch_marks'
+  if (t.includes('dry skin') || t.includes('dryskin')) return 'dry_skin'
+  if (t.includes('hyperpigmentation') || t.includes('pigmentation')) return 'hyperpigmentation'
+  if (t.includes('body care') || t.includes('bodycare') || t.includes('lotion') || t.includes('moistur')) return 'body_care'
+  return 'other'
+}
+
+/**
+ * Normalises an incoming platform string to a valid VALID_PLATFORMS value.
+ */
+function normalizePlatform(platform = '') {
+  const p = (platform || '').trim()
+  if (VALID_PLATFORMS.includes(p)) return p
+  return 'Other'
+}
+
+/**
+ * POST /api/leads/scan
+ * Accepts an array of social-media posts, attempts to create a lead for each.
+ * Returns { created, skipped, total, createdCount, skippedCount }.
+ */
+async function scanPosts(posts) {
+  const created = []
+  const skipped = []
+
+  for (const post of posts) {
+    const { username, platform, text, post_url } = post || {}
+
+    if (!username || !text) {
+      skipped.push({ post, reason: 'missing username or text' })
+      continue
+    }
+
+    try {
+      const lead = await createLead({
+        fullName: username,
+        handle: username,
+        sourcePlatform: normalizePlatform(platform),
+        skinConcern: detectSkinConcern(text),
+        message: text,
+        sourceType: 'comment',
+        campaign: post_url || null,
+      })
+      created.push(lead)
+    } catch (err) {
+      skipped.push({ post, reason: err.message, errors: err.errors || [] })
+    }
+  }
+
+  return {
+    created,
+    skipped,
+    total: posts.length,
+    createdCount: created.length,
+    skippedCount: skipped.length,
+  }
+}
+
+module.exports = { createLead, getAllLeads, updateLeadStatus, sendInitialReply, sendFollowUp, generateFollowUpMessage, scanPosts }

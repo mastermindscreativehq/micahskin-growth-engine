@@ -1,5 +1,23 @@
 const leadsService = require('../services/leadsService')
 
+/**
+ * POST /api/leads/scan
+ * Body: { posts: [{ username, platform, text, post_url }] }
+ */
+async function scanPosts(req, res) {
+  try {
+    const { posts } = req.body
+    if (!Array.isArray(posts) || posts.length === 0) {
+      return res.status(400).json({ success: false, message: 'posts must be a non-empty array' })
+    }
+    const results = await leadsService.scanPosts(posts)
+    return res.status(201).json({ success: true, ...results })
+  } catch (err) {
+    const status = err.status || 500
+    return res.status(status).json({ success: false, message: err.message, errors: err.errors || [] })
+  }
+}
+
 
 
 async function createLead(req, res) {
@@ -129,4 +147,5 @@ module.exports = {
   executeSendFollowUp1,
   executeSendFollowUp2,
   executeSendFollowUp3,
+  scanPosts,
 }
