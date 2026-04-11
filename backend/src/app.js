@@ -21,9 +21,12 @@ const app = express()
 // CORS — credentials: true is required so the browser sends the session cookie
 // on cross-origin requests from the frontend.
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: [
+    'https://micahskin-growth-engine.vercel.app',
+    'http://localhost:5173',
+  ],
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-  credentials: true, // Must be true for cookies to work with cross-origin fetch
+  credentials: true,
 }))
 
 app.use(express.json())
