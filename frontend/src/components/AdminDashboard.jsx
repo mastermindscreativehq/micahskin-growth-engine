@@ -524,21 +524,28 @@ function LeadsTab() {
                           <p className="text-xs text-blue-400 italic">No suggested reply for this lead</p>
                         )}
 
-                        {/* Telegram Intelligence */}
-                        {lead.telegramStarted && (
-                          <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 space-y-1.5">
-                            <div className="flex flex-wrap items-center gap-3 text-xs">
-                              <span className="font-semibold text-blue-700 uppercase tracking-wide">Telegram</span>
+                        {/* Telegram Intake Panel */}
+                        {lead.telegramStarted ? (
+                          <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2.5 space-y-2">
+                            {/* Header row */}
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="font-semibold text-blue-700 uppercase tracking-wide">Telegram Intake</span>
                               <span className="inline-flex items-center gap-1 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
                                 ✓ Connected
                               </span>
-                              {lead.telegramStage && (
-                                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 capitalize">
-                                  {lead.telegramStage.replace(/_/g, ' ')}
-                                </span>
-                              )}
                               {lead.telegramUsername && (
                                 <span className="text-blue-500">@{lead.telegramUsername}</span>
+                              )}
+                              {lead.telegramStage && (
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                  lead.telegramStage === 'intake_complete' || lead.telegramStage === 'awaiting_human_review'
+                                    ? 'bg-green-100 text-green-700'
+                                    : lead.telegramStage === 'connected'
+                                      ? 'bg-blue-100 text-blue-600'
+                                      : 'bg-amber-100 text-amber-700'
+                                }`}>
+                                  {lead.telegramStage.replace(/_/g, ' ')}
+                                </span>
                               )}
                               {lead.engagementScore && (
                                 <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
@@ -552,26 +559,58 @@ function LeadsTab() {
                                 </span>
                               )}
                               {lead.intent && (
-                                <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 capitalize">
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${
+                                  lead.intent === 'price' || lead.intent === 'urgent'
+                                    ? 'bg-red-100 text-red-700'
+                                    : lead.intent === 'routine'
+                                      ? 'bg-indigo-100 text-indigo-700'
+                                      : 'bg-purple-100 text-purple-700'
+                                }`}>
                                   {lead.intent.replace(/_/g, ' ')}
                                 </span>
                               )}
                             </div>
-                            {lead.telegramLastMessage && (
-                              <div className="text-xs text-gray-600">
+
+                            {/* Intake answers grid */}
+                            {(lead.telegramConcern || lead.telegramDuration || lead.telegramArea ||
+                              lead.telegramSkinType || lead.telegramProductsTried ||
+                              lead.telegramSeverity || lead.telegramGoal) && (
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                                {[
+                                  { label: 'Concern',       value: lead.telegramConcern },
+                                  { label: 'Duration',      value: lead.telegramDuration },
+                                  { label: 'Area',          value: lead.telegramArea },
+                                  { label: 'Skin type',     value: lead.telegramSkinType },
+                                  { label: 'Products tried', value: lead.telegramProductsTried },
+                                  { label: 'Severity',      value: lead.telegramSeverity },
+                                  { label: 'Goal',          value: lead.telegramGoal },
+                                ].filter(f => f.value).map(({ label, value }) => (
+                                  <div key={label} className="flex gap-1.5">
+                                    <span className="shrink-0 font-medium text-gray-500 w-24">{label}:</span>
+                                    <span className="text-gray-700 italic truncate" title={value}>
+                                      {value.length > 80 ? value.slice(0, 80) + '…' : value}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Last message */}
+                            {lead.telegramLastMessage ? (
+                              <div className="text-xs text-gray-600 border-t border-blue-100 pt-1.5">
                                 <span className="font-medium text-gray-500">Last message: </span>
-                                <span className="italic">"{lead.telegramLastMessage.slice(0, 200)}{lead.telegramLastMessage.length > 200 ? '…' : ''}"</span>
+                                <span className="italic">
+                                  "{lead.telegramLastMessage.slice(0, 200)}{lead.telegramLastMessage.length > 200 ? '…' : ''}"
+                                </span>
                                 {lead.telegramLastMessageAt && (
                                   <span className="ml-2 text-gray-400">{fmtDateTime(lead.telegramLastMessageAt)}</span>
                                 )}
                               </div>
-                            )}
-                            {!lead.telegramLastMessage && (
-                              <p className="text-xs text-blue-400 italic">No reply yet</p>
+                            ) : (
+                              <p className="text-xs text-blue-400 italic">No reply yet — awaiting first message</p>
                             )}
                           </div>
-                        )}
-                        {!lead.telegramStarted && (
+                        ) : (
                           <div className="text-xs text-gray-400 italic">Telegram not connected</div>
                         )}
 

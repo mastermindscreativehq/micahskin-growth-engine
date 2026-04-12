@@ -42,16 +42,22 @@ model Lead {
   lastDeliveryStatus   String?                  // sent | skipped | failed
   autoReplyEnabled    Boolean   @default(true)  // whether auto-reply is enabled for this lead
   replyLock           Boolean   @default(false) // transient lock held by auto-trigger during send
-  telegramUsername      String?                   // Telegram @username (without @)
-  telegramChatId        String?                   // Telegram chat_id — set when lead taps /start in bot
-  telegramStarted       Boolean   @default(false) // true once lead has started the Telegram bot
-  telegramConnectedAt   DateTime?                 // when lead first connected via /start
-  telegramLastMessage   String?                   // last message text received from lead via Telegram
-  telegramLastMessageAt DateTime?                 // when the last Telegram message was received
-  intent               String?                   // detected Telegram intent: acne | hyperpigmentation | stretch_marks | general
-  engagementScore      String?                   // high | medium | low — computed from reply speed and frequency
-  telegramStage        String?                   // connected | asked_duration | duration_received
-  telegramQuestionSentAt DateTime?               // when the duration follow-up question was sent
+  telegramUsername        String?   // Telegram @username (without @)
+  telegramChatId          String?   // Telegram chat_id — set when lead taps /start in bot
+  telegramStarted         Boolean   @default(false) // true once lead has started the Telegram bot
+  telegramConnectedAt     DateTime? // when lead first connected via /start
+  telegramLastMessage     String?   // last message text received from lead via Telegram
+  telegramLastMessageAt   DateTime? // when the last Telegram message was received
+  intent                  String?   // concern bucket: acne | hyperpigmentation | dry_skin | stretch_marks | body_care | sensitive_skin | general | price | routine | urgent
+  engagementScore         String?   // high | medium | low — computed from reply speed, length, frequency
+  telegramStage           String?   // connected | duration_pending | area_pending | skin_type_pending | products_tried_pending | severity_pending | goal_pending | intake_complete | awaiting_human_review
+  telegramConcern         String?   // raw text of lead's first reply (their stated skin concern)
+  telegramDuration        String?   // how long they have had the issue
+  telegramArea            String?   // face | body | both (free text)
+  telegramSkinType        String?   // oily | dry | combination | sensitive | not sure (free text)
+  telegramProductsTried   String?   // products or remedies already tried
+  telegramSeverity        String?   // mild | moderate | severe (free text)
+  telegramGoal            String?   // desired result: clear breakouts | fade marks | smoother skin | hydration | full routine
   utmSource      String?
   replies        Reply[]
   utmMedium      String?
