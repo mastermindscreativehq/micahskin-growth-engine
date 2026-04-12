@@ -50,6 +50,8 @@ model Lead {
   telegramLastMessageAt DateTime?                 // when the last Telegram message was received
   intent               String?                   // detected Telegram intent: acne | hyperpigmentation | stretch_marks | general
   engagementScore      String?                   // high | medium | low — computed from reply speed and frequency
+  telegramStage        String?                   // connected | asked_duration | duration_received
+  telegramQuestionSentAt DateTime?               // when the duration follow-up question was sent
   utmSource      String?
   replies        Reply[]
   utmMedium      String?
@@ -84,6 +86,7 @@ model AcademyRegistration {
   telegramUsername String?                  // Telegram @username (without @)
   telegramChatId   String?                  // Telegram chat_id — set when registrant taps /start in bot
   telegramStarted  Boolean  @default(false) // true once registrant has started the Telegram bot
+  telegramStage    String?                  // connected | asked_goal | goal_received
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

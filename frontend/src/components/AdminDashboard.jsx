@@ -532,6 +532,11 @@ function LeadsTab() {
                               <span className="inline-flex items-center gap-1 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
                                 ✓ Connected
                               </span>
+                              {lead.telegramStage && (
+                                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 capitalize">
+                                  {lead.telegramStage.replace(/_/g, ' ')}
+                                </span>
+                              )}
                               {lead.telegramUsername && (
                                 <span className="text-blue-500">@{lead.telegramUsername}</span>
                               )}
