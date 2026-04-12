@@ -252,6 +252,7 @@ function LeadsTab() {
   const [sourceTypeFilter, setSourceTypeFilter] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('')
   const [intentTagFilter, setIntentTagFilter] = useState('')
+  const [engagementFilter, setEngagementFilter] = useState('')
   const [needsFollowUp, setNeedsFollowUp] = useState(false)
   const [page, setPage] = useState(1)
   const [result, setResult] = useState({ data: [], total: 0, pages: 1 })
@@ -269,6 +270,7 @@ function LeadsTab() {
       sourceType: sourceTypeFilter,
       priority: priorityFilter,
       intentTag: intentTagFilter,
+      engagementScore: engagementFilter || undefined,
       needsFollowUp: needsFollowUp ? 'true' : undefined,
       page,
       limit: 15,
@@ -276,12 +278,12 @@ function LeadsTab() {
       .then(setResult)
       .catch(console.error)
       .finally(() => setLoading(false))
-  }, [search, statusFilter, sourceFilter, sourceTypeFilter, priorityFilter, intentTagFilter, needsFollowUp, page])
+  }, [search, statusFilter, sourceFilter, sourceTypeFilter, priorityFilter, intentTagFilter, engagementFilter, needsFollowUp, page])
 
   useEffect(() => { load() }, [load])
 
   // Reset to page 1 when filters change
-  useEffect(() => { setPage(1) }, [search, statusFilter, sourceFilter, sourceTypeFilter, priorityFilter, intentTagFilter, needsFollowUp])
+  useEffect(() => { setPage(1) }, [search, statusFilter, sourceFilter, sourceTypeFilter, priorityFilter, intentTagFilter, engagementFilter, needsFollowUp])
 
   async function handleStatusChange(id, status) {
     setUpdatingId(id)
@@ -317,6 +319,7 @@ function LeadsTab() {
     setSourceFilter('')
     setSourceTypeFilter('')
     setIntentTagFilter('')
+    setEngagementFilter('')
     setSearch('')
     setNeedsFollowUp(false)
   }
@@ -326,13 +329,19 @@ function LeadsTab() {
       {/* Quick-view buttons */}
       <div className="flex flex-wrap gap-2">
         <button
-          onClick={() => { setPriorityFilter('high'); setStatusFilter(''); setNeedsFollowUp(false) }}
-          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${priorityFilter === 'high' && !needsFollowUp ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+          onClick={() => { setEngagementFilter('high'); setPriorityFilter(''); setStatusFilter(''); setNeedsFollowUp(false) }}
+          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${engagementFilter === 'high' ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+        >
+          🔥 Hot Leads
+        </button>
+        <button
+          onClick={() => { setPriorityFilter('high'); setStatusFilter(''); setNeedsFollowUp(false); setEngagementFilter('') }}
+          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${priorityFilter === 'high' && !needsFollowUp && !engagementFilter ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
         >
           High Priority
         </button>
         <button
-          onClick={() => { setNeedsFollowUp(true); setStatusFilter(''); setPriorityFilter('') }}
+          onClick={() => { setNeedsFollowUp(true); setStatusFilter(''); setPriorityFilter(''); setEngagementFilter('') }}
           className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${needsFollowUp ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
         >
           Follow-up Due Now
@@ -430,21 +439,33 @@ function LeadsTab() {
             ) : result.data.map((lead) => {
               const fup = followUpStatus(lead)
               const isExpanded = expandedId === lead.id
+              const isHot = lead.engagementScore === 'high'
               return (
                 <>
                   <tr
                     key={lead.id}
-                    className={`hover:bg-gray-50 transition-colors cursor-pointer${fup?.type === 'overdue' ? ' bg-red-50/30' : ''}`}
+                    className={`transition-colors cursor-pointer ${
+                      isHot
+                        ? 'bg-orange-50/50 hover:bg-orange-50'
+                        : fup?.type === 'overdue'
+                          ? 'bg-red-50/30 hover:bg-red-50/50'
+                          : 'hover:bg-gray-50'
+                    }`}
                     onClick={() => setExpandedId(isExpanded ? null : lead.id)}
                   >
                     <td className="px-4 py-3 font-medium text-gray-800">
                       <div className="flex items-center gap-1">
+                        {isHot && <span title="High engagement">🔥</span>}
                         <span>{lead.fullName}</span>
                         {lead.suggestedReply && (
                           <span className="text-gray-300 text-xs" title="Has suggested reply">💬</span>
                         )}
+                        {lead.telegramStarted && (
+                          <span className="text-blue-300 text-xs" title="Telegram connected">✈</span>
+                        )}
                       </div>
                       {lead.intentTag && <div className="text-xs text-gray-400 mt-0.5">{lead.intentTag}</div>}
+                      {lead.intent && <div className="text-xs text-blue-500 mt-0.5 capitalize">{lead.intent.replace(/_/g, ' ')}</div>}
                     </td>
                     <td className="px-4 py-3 text-gray-500">
                       <div>{lead.email || '—'}</div>
@@ -501,6 +522,52 @@ function LeadsTab() {
                           </div>
                         ) : (
                           <p className="text-xs text-blue-400 italic">No suggested reply for this lead</p>
+                        )}
+
+                        {/* Telegram Intelligence */}
+                        {lead.telegramStarted && (
+                          <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2 space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-3 text-xs">
+                              <span className="font-semibold text-blue-700 uppercase tracking-wide">Telegram</span>
+                              <span className="inline-flex items-center gap-1 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                                ✓ Connected
+                              </span>
+                              {lead.telegramUsername && (
+                                <span className="text-blue-500">@{lead.telegramUsername}</span>
+                              )}
+                              {lead.engagementScore && (
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                                  lead.engagementScore === 'high'
+                                    ? 'bg-orange-100 text-orange-700'
+                                    : lead.engagementScore === 'medium'
+                                      ? 'bg-yellow-100 text-yellow-700'
+                                      : 'bg-gray-100 text-gray-500'
+                                }`}>
+                                  {lead.engagementScore === 'high' ? '🔥 ' : ''}{lead.engagementScore} engagement
+                                </span>
+                              )}
+                              {lead.intent && (
+                                <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 capitalize">
+                                  {lead.intent.replace(/_/g, ' ')}
+                                </span>
+                              )}
+                            </div>
+                            {lead.telegramLastMessage && (
+                              <div className="text-xs text-gray-600">
+                                <span className="font-medium text-gray-500">Last message: </span>
+                                <span className="italic">"{lead.telegramLastMessage.slice(0, 200)}{lead.telegramLastMessage.length > 200 ? '…' : ''}"</span>
+                                {lead.telegramLastMessageAt && (
+                                  <span className="ml-2 text-gray-400">{fmtDateTime(lead.telegramLastMessageAt)}</span>
+                                )}
+                              </div>
+                            )}
+                            {!lead.telegramLastMessage && (
+                              <p className="text-xs text-blue-400 italic">No reply yet</p>
+                            )}
+                          </div>
+                        )}
+                        {!lead.telegramStarted && (
+                          <div className="text-xs text-gray-400 italic">Telegram not connected</div>
                         )}
 
                         {/* Follow-up schedule with sent / overdue indicators */}

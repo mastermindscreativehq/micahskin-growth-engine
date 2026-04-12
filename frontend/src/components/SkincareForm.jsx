@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { submitLead } from '../api/index.js'
 import PhoneInput, { combinePhone } from './PhoneInput.jsx'
 
@@ -29,6 +29,15 @@ export default function SkincareForm({ onSuccess, onBack, prefill = {} }) {
   const [error, setError] = useState(null)
   const [submitted, setSubmitted] = useState(false)
   const [telegramBotLink, setTelegramBotLink] = useState(null)
+  const [showNoTelegramModal, setShowNoTelegramModal] = useState(false)
+  const [showWarning, setShowWarning] = useState(false)
+
+  // Show delivery warning after 12 s if the user hasn't tapped Telegram yet
+  useEffect(() => {
+    if (!submitted || !telegramBotLink) return
+    const timer = setTimeout(() => setShowWarning(true), 12_000)
+    return () => clearTimeout(timer)
+  }, [submitted, telegramBotLink])
 
   function handleChange(e) {
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
@@ -75,33 +84,81 @@ export default function SkincareForm({ onSuccess, onBack, prefill = {} }) {
       <section className="px-6 py-14 bg-white min-h-screen">
         <div className="max-w-lg mx-auto text-center">
           <div className="text-5xl mb-4">✅</div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-3">You're registered!</h2>
-          <p className="text-gray-500 text-sm mb-2">
-            Your details have been received. Our team will be in touch soon.
+          <h2 className="text-2xl font-bold text-gray-900 mb-3">
+            You're registered — your results are waiting on Telegram
+          </h2>
+          <p className="text-gray-500 text-sm mb-6">
+            We deliver your personalised skincare plan ONLY on Telegram for speed and privacy.
           </p>
-          {telegramBotLink && (
+
+          {telegramBotLink ? (
             <>
-              <p className="text-gray-700 text-sm font-medium mb-6 mt-4 leading-relaxed">
-                To receive your personalised skincare advice on Telegram,<br />
-                tap the button below and click <strong>Start</strong> in the Telegram app.
-              </p>
               <a
                 href={telegramBotLink}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-primary w-full block mb-4"
               >
-                Continue on Telegram
+                Open Telegram &amp; Get My Results
               </a>
+
+              {showWarning && (
+                <p className="text-amber-700 text-sm font-medium bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
+                  ⚠️ Your consultation will not be delivered unless you connect on Telegram
+                </p>
+              )}
+
+              <button
+                onClick={() => setShowNoTelegramModal(true)}
+                className="text-sm text-gray-400 hover:text-gray-600 hover:underline mt-2 block w-full"
+              >
+                I don't have Telegram
+              </button>
             </>
+          ) : (
+            <button
+              onClick={onSuccess}
+              className="text-sm text-gray-400 hover:text-gray-600 hover:underline mt-2 block w-full"
+            >
+              Continue
+            </button>
           )}
-          <button
-            onClick={onSuccess}
-            className="text-sm text-gray-400 hover:text-gray-600 hover:underline mt-2 block w-full"
-          >
-            Continue without Telegram
-          </button>
         </div>
+
+        {/* "No Telegram" download modal */}
+        {showNoTelegramModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+            <div className="bg-white rounded-2xl p-6 max-w-sm w-full text-center shadow-xl">
+              <div className="text-4xl mb-3">📱</div>
+              <h3 className="text-lg font-bold text-gray-900 mb-2">Download Telegram</h3>
+              <p className="text-gray-500 text-sm mb-5">
+                Takes 30 seconds. This is where your results will be sent.
+              </p>
+              <a
+                href="https://play.google.com/store/apps/details?id=org.telegram.messenger"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-primary w-full block mb-3"
+              >
+                Download for Android
+              </a>
+              <a
+                href="https://apps.apple.com/app/telegram-messenger/id686449807"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-primary w-full block mb-4"
+              >
+                Download for iPhone (iOS)
+              </a>
+              <button
+                onClick={() => setShowNoTelegramModal(false)}
+                className="text-sm text-gray-400 hover:text-gray-600 hover:underline"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
       </section>
     )
   }

@@ -224,7 +224,7 @@ async function createLead(data) {
  * Returns leads with optional search, status filter, source filter, and pagination.
  * Always returns newest first.
  */
-async function getAllLeads({ search, status, source, sourceType, priority, intentTag, needsFollowUp, page = 1, limit = 20 } = {}) {
+async function getAllLeads({ search, status, source, sourceType, priority, intentTag, engagementScore, needsFollowUp, page = 1, limit = 20 } = {}) {
   const where = {}
   const andConditions = []
 
@@ -247,6 +247,7 @@ async function getAllLeads({ search, status, source, sourceType, priority, inten
   if (sourceType) where.sourceType = sourceType
   if (priority && VALID_PRIORITIES.includes(priority)) where.priority = priority
   if (intentTag) where.intentTag = { contains: intentTag, mode: 'insensitive' }
+  if (engagementScore) where.engagementScore = engagementScore
   if (search) {
     andConditions.push({
       OR: [
@@ -501,4 +502,4 @@ async function scanPosts(posts) {
   }
 }
 
-module.exports = { createLead, getAllLeads, updateLeadStatus, sendInitialReply, sendFollowUp, generateFollowUpMessage, scanPosts }
+module.exports = { createLead, getAllLeads, updateLeadStatus, sendInitialReply, sendFollowUp, generateFollowUpMessage, scanPosts, generateSuggestedReply }

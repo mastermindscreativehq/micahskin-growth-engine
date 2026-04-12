@@ -36,7 +36,7 @@ async function createLead(req, res) {
 
 async function listLeads(req, res) {
   try {
-    const { search, status, source, sourceType, priority, intentTag, needsFollowUp, page, limit } = req.query
+    const { search, status, source, sourceType, priority, intentTag, engagementScore, needsFollowUp, page, limit } = req.query
     const result = await leadsService.getAllLeads({
       search: search || undefined,
       status: status || undefined,
@@ -44,6 +44,7 @@ async function listLeads(req, res) {
       sourceType: sourceType || undefined,
       priority: priority || undefined,
       intentTag: intentTag || undefined,
+      engagementScore: engagementScore || undefined,
       needsFollowUp: needsFollowUp === 'true',
       page: page ? Math.max(1, parseInt(page, 10)) : 1,
       limit: limit ? Math.min(100, Math.max(1, parseInt(limit, 10))) : 20,
