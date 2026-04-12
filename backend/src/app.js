@@ -11,6 +11,7 @@ const academyRouter = require('./routes/academy')
 const statsRouter = require('./routes/stats')
 const repliesRouter = require('./routes/replies')
 const telegramRouter = require('./routes/telegram')
+const paystackRouter = require('./routes/paystack')
 const prisma = require('./lib/prisma')
 const requireAuth = require('./middleware/requireAuth')
 const { getWhatsAppHealth } = require('./services/whatsappService')
@@ -34,7 +35,10 @@ app.use(cors({
   credentials: true,
 }))
 
-app.use(express.json())
+// Capture raw body for Paystack webhook signature verification
+app.use(express.json({
+  verify: (req, _res, buf) => { req.rawBody = buf },
+}))
 
 // Session middleware — stores admin login state server-side and sends
 // an HTTP-only signed cookie to the browser.
@@ -83,6 +87,9 @@ app.use('/api/replies', repliesRouter)
 
 // Telegram Bot webhook — public, receives updates from Telegram Bot API
 app.use('/api/telegram', telegramRouter)
+
+// Paystack — public webhook (signature-verified) for payment confirmation
+app.use('/api/paystack', paystackRouter)
 
 // ── Debug (admin-only) ───────────────────────────────────────────────────────
 

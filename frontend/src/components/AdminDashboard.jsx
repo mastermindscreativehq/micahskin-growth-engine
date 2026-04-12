@@ -904,16 +904,19 @@ function AcademyTab() {
               <th className="px-4 py-3">Source</th>
               <th className="px-4 py-3">Date</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Package</th>
+              <th className="px-4 py-3">Payment</th>
+              <th className="px-4 py-3">Enrollment</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
-                <td colSpan={6} className="py-8 text-center text-gray-400">Loading…</td>
+                <td colSpan={9} className="py-8 text-center text-gray-400">Loading…</td>
               </tr>
             ) : result.data.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-8 text-center text-gray-400">No registrations found</td>
+                <td colSpan={9} className="py-8 text-center text-gray-400">No registrations found</td>
               </tr>
             ) : result.data.map((reg) => (
               <tr key={reg.id} className="hover:bg-gray-50 transition-colors">
@@ -946,6 +949,52 @@ function AcademyTab() {
                       <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
+                </td>
+                <td className="px-4 py-3">
+                  {reg.academyPackage ? (
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                      reg.academyPackage === 'premium'
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}>
+                      {reg.academyPackage}
+                      {reg.academyAmount ? ` ₦${reg.academyAmount.toLocaleString()}` : ''}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
+                  {reg.systemIncluded && (
+                    <div className="text-xs text-green-600 mt-0.5">+ system</div>
+                  )}
+                  {reg.upgradeEligible && (
+                    <div className="text-xs text-amber-600 mt-0.5">upgrade eligible</div>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  {reg.paymentStatus ? (
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                      reg.paymentStatus === 'paid'
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {reg.paymentStatus}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  {reg.academyStatus ? (
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                      reg.academyStatus === 'enrolled'
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-gray-100 text-gray-500'
+                    }`}>
+                      {reg.academyStatus.replace(/_/g, ' ')}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-300">—</span>
+                  )}
                 </td>
               </tr>
             ))}

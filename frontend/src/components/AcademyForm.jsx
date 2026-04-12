@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { submitAcademyRegistration } from '../api/index.js'
+import { submitAcademyRegistration, selectPackage } from '../api/index.js'
 import PhoneInput, { combinePhone } from './PhoneInput.jsx'
 
 const PLATFORMS = ['TikTok', 'Instagram', 'Other']
@@ -10,6 +10,15 @@ const LEVELS = [
 ]
 
 export default function AcademyForm({ onSuccess, onBack, prefill = {} }) {
+  // step: 'form' → 'packages' → (redirect to Paystack)
+  const [step, setStep] = useState('form')
+  const [registrationId, setRegistrationId] = useState(null)
+  const [telegramBotLink, setTelegramBotLink] = useState(null)
+  const [packageLoading, setPackageLoading] = useState(null) // 'premium' | 'basic' | null
+  const [packageError, setPackageError] = useState(null)
+  const [showNoTelegramModal, setShowNoTelegramModal] = useState(false)
+  const [showWarning, setShowWarning] = useState(false)
+
   const [form, setForm] = useState({
     fullName: '',
     email: '',
@@ -18,21 +27,16 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {} }) {
     businessType: '',
     experienceLevel: '',
     goals: '',
-    // Pre-select platform if visitor arrived via a tagged link (user can still change it)
     sourcePlatform: prefill.sourcePlatform || '',
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [submitted, setSubmitted] = useState(false)
-  const [telegramBotLink, setTelegramBotLink] = useState(null)
-  const [showNoTelegramModal, setShowNoTelegramModal] = useState(false)
-  const [showWarning, setShowWarning] = useState(false)
 
   useEffect(() => {
-    if (!submitted || !telegramBotLink) return
+    if (step !== 'packages' || !telegramBotLink) return
     const timer = setTimeout(() => setShowWarning(true), 12_000)
     return () => clearTimeout(timer)
-  }, [submitted, telegramBotLink])
+  }, [step, telegramBotLink])
 
   function handleChange(e) {
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
@@ -43,7 +47,6 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {} }) {
     setError(null)
     setLoading(true)
     try {
-      // Merge visible form fields with hidden tracking data from URL params
       const result = await submitAcademyRegistration({
         fullName: form.fullName,
         email: form.email,
@@ -61,8 +64,9 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {} }) {
         utmContent: prefill.utmContent || undefined,
         utmTerm: prefill.utmTerm || undefined,
       })
+      setRegistrationId(result.data?.id || null)
       setTelegramBotLink(result.data?.telegramBotLink || null)
-      setSubmitted(true)
+      setStep('packages')
     } catch (err) {
       const messages = err.errors?.length
         ? err.errors.join(' · ')
@@ -73,50 +77,106 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {} }) {
     }
   }
 
-  // ── Telegram success state ──────────────────────────────────────────────────
-  if (submitted) {
+  async function handleSelectPackage(pkg) {
+    if (!registrationId || packageLoading) return
+    setPackageError(null)
+    setPackageLoading(pkg)
+    try {
+      const result = await selectPackage(registrationId, pkg)
+      window.location.href = result.paymentLink
+    } catch (err) {
+      setPackageError(err.message || 'Could not start payment. Please try again.')
+      setPackageLoading(null)
+    }
+  }
+
+  // ── Package selection step ─────────────────────────────────────────────────
+  if (step === 'packages') {
     return (
       <section className="px-6 py-14 bg-white min-h-screen">
-        <div className="max-w-lg mx-auto text-center">
-          <div className="text-5xl mb-4">🎓</div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-3">
-            You're registered — your academy access is waiting on Telegram
-          </h2>
-          <p className="text-gray-500 text-sm mb-6">
-            We deliver your masterclass updates and onboarding ONLY on Telegram for speed and privacy.
-          </p>
+        <div className="max-w-lg mx-auto">
+          <div className="text-center mb-8">
+            <div className="text-5xl mb-4">🎓</div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Choose Your Package</h2>
+            <p className="text-gray-500 text-sm">
+              Select the package that best fits your goals. Basic users can upgrade later.
+            </p>
+          </div>
 
-          {telegramBotLink ? (
-            <>
-              <a
-                href={telegramBotLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-primary w-full block mb-4"
+          {packageError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3 mb-6">
+              {packageError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {/* Premium */}
+            <div className="border-2 border-brand-500 rounded-2xl p-5 flex flex-col">
+              <span className="text-xs font-semibold uppercase tracking-wide text-brand-600 bg-brand-50 px-2 py-0.5 rounded self-start mb-3">
+                Premium
+              </span>
+              <div className="text-3xl font-bold text-gray-900 mb-1">₦60,000</div>
+              <ul className="text-sm text-gray-600 space-y-1.5 mb-6 flex-1">
+                <li>✓ Full masterclass access</li>
+                <li>✓ Skincare system included</li>
+                <li>✓ Priority support</li>
+              </ul>
+              <button
+                onClick={() => handleSelectPackage('premium')}
+                disabled={!!packageLoading}
+                className="btn-primary w-full"
               >
-                Open Telegram &amp; Access the Academy
-              </a>
+                {packageLoading === 'premium' ? 'Redirecting…' : 'Choose Premium'}
+              </button>
+            </div>
 
+            {/* Basic */}
+            <div className="border-2 border-gray-200 rounded-2xl p-5 flex flex-col">
+              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 bg-gray-100 px-2 py-0.5 rounded self-start mb-3">
+                Basic
+              </span>
+              <div className="text-3xl font-bold text-gray-900 mb-1">₦50,000</div>
+              <ul className="text-sm text-gray-600 space-y-1.5 mb-6 flex-1">
+                <li>✓ Full masterclass access</li>
+                <li className="text-gray-400">✗ System not included</li>
+                <li>✓ Upgrade for ₦50k later</li>
+              </ul>
+              <button
+                onClick={() => handleSelectPackage('basic')}
+                disabled={!!packageLoading}
+                className="btn-secondary w-full"
+              >
+                {packageLoading === 'basic' ? 'Redirecting…' : 'Choose Basic'}
+              </button>
+            </div>
+          </div>
+
+          {telegramBotLink && (
+            <div className="mt-6 text-center">
               {showWarning && (
-                <p className="text-amber-700 text-sm font-medium bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
-                  ⚠️ Your academy content will not be delivered unless you connect on Telegram
+                <p className="text-amber-700 text-sm font-medium bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-3">
+                  ⚠️ After payment, connect on Telegram to receive your academy content
                 </p>
               )}
-
+              <p className="text-xs text-gray-400">
+                After payment, open{' '}
+                <a
+                  href={telegramBotLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-600 hover:underline"
+                >
+                  Telegram
+                </a>{' '}
+                to access your masterclass.
+              </p>
               <button
                 onClick={() => setShowNoTelegramModal(true)}
-                className="text-sm text-gray-400 hover:text-gray-600 hover:underline mt-2 block w-full"
+                className="text-xs text-gray-400 hover:text-gray-600 hover:underline mt-1"
               >
                 I don't have Telegram
               </button>
-            </>
-          ) : (
-            <button
-              onClick={onSuccess}
-              className="text-sm text-gray-400 hover:text-gray-600 hover:underline mt-2 block w-full"
-            >
-              Continue
-            </button>
+            </div>
           )}
         </div>
 

@@ -140,6 +140,23 @@ export async function updateRegistrationStatus(id, status) {
   return data
 }
 
+// ── Academy Payment ───────────────────────────────────────────────────────────
+
+/**
+ * Save package choice for a registration and get the Paystack payment link.
+ * Public — no auth cookie needed.
+ */
+export async function selectPackage(leadId, pkg) {
+  const res = await fetch(`${BASE_URL}/api/academy/select-package`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ leadId, package: pkg }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
+
 // ── Auto Reply Execution ──────────────────────────────────────────────────────
 
 /**

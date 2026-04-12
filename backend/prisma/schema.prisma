@@ -99,6 +99,12 @@ model AcademyRegistration {
   telegramChatId   String?                  // Telegram chat_id — set when registrant taps /start in bot
   telegramStarted  Boolean  @default(false) // true once registrant has started the Telegram bot
   telegramStage    String?                  // connected | asked_goal | goal_received
+  academyPackage   String?  // premium | basic
+  academyAmount    Int?     // 60000 | 50000
+  paymentStatus    String?  // pending | paid
+  academyStatus    String?  // not_enrolled | enrolled
+  systemIncluded   Boolean? // true for premium
+  upgradeEligible  Boolean? // true for basic
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
