@@ -50,14 +50,20 @@ model Lead {
   telegramLastMessageAt   DateTime? // when the last Telegram message was received
   intent                  String?   // concern bucket: acne | hyperpigmentation | dry_skin | stretch_marks | body_care | sensitive_skin | general | price | routine | urgent
   engagementScore         String?   // high | medium | low — computed from reply speed, length, frequency
-  telegramStage           String?   // connected | duration_pending | area_pending | skin_type_pending | products_tried_pending | severity_pending | goal_pending | intake_complete | awaiting_human_review
-  telegramConcern         String?   // raw text of lead's first reply (their stated skin concern)
-  telegramDuration        String?   // how long they have had the issue
-  telegramArea            String?   // face | body | both (free text)
-  telegramSkinType        String?   // oily | dry | combination | sensitive | not sure (free text)
-  telegramProductsTried   String?   // products or remedies already tried
-  telegramSeverity        String?   // mild | moderate | severe (free text)
-  telegramGoal            String?   // desired result: clear breakouts | fade marks | smoother skin | hydration | full routine
+  telegramFlowType          String?   // routine | concern — classified once at connected stage, never changed
+  telegramStage             String?   // connected | concern_pending | duration_pending | area_pending | skin_type_pending | products_tried_pending | severity_pending | goal_pending | routine_goal_pending | products_used_pending | sensitivity_pending | budget_pending | routine_level_pending | intake_complete | awaiting_human_review
+  telegramConcern           String?   // concern path: raw text of stated skin concern
+  telegramDuration          String?   // concern path: how long they have had the issue
+  telegramArea              String?   // shared: face | body | both (free text)
+  telegramSkinType          String?   // shared: oily | dry | combination | sensitive | not sure (free text)
+  telegramProductsTried     String?   // concern path: products or remedies already tried
+  telegramSeverity          String?   // concern path: mild | moderate | severe (free text)
+  telegramGoal              String?   // concern path: desired result
+  telegramRoutineGoal       String?   // routine path: desired result (brighter, glow, even tone, etc.)
+  telegramProductsUsed      String?   // routine path: products currently using
+  telegramSensitivity       String?   // routine path: skin sensitivity / reactivity
+  telegramBudget            String?   // routine path: budget | mid-range | premium
+  telegramRoutineLevel      String?   // routine path: simple | balanced | complete
   utmSource      String?
   replies        Reply[]
   utmMedium      String?

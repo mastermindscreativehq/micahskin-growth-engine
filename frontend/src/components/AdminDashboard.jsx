@@ -536,6 +536,15 @@ function LeadsTab() {
                               {lead.telegramUsername && (
                                 <span className="text-blue-500">@{lead.telegramUsername}</span>
                               )}
+                              {lead.telegramFlowType && (
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                  lead.telegramFlowType === 'routine'
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : 'bg-purple-100 text-purple-700'
+                                }`}>
+                                  {lead.telegramFlowType === 'routine' ? '✨ routine' : '💬 concern'}
+                                </span>
+                              )}
                               {lead.telegramStage && (
                                 <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
                                   lead.telegramStage === 'intake_complete' || lead.telegramStage === 'awaiting_human_review'
@@ -571,28 +580,52 @@ function LeadsTab() {
                               )}
                             </div>
 
-                            {/* Intake answers grid */}
-                            {(lead.telegramConcern || lead.telegramDuration || lead.telegramArea ||
-                              lead.telegramSkinType || lead.telegramProductsTried ||
-                              lead.telegramSeverity || lead.telegramGoal) && (
-                              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                                {[
-                                  { label: 'Concern',       value: lead.telegramConcern },
-                                  { label: 'Duration',      value: lead.telegramDuration },
-                                  { label: 'Area',          value: lead.telegramArea },
-                                  { label: 'Skin type',     value: lead.telegramSkinType },
-                                  { label: 'Products tried', value: lead.telegramProductsTried },
-                                  { label: 'Severity',      value: lead.telegramSeverity },
-                                  { label: 'Goal',          value: lead.telegramGoal },
-                                ].filter(f => f.value).map(({ label, value }) => (
-                                  <div key={label} className="flex gap-1.5">
-                                    <span className="shrink-0 font-medium text-gray-500 w-24">{label}:</span>
-                                    <span className="text-gray-700 italic truncate" title={value}>
-                                      {value.length > 80 ? value.slice(0, 80) + '…' : value}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
+                            {/* Intake answers grid — rendered based on flow type */}
+                            {lead.telegramFlowType === 'routine' ? (
+                              (lead.telegramRoutineGoal || lead.telegramArea || lead.telegramSkinType ||
+                               lead.telegramProductsUsed || lead.telegramSensitivity || lead.telegramBudget || lead.telegramRoutineLevel) && (
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                                  {[
+                                    { label: 'Goal',          value: lead.telegramRoutineGoal },
+                                    { label: 'Area',          value: lead.telegramArea },
+                                    { label: 'Skin type',     value: lead.telegramSkinType },
+                                    { label: 'Products used', value: lead.telegramProductsUsed },
+                                    { label: 'Sensitivity',   value: lead.telegramSensitivity },
+                                    { label: 'Budget',        value: lead.telegramBudget },
+                                    { label: 'Routine level', value: lead.telegramRoutineLevel },
+                                  ].filter(f => f.value).map(({ label, value }) => (
+                                    <div key={label} className="flex gap-1.5">
+                                      <span className="shrink-0 font-medium text-gray-500 w-24">{label}:</span>
+                                      <span className="text-gray-700 italic truncate" title={value}>
+                                        {value.length > 80 ? value.slice(0, 80) + '…' : value}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )
+                            ) : (
+                              (lead.telegramConcern || lead.telegramDuration || lead.telegramArea ||
+                               lead.telegramSkinType || lead.telegramProductsTried ||
+                               lead.telegramSeverity || lead.telegramGoal) && (
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                                  {[
+                                    { label: 'Concern',        value: lead.telegramConcern },
+                                    { label: 'Duration',       value: lead.telegramDuration },
+                                    { label: 'Area',           value: lead.telegramArea },
+                                    { label: 'Skin type',      value: lead.telegramSkinType },
+                                    { label: 'Products tried', value: lead.telegramProductsTried },
+                                    { label: 'Severity',       value: lead.telegramSeverity },
+                                    { label: 'Goal',           value: lead.telegramGoal },
+                                  ].filter(f => f.value).map(({ label, value }) => (
+                                    <div key={label} className="flex gap-1.5">
+                                      <span className="shrink-0 font-medium text-gray-500 w-24">{label}:</span>
+                                      <span className="text-gray-700 italic truncate" title={value}>
+                                        {value.length > 80 ? value.slice(0, 80) + '…' : value}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )
                             )}
 
                             {/* Last message */}

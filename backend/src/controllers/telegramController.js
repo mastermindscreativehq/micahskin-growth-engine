@@ -1,11 +1,128 @@
 const prisma = require('../lib/prisma')
 const { sendTelegramToUser, sendTelegramMessage } = require('../services/telegramService')
 
-// ── Concern classification ────────────────────────────────────────────────────
+// ── Flow definitions ──────────────────────────────────────────────────────────
+//
+// Each flow has:
+//   orderedStages  — the stages in order, ending with 'intake_complete'
+//   questions      — the question to ask when the bot enters that stage
+//   saveField      — which DB column stores the user's answer for that stage
+//   completeMessage — sent once when intake_complete is reached
+
+const FLOW_CONFIG = {
+  routine: {
+    orderedStages: [
+      'routine_goal_pending',
+      'area_pending',
+      'skin_type_pending',
+      'products_used_pending',
+      'sensitivity_pending',
+      'budget_pending',
+      'routine_level_pending',
+      'intake_complete',
+    ],
+    questions: {
+      routine_goal_pending:  'What result do you want most right now \u2014 brighter skin, glow, smoother skin, even tone, hydration, or something else?',
+      area_pending:          'Is this mainly for your face, body, or both?',
+      skin_type_pending:     'How would you describe your skin type: oily, dry, combination, sensitive, or not sure?',
+      products_used_pending: 'What products are you currently using, if any?',
+      sensitivity_pending:   'Does your skin react easily or feel sensitive to products?',
+      budget_pending:        'Are you looking for a budget, mid-range, or premium routine?',
+      routine_level_pending: 'Do you want a simple routine, a balanced routine, or a more complete routine?',
+    },
+    saveField: {
+      routine_goal_pending:  'telegramRoutineGoal',
+      area_pending:          'telegramArea',
+      skin_type_pending:     'telegramSkinType',
+      products_used_pending: 'telegramProductsUsed',
+      sensitivity_pending:   'telegramSensitivity',
+      budget_pending:        'telegramBudget',
+      routine_level_pending: 'telegramRoutineLevel',
+    },
+    completeMessage: 'Perfect \u2014 I\u2019ve saved that. Our team will prepare a routine recommendation for you here shortly \ud83c\udf3f',
+  },
+
+  concern: {
+    orderedStages: [
+      'concern_pending',
+      'duration_pending',
+      'area_pending',
+      'skin_type_pending',
+      'products_tried_pending',
+      'severity_pending',
+      'goal_pending',
+      'intake_complete',
+    ],
+    questions: {
+      concern_pending:        'What is the main skin issue you want help with right now?',
+      duration_pending:       'How long have you been dealing with this?',
+      area_pending:           'Is it mainly on your face, body, or both?',
+      skin_type_pending:      'How would you describe your skin type: oily, dry, combination, sensitive, or not sure?',
+      products_tried_pending: 'What products or remedies have you already tried for this?',
+      severity_pending:       'Would you say it is mild, moderate, or severe?',
+      goal_pending:           'What result do you want most right now?',
+    },
+    saveField: {
+      concern_pending:        'telegramConcern',
+      duration_pending:       'telegramDuration',
+      area_pending:           'telegramArea',
+      skin_type_pending:      'telegramSkinType',
+      products_tried_pending: 'telegramProductsTried',
+      severity_pending:       'telegramSeverity',
+      goal_pending:           'telegramGoal',
+    },
+    completeMessage: 'Perfect \u2014 I\u2019ve saved that. Our team will continue with you here shortly \ud83c\udf3f',
+  },
+}
+
+// ── Helper: question for a given stage + flow ─────────────────────────────────
 
 /**
- * Maps free-text Telegram message to a skin-concern bucket.
- * Rule-based only — checked in order, first match wins.
+ * Returns the question string the bot should ask when it enters `stage` on `flowType`.
+ * Returns null if there is no question (e.g. intake_complete or unknown stage).
+ */
+function getNextQuestion(stage, flowType) {
+  return FLOW_CONFIG[flowType]?.questions[stage] ?? null
+}
+
+// ── Helper: advance to the next stage in the same flow ───────────────────────
+
+/**
+ * Returns the stage that follows `currentStage` in the given flow.
+ * Always moves forward — never backward. Falls back to 'intake_complete'.
+ */
+function getNextStage(currentStage, flowType) {
+  const stages = FLOW_CONFIG[flowType]?.orderedStages
+  if (!stages) return 'intake_complete'
+  const idx = stages.indexOf(currentStage)
+  if (idx === -1 || idx >= stages.length - 1) return 'intake_complete'
+  return stages[idx + 1]
+}
+
+// ── Classification helpers ────────────────────────────────────────────────────
+
+/**
+ * Detects routine / glow / brightening intent from the user's first message.
+ * Must be checked BEFORE classifyConcern — if this returns true the lead goes
+ * to PATH A (routine), otherwise to PATH B (concern).
+ */
+function detectRoutineIntent(text) {
+  const t = text.toLowerCase()
+  if (/(?:skincare|skin care|body care|body|full|daily)\s+routine/.test(t)) return true
+  if (/\bi (?:need|want) (?:a |my |to )?routine/.test(t)) return true
+  if (/need (?:a |my )?routine\b/.test(t)) return true
+  if (/\bglow[\s-]?up\b/.test(t)) return true
+  if (/want (?:to )?glow(?:ing)?\b/.test(t)) return true
+  if (/brighter skin|bright skin|skin brightening/.test(t)) return true
+  if (/want (?:glowing|brighter|smoother)\b/.test(t)) return true
+  if (/\beven (?:out|my)? (?:skin )?tone\b/.test(t)) return true
+  if (/\bskin maintenance\b/.test(t)) return true
+  return false
+}
+
+/**
+ * Maps a concern-path first message to a skin-concern bucket.
+ * Only used when detectRoutineIntent() returned false.
  */
 function classifyConcern(text) {
   const t = text.toLowerCase()
@@ -19,35 +136,34 @@ function classifyConcern(text) {
 }
 
 /**
- * Detects purchase or urgency signals in any message, at any stage.
- * Returns an intent string if matched, null otherwise.
+ * Detects price / urgency signals in any message at any stage.
+ * These are stored separately and NEVER reset the stage or flow type.
  */
-function detectPurchaseIntent(text) {
+function detectPriceIntent(text) {
   const t = text.toLowerCase()
-  if (/i want to buy|want to buy|ready to buy|how do i order|how to order/.test(t)) return 'price'
+  if (/i want to buy|want to buy|ready to buy|how (?:do i|to) order/.test(t)) return 'price'
   if (/\bprice\b|\bprices\b|\bcost\b|\bcosts\b|how much|pricing/.test(t)) return 'price'
-  if (/\broutine\b|full routine|skincare routine/.test(t)) return 'routine'
   if (/\burgent\b|\basap\b|right now|need it now/.test(t)) return 'urgent'
   return null
 }
 
+/**
+ * For pre-upgrade leads that have a telegramStage but no telegramFlowType,
+ * infer the flow from the stage name so backward compatibility is preserved.
+ */
+function inferFlowTypeFromStage(stage) {
+  if (/routine_goal|products_used|sensitivity_pending|budget_pending|routine_level/.test(stage)) return 'routine'
+  return 'concern'
+}
+
 // ── Engagement scoring ────────────────────────────────────────────────────────
 
-/**
- * Scores this lead's Telegram engagement based on reply speed, message
- * length, and whether they have replied more than once.
- */
 function computeEngagementScore(lead, now, text = '') {
-  // Multiple replies → high
   if (lead.telegramLastMessage) return 'high'
-
-  // First reply — check speed and message length
   const fastReply =
     lead.telegramConnectedAt &&
     now - new Date(lead.telegramConnectedAt).getTime() < 15 * 60 * 1000
-
   if (fastReply || text.length >= 60) return 'high'
-
   return 'medium'
 }
 
@@ -87,7 +203,7 @@ async function handleWebhook(req, res) {
         const greeting = firstName ? `Hi ${firstName}!` : 'Hi!'
         await sendTelegramToUser(
           chatId,
-          `${greeting} Welcome to <b>MICAHSKIN</b> 🌿\n\nTo connect your account, please use the link from your registration form and tap <b>Start</b>.`
+          `${greeting} Welcome to <b>MICAHSKIN</b> \ud83c\udf3f\n\nTo connect your account, please use the link from your registration form and tap <b>Start</b>.`
         )
       }
       return
@@ -110,7 +226,7 @@ async function handleWebhook(req, res) {
     const greeting = firstName ? `Hi ${firstName}!` : 'Hi!'
     await sendTelegramToUser(
       chatId,
-      `${greeting} We don't have a connected account for this chat yet.\n\nPlease use the link from your registration form to connect your account 🌿`
+      `${greeting} We don\u2019t have a connected account for this chat yet.\n\nPlease use the link from your registration form to connect your account \ud83c\udf3f`
     )
 
   } catch (err) {
@@ -121,122 +237,98 @@ async function handleWebhook(req, res) {
 // ── Lead reply handler ────────────────────────────────────────────────────────
 
 /**
- * Structured intake state machine for lead replies.
+ * Dual-path state machine for lead replies.
  *
- * One user message → one bot reply, driven entirely by persisted telegramStage.
- * The bot acknowledges and asks the next intake question only — it does NOT
- * diagnose, prescribe, or give clinical advice.
+ * PATH A — ROUTINE  (telegramFlowType = 'routine')
+ *   connected → routine_goal_pending → area_pending → skin_type_pending
+ *   → products_used_pending → sensitivity_pending → budget_pending
+ *   → routine_level_pending → intake_complete
  *
- * Stage flow:
- *   connected             → receive concern    → duration_pending
- *   duration_pending      → receive duration   → area_pending
- *   area_pending          → receive area       → skin_type_pending
- *   skin_type_pending     → receive skin type  → products_tried_pending
- *   products_tried_pending → receive products  → severity_pending
- *   severity_pending      → receive severity   → goal_pending
- *   goal_pending          → receive goal       → intake_complete
- *   intake_complete /
- *   awaiting_human_review → acknowledge only, no more questions
+ * PATH B — CONCERN  (telegramFlowType = 'concern')
+ *   connected → concern_pending → duration_pending → area_pending
+ *   → skin_type_pending → products_tried_pending → severity_pending
+ *   → goal_pending → intake_complete
  *
- * Backward compat: leads with no telegramStage but existing telegramLastMessage
- * (pre-upgrade) are treated as intake_complete so no old question is ever repeated.
+ * Hard rules enforced:
+ *   - ONE user message → ONE bot reply
+ *   - Flow type classified ONCE at connected stage, stored in DB, never re-detected
+ *   - Stage always advances forward — never backward
+ *   - "Nothing" is a valid answer (no empty-answer guard needed; any non-blank text advances)
+ *   - Purchase/price signals stored as intent flag but NEVER affect stage or flow type
  */
 async function handleLeadReply({ lead, chatId, text }) {
   const now = Date.now()
 
-  // Resolve effective stage — safe fallback for pre-upgrade leads
-  const effectiveStage =
-    lead.telegramStage ??
-    (lead.telegramLastMessage ? 'intake_complete' : 'connected')
+  // Always read stage and flow type from DB — never infer from message content after classification
+  const effectiveStage = lead.telegramStage ?? (lead.telegramLastMessage ? 'intake_complete' : 'connected')
+  let flowType = lead.telegramFlowType ?? null
 
-  // Detect purchase / urgency signals that override the concern intent
-  const purchaseIntent = detectPurchaseIntent(text)
-
-  // Base update applied on every message
   const updateData = {
     telegramLastMessage: text,
     telegramLastMessageAt: new Date(now),
     engagementScore: computeEngagementScore(lead, now, text),
   }
 
-  // Purchase intent always overrides the concern classification
-  if (purchaseIntent) {
-    updateData.intent = purchaseIntent
-  }
-
   let autoResponse = null
 
-  switch (effectiveStage) {
+  // ── Stage: connected — classify intent ONCE ───────────────────────────────
+  if (effectiveStage === 'connected') {
+    if (detectRoutineIntent(text)) {
+      flowType = 'routine'
+      updateData.telegramFlowType = 'routine'
+      updateData.intent = 'routine'
+      updateData.telegramStage = 'routine_goal_pending'
+    } else {
+      flowType = 'concern'
+      updateData.telegramFlowType = 'concern'
+      updateData.intent = classifyConcern(text)
+      updateData.telegramStage = 'concern_pending'
+    }
+    if (['new', 'contacted'].includes(lead.status)) updateData.status = 'engaged'
+    autoResponse = getNextQuestion(updateData.telegramStage, flowType)
 
-    case 'connected': {
-      const concern = classifyConcern(text)
-      updateData.telegramConcern = text
-      updateData.intent = purchaseIntent ?? concern
-      updateData.telegramStage = 'duration_pending'
-      // Advance lead status if still cold
-      if (['new', 'contacted'].includes(lead.status)) {
-        updateData.status = 'engaged'
+  // ── Stage: intake_complete — acknowledge only, never repeat questions ──────
+  } else if (effectiveStage === 'intake_complete') {
+    autoResponse = 'Thanks \u2014 I\u2019ve added that to your consultation notes. Our team will continue with you here shortly.'
+
+  // ── Active intake stage — advance within current flow ─────────────────────
+  } else {
+    // Repair missing flowType for pre-upgrade leads that already have a stage set
+    if (!flowType) {
+      flowType = inferFlowTypeFromStage(effectiveStage)
+      updateData.telegramFlowType = flowType
+    }
+
+    const flow = FLOW_CONFIG[flowType]
+
+    if (!flow) {
+      // Unknown flow — safe acknowledgement, no question repeated
+      autoResponse = 'Thanks \u2014 our team will continue with you here shortly.'
+    } else {
+      // Save the answer for the current stage
+      const saveField = flow.saveField[effectiveStage]
+      if (saveField) updateData[saveField] = text
+
+      // Advance deterministically to the next stage — NEVER regress
+      const nextStage = getNextStage(effectiveStage, flowType)
+      updateData.telegramStage = nextStage
+
+      if (nextStage === 'intake_complete') {
+        if (['new', 'contacted', 'engaged'].includes(lead.status)) updateData.status = 'interested'
+        autoResponse = flow.completeMessage
+      } else {
+        autoResponse = getNextQuestion(nextStage, flowType)
       }
-      autoResponse = `Got it. How long have you been dealing with this?`
-      break
     }
+  }
 
-    case 'duration_pending': {
-      updateData.telegramDuration = text
-      updateData.telegramStage = 'area_pending'
-      autoResponse = `Is it mainly on your face, body, or both?`
-      break
-    }
-
-    case 'area_pending': {
-      updateData.telegramArea = text
-      updateData.telegramStage = 'skin_type_pending'
-      autoResponse = `How would you describe your skin type: oily, dry, combination, sensitive, or not sure?`
-      break
-    }
-
-    case 'skin_type_pending': {
-      updateData.telegramSkinType = text
-      updateData.telegramStage = 'products_tried_pending'
-      autoResponse = `What products or remedies have you already tried for this?`
-      break
-    }
-
-    case 'products_tried_pending': {
-      updateData.telegramProductsTried = text
-      updateData.telegramStage = 'severity_pending'
-      autoResponse = `Would you say it is mild, moderate, or severe?`
-      break
-    }
-
-    case 'severity_pending': {
-      updateData.telegramSeverity = text
-      updateData.telegramStage = 'goal_pending'
-      autoResponse = `What result do you want most right now: clear breakouts, fade marks, smoother skin, hydration, or a full routine?`
-      break
-    }
-
-    case 'goal_pending': {
-      updateData.telegramGoal = text
-      updateData.telegramStage = 'intake_complete'
-      if (['new', 'contacted'].includes(lead.status)) {
-        updateData.status = 'engaged'
-      }
-      autoResponse =
-        `Perfect \u2014 I\u2019ve saved your details. Our team is preparing your personalised skincare guidance and will continue with you here shortly \ud83c\udf3f`
-      break
-    }
-
-    default:
-      // intake_complete, awaiting_human_review, concern_received, or any unknown stage
-      // Acknowledge but never repeat intake questions
-      autoResponse =
-        `Thanks \u2014 I\u2019ve added that to your consultation notes. Our team will continue with you here shortly.`
-      break
+  // Price / urgency signals stored as intent — NEVER reset stage or flowType
+  const priceSignal = detectPriceIntent(text)
+  if (priceSignal && !updateData.intent) {
+    updateData.intent = priceSignal
   }
 
   await prisma.lead.update({ where: { id: lead.id }, data: updateData })
-
   await sendTelegramToUser(chatId, autoResponse)
 
   // Admin alert for high engagement
@@ -246,25 +338,25 @@ async function handleLeadReply({ lead, chatId, text }) {
       `<b>Name:</b> ${lead.fullName}\n` +
       `<b>Telegram:</b> ${lead.telegramUsername ? `@${lead.telegramUsername}` : chatId}\n` +
       `<b>Stage:</b> ${updateData.telegramStage ?? effectiveStage}\n` +
+      `<b>Flow:</b> ${flowType ?? 'unknown'}\n` +
       `<b>Intent:</b> ${updateData.intent ?? lead.intent ?? 'unknown'}\n` +
       `<b>Message:</b> ${text.slice(0, 200)}`
     ).catch(() => {})
   }
 
   console.log(
-    `[Telegram Webhook] Lead ${lead.id} — stage ${effectiveStage} → ${updateData.telegramStage ?? effectiveStage}` +
-    ` | score=${updateData.engagementScore} | intent=${updateData.intent ?? lead.intent}`
+    `[Telegram Webhook] Lead ${lead.id} — stage ${effectiveStage} \u2192 ${updateData.telegramStage ?? effectiveStage}` +
+    ` | flow=${flowType} | score=${updateData.engagementScore} | intent=${updateData.intent ?? lead.intent}`
   )
 }
 
 // ── Academy reply handler ─────────────────────────────────────────────────────
 
 /**
- * State machine for academy registrant replies — untouched by lead upgrade.
+ * State machine for academy registrant replies — separate from lead intake.
  *
- * Stage flow:
- *   connected  → first reply: send goal question → asked_goal
- *   asked_goal → next reply: send acknowledgement → goal_received
+ *   connected  → first reply → asked_goal
+ *   asked_goal → next reply  → goal_received
  *   anything else → no auto-response
  */
 async function handleAcademyReply({ academy, chatId, text }) {
@@ -275,8 +367,8 @@ async function handleAcademyReply({ academy, chatId, text }) {
 
   if (stage === 'connected') {
     autoResponse =
-      `That's great to hear \ud83c\udf93\n\n` +
-      `Quick one \u2014 what's your main goal for joining the Academy?\n\n` +
+      `That\u2019s great to hear \ud83c\udf93\n\n` +
+      `Quick one \u2014 what\u2019s your main goal for joining the Academy?\n\n` +
       `(e.g. building a skincare brand, learning formulation, growing a client base)`
     newStage = 'asked_goal'
   } else if (stage === 'asked_goal') {
@@ -302,13 +394,14 @@ async function handleAcademyReply({ academy, chatId, text }) {
 
 /**
  * Links a Telegram user to a Lead record.
- * Sets telegramStage = "connected" and immediately asks the first intake question.
+ * Sets telegramStage = "connected" and sends a neutral opening question
+ * so the user's first reply can be classified as routine or concern intent.
  */
 async function linkLead({ leadId, chatId, username }) {
   const lead = await prisma.lead.findUnique({ where: { id: leadId } })
 
   if (!lead) {
-    await sendTelegramToUser(chatId, "Sorry, we couldn't find your registration. Please contact us directly.")
+    await sendTelegramToUser(chatId, "Sorry, we couldn\u2019t find your registration. Please contact us directly.")
     return
   }
 
@@ -329,7 +422,7 @@ async function linkLead({ leadId, chatId, username }) {
     chatId,
     `Hi ${firstName}! \ud83c\udf3f You\u2019re now connected to <b>MICAHSKIN</b>.\n\n` +
     `We\u2019re gathering a few details so our team can guide you properly.\n\n` +
-    `<b>What is the main skin issue you want help with right now?</b>`
+    `<b>What brings you here today \u2014 are you looking for a skincare routine, or is there a specific skin concern you\u2019d like help with?</b>`
   )
 
   await sendTelegramMessage(
@@ -347,13 +440,12 @@ async function linkLead({ leadId, chatId, username }) {
 
 /**
  * Links a Telegram user to an AcademyRegistration record and sends a confirmation message.
- * Sets telegramStage = "connected" so the state machine knows this is a fresh link.
  */
 async function linkAcademy({ registrationId, chatId, username }) {
   const registration = await prisma.academyRegistration.findUnique({ where: { id: registrationId } })
 
   if (!registration) {
-    await sendTelegramToUser(chatId, "Sorry, we couldn't find your academy registration. Please contact us directly.")
+    await sendTelegramToUser(chatId, "Sorry, we couldn\u2019t find your academy registration. Please contact us directly.")
     return
   }
 
