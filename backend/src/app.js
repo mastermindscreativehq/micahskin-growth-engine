@@ -10,6 +10,7 @@ const leadsRouter = require('./routes/leads')
 const academyRouter = require('./routes/academy')
 const statsRouter = require('./routes/stats')
 const repliesRouter = require('./routes/replies')
+const telegramRouter = require('./routes/telegram')
 const prisma = require('./lib/prisma')
 const requireAuth = require('./middleware/requireAuth')
 const { getWhatsAppHealth } = require('./services/whatsappService')
@@ -79,6 +80,9 @@ app.use('/api/stats', statsRouter)
 
 // Replies — POST public (webhook/manual), GET protected (admin CRM)
 app.use('/api/replies', repliesRouter)
+
+// Telegram Bot webhook — public, receives updates from Telegram Bot API
+app.use('/api/telegram', telegramRouter)
 
 // ── Debug (admin-only) ───────────────────────────────────────────────────────
 

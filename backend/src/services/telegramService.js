@@ -2,6 +2,7 @@ const prisma = require('../lib/prisma')
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID
+const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME
 
 async function sendTelegramMessage(text) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
@@ -113,9 +114,139 @@ function formatAcademyTelegramMessage(registration) {
   )
 }
 
+// ── Deep-link builders ────────────────────────────────────────────────────────
+
+/**
+ * Returns the Telegram bot start URL that links a lead to their record.
+ * Format: https://t.me/<BOT_USERNAME>?start=lead_<leadId>
+ */
+function buildLeadTelegramStartLink(leadId) {
+  if (!TELEGRAM_BOT_USERNAME) return null
+  return `https://t.me/${TELEGRAM_BOT_USERNAME}?start=lead_${leadId}`
+}
+
+/**
+ * Returns the Telegram bot start URL that links an academy registrant to their record.
+ * Format: https://t.me/<BOT_USERNAME>?start=academy_<registrationId>
+ */
+function buildAcademyTelegramStartLink(registrationId) {
+  if (!TELEGRAM_BOT_USERNAME) return null
+  return `https://t.me/${TELEGRAM_BOT_USERNAME}?start=academy_${registrationId}`
+}
+
+// ── Direct user messaging ─────────────────────────────────────────────────────
+
+/**
+ * Sends a Telegram message to a specific chat (user or group) by chatId.
+ * Unlike sendTelegramMessage() which always goes to the admin chat, this
+ * sends to any chatId — used for direct lead/academy user messaging.
+ *
+ * @param {string|number} chatId - The target Telegram chat ID
+ * @param {string} text - HTML-formatted message text
+ */
+async function sendTelegramToUser(chatId, text) {
+  if (!TELEGRAM_BOT_TOKEN) {
+    console.warn('[Telegram] Bot token missing. Skipping user send.')
+    return { skipped: true }
+  }
+
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }),
+    })
+    const data = await response.json()
+    if (!response.ok) {
+      console.error('[Telegram] sendTelegramToUser error:', data)
+      return { success: false, error: data }
+    }
+    return { success: true, data }
+  } catch (error) {
+    console.error('[Telegram] sendTelegramToUser failed:', error.message)
+    return { success: false, error: error.message }
+  }
+}
+
+/**
+ * Sends a message directly to a lead via their Telegram chat.
+ * Returns { skipped: true, reason: 'no_telegram' } if the lead has not connected Telegram.
+ *
+ * @param {string} leadId
+ * @param {string} message - Plain text or HTML message body
+ * @param {{ auto?: boolean, triggerReason?: string }} [meta]
+ */
+async function sendTelegramToLead(leadId, message, meta = {}) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } })
+  if (!lead || !lead.telegramChatId) {
+    return { skipped: true, reason: 'no_telegram' }
+  }
+  const result = await sendTelegramToUser(lead.telegramChatId, message)
+
+  const logStatus = result.skipped ? 'skipped' : result.success ? 'sent' : 'failed'
+  prisma.messageLog.create({
+    data: {
+      type: 'lead',
+      recordId: leadId,
+      channel: 'telegram',
+      status: logStatus,
+      providerResponse: result.data ? JSON.stringify(result.data) : null,
+      error: result.error ? String(result.error) : null,
+      auto: meta.auto || false,
+      triggerReason: meta.triggerReason || null,
+      recipient: lead.telegramChatId,
+      deliveryChannel: 'telegram',
+      fallbackUsed: false,
+    },
+  }).catch((e) => console.error('[Telegram] MessageLog write failed:', e.message))
+
+  return result
+}
+
+/**
+ * Sends a message directly to an academy registrant via their Telegram chat.
+ * Returns { skipped: true, reason: 'no_telegram' } if not connected.
+ *
+ * @param {string} registrationId
+ * @param {string} message - Plain text or HTML message body
+ * @param {{ auto?: boolean, triggerReason?: string }} [meta]
+ */
+async function sendTelegramToAcademy(registrationId, message, meta = {}) {
+  const registration = await prisma.academyRegistration.findUnique({ where: { id: registrationId } })
+  if (!registration || !registration.telegramChatId) {
+    return { skipped: true, reason: 'no_telegram' }
+  }
+  const result = await sendTelegramToUser(registration.telegramChatId, message)
+
+  const logStatus = result.skipped ? 'skipped' : result.success ? 'sent' : 'failed'
+  prisma.messageLog.create({
+    data: {
+      type: 'academy',
+      recordId: registrationId,
+      channel: 'telegram',
+      status: logStatus,
+      providerResponse: result.data ? JSON.stringify(result.data) : null,
+      error: result.error ? String(result.error) : null,
+      auto: meta.auto || false,
+      triggerReason: meta.triggerReason || null,
+      recipient: registration.telegramChatId,
+      deliveryChannel: 'telegram',
+      fallbackUsed: false,
+    },
+  }).catch((e) => console.error('[Telegram] MessageLog write failed:', e.message))
+
+  return result
+}
+
 module.exports = {
   sendTelegramMessage,
   sendAndLogTelegramMessage,
   formatLeadTelegramMessage,
   formatAcademyTelegramMessage,
+  buildLeadTelegramStartLink,
+  buildAcademyTelegramStartLink,
+  sendTelegramToUser,
+  sendTelegramToLead,
+  sendTelegramToAcademy,
 }

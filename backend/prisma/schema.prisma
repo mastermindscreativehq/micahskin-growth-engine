@@ -42,6 +42,9 @@ model Lead {
   lastDeliveryStatus   String?                  // sent | skipped | failed
   autoReplyEnabled    Boolean   @default(true)  // whether auto-reply is enabled for this lead
   replyLock           Boolean   @default(false) // transient lock held by auto-trigger during send
+  telegramUsername    String?                   // Telegram @username (without @)
+  telegramChatId      String?                   // Telegram chat_id — set when lead taps /start in bot
+  telegramStarted     Boolean   @default(false) // true once lead has started the Telegram bot
   utmSource      String?
   replies        Reply[]
   utmMedium      String?
@@ -72,9 +75,12 @@ model AcademyRegistration {
   utmCampaign     String?
   utmContent      String?
   utmTerm         String?
-  status          String   @default("new") // new | contacted | paid | onboarded | closed
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  status           String   @default("new") // new | contacted | paid | onboarded | closed
+  telegramUsername String?                  // Telegram @username (without @)
+  telegramChatId   String?                  // Telegram chat_id — set when registrant taps /start in bot
+  telegramStarted  Boolean  @default(false) // true once registrant has started the Telegram bot
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@map("academy_registrations")
 }

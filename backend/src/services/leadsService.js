@@ -1,5 +1,5 @@
 const prisma = require('../lib/prisma')
-const { sendAndLogTelegramMessage, formatLeadTelegramMessage } = require('./telegramService')
+const { sendAndLogTelegramMessage, formatLeadTelegramMessage, buildLeadTelegramStartLink } = require('./telegramService')
 const { sendMessage } = require('./messageSenderService')
 const { normalizePhoneNumber } = require('../utils/phoneUtils')
 
@@ -212,7 +212,12 @@ async function createLead(data) {
       .catch(() => {})
   }
 
-  return lead
+  const telegramBotLink = buildLeadTelegramStartLink(lead.id)
+  const telegramConnectMessage = telegramBotLink
+    ? 'Click the button below to receive your personalised skincare advice on Telegram. Tap Start in the Telegram app to connect.'
+    : null
+
+  return { ...lead, telegramBotLink, telegramConnectMessage }
 }
 
 /**

@@ -1,5 +1,5 @@
 const prisma = require('../lib/prisma')
-const { sendAndLogTelegramMessage, formatAcademyTelegramMessage } = require('./telegramService')
+const { sendAndLogTelegramMessage, formatAcademyTelegramMessage, buildAcademyTelegramStartLink } = require('./telegramService')
 const { normalizePhoneNumber } = require('../utils/phoneUtils')
 
 const VALID_PLATFORMS = ['TikTok', 'Instagram', 'Other']
@@ -83,7 +83,12 @@ async function createRegistration(data) {
     recordId: registration.id,
   }).catch(() => {})
 
-  return registration
+  const telegramBotLink = buildAcademyTelegramStartLink(registration.id)
+  const telegramConnectMessage = telegramBotLink
+    ? 'Click the button below to receive your academy updates on Telegram. Tap Start in the Telegram app to connect.'
+    : null
+
+  return { ...registration, telegramBotLink, telegramConnectMessage }
 }
 
 /**

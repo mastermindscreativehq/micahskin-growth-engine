@@ -1,26 +1,21 @@
 /**
  * Delivery Service — outbound channel routing for lead messages.
  *
- * Channel priority order:
- *   1. whatsapp         — lead has a phone number   → WhatsApp Cloud API
- *   2. email            — lead has an email address → SendGrid
- *   3. telegram_fallback — no direct contact info   → Telegram admin relay (manual send)
+ * Channel priority order (Phase 10+ — Telegram primary):
+ *   1. telegram_direct        — lead has telegramChatId (has started the bot)
+ *   2. telegram_not_connected — no telegramChatId → admin alert to relay manually
  *
- * Telegram admin alerts (new lead notifications, reply ingestion, scheduler alerts)
+ * Email and WhatsApp are removed from the active delivery order. They can be
+ * re-enabled here once Telegram is stable.
+ *
+ * Admin alerts (new lead notifications, reply ingestion, scheduler alerts)
  * bypass this service entirely and call sendAndLogTelegramMessage() directly.
- *
- * WhatsApp failure path:
- *   On a failed WhatsApp send this service writes a 'failed' MessageLog entry,
- *   fires a Telegram admin alert with the reason, then re-throws so the caller
- *   does NOT mark the reply as sent or advance the lead's status.
  */
 
 const prisma = require('../lib/prisma')
-const { sendEmail } = require('./emailService')
-const { sendWhatsAppText, maskPhone } = require('./whatsappService')
-const { sendTelegramMessage } = require('./telegramService')
+const { sendTelegramToUser, sendTelegramMessage } = require('./telegramService')
 
-console.log('[Delivery] lead priority = whatsapp > email > telegram_fallback')
+console.log('[Delivery] lead priority = telegram_direct > telegram_not_connected (admin relay)')
 
 const TYPE_LABELS = {
   initial:     '✅ INITIAL REPLY SENT',
@@ -33,12 +28,11 @@ const TYPE_LABELS = {
  * Determines the best delivery channel for a lead.
  *
  * @param {object} lead
- * @returns {'email'|'whatsapp'|'telegram_fallback'}
+ * @returns {'telegram_direct'|'telegram_not_connected'}
  */
 function resolveChannel(lead) {
-  if (lead.phone)  return 'whatsapp'
-  if (lead.email)  return 'email'
-  return 'telegram_fallback'
+  if (lead.telegramChatId) return 'telegram_direct'
+  return 'telegram_not_connected'
 }
 
 /**
@@ -46,9 +40,9 @@ function resolveChannel(lead) {
  * Logs every attempt to message_logs with full delivery metadata.
  *
  * @param {object}  params
- * @param {object}  params.lead           - Lead record from DB (must have .id, .phone / .email)
+ * @param {object}  params.lead           - Lead record from DB (must have .id, .telegramChatId)
  * @param {string}  params.message        - Plain text message body
- * @param {string}  params.subject        - Email subject (email channel only)
+ * @param {string}  params.subject        - Kept for API compatibility; unused in Telegram channel
  * @param {string}  params.messageType    - 'initial' | 'follow_up_1' | 'follow_up_2' | 'follow_up_3'
  * @param {boolean} [params.auto]         - True if fired by auto-trigger service
  * @param {string}  [params.triggerReason] - 'initial_auto' | 'fu1_auto' | 'manual'
@@ -60,68 +54,30 @@ function resolveChannel(lead) {
  *   fallbackUsed: boolean,
  *   status: 'sent'|'skipped'
  * }>}
- * @throws {Error} when WhatsApp send fails (failed log + Telegram alert already written before throw)
  */
 async function deliverToLead({ lead, message, subject, messageType, auto = false, triggerReason = null }) {
   const channel = resolveChannel(lead)
-  const fallbackUsed = channel === 'telegram_fallback'
   let result
   let recipient
-  let logChannel
+  let fallbackUsed = false
+  let logChannel = 'telegram'
 
-  // ── Email ────────────────────────────────────────────────────────────────────
-  if (channel === 'email') {
-    recipient  = lead.email
-    logChannel = 'email'
-    result     = await sendEmail({ to: lead.email, subject, text: message })
-    console.log(`[Delivery] email → ${lead.email} (${lead.id}) type=${messageType}`)
+  // ── Telegram direct — lead has started the bot ────────────────────────────
+  if (channel === 'telegram_direct') {
+    recipient = lead.telegramChatId
+    result = await sendTelegramToUser(lead.telegramChatId, message)
+    console.log(`[Delivery] telegram_direct → chatId=${lead.telegramChatId} lead=${lead.id} type=${messageType} success=${result.success}`)
 
-  // ── WhatsApp ─────────────────────────────────────────────────────────────────
-  } else if (channel === 'whatsapp') {
-    recipient  = lead.phone
-    logChannel = 'whatsapp'
-    result     = await sendWhatsAppText({ to: lead.phone, body: message })
-    console.log(`[Delivery] whatsapp → ${maskPhone(lead.phone)} lead=${lead.id} type=${messageType} success=${result.success}`)
-
-    if (!result.success) {
-      // 1. Write the failed log entry immediately
-      prisma.messageLog.create({
-        data: {
-          type: 'lead',
-          recordId: lead.id,
-          channel: 'whatsapp',
-          status: 'failed',
-          providerResponse: result.providerResponse ? JSON.stringify(result.providerResponse) : null,
-          error: result.error ? String(result.error) : null,
-          auto,
-          triggerReason,
-          recipient: lead.phone,
-          deliveryChannel: 'whatsapp',
-          fallbackUsed: false,
-        },
-      }).catch((e) => console.error('[Delivery] MessageLog (failed) write error:', e.message))
-
-      // 2. Alert the admin via Telegram so the message can be relayed manually
-      const alertText = buildWhatsAppFailureAlert({ lead, message, messageType, error: result.error, auto, triggerReason })
-      sendTelegramMessage(alertText).catch(() => {})
-
-      // 3. Throw so the caller does not advance timestamps or mark as sent
-      const err = new Error(`WhatsApp delivery failed for lead ${lead.id} (${maskPhone(lead.phone)}): ${result.error}`)
-      err.status = 502
-      err.providerResponse = result.providerResponse
-      throw err
-    }
-
-  // ── Telegram admin relay ─────────────────────────────────────────────────────
+  // ── No Telegram — admin relay alert ───────────────────────────────────────
   } else {
-    recipient  = 'telegram_admin'
-    logChannel = 'telegram'
-    const relayText = buildRelayText({ lead, message, messageType, auto, triggerReason })
-    result = await sendTelegramMessage(relayText)
-    console.log(`[Delivery] telegram_fallback relay (lead ${lead.id}) type=${messageType}`)
+    recipient = 'telegram_admin'
+    fallbackUsed = true
+    const alertText = buildNoTelegramAlert({ lead, message, messageType, auto, triggerReason })
+    result = await sendTelegramMessage(alertText)
+    console.log(`[Delivery] telegram_not_connected relay (lead ${lead.id}) type=${messageType}`)
   }
 
-  // ── Persist successful/skipped delivery to message_logs ───────────────────────
+  // ── Persist delivery attempt to message_logs ──────────────────────────────
   const logStatus = result.skipped ? 'skipped' : result.success ? 'sent' : 'failed'
   prisma.messageLog.create({
     data: {
@@ -129,7 +85,7 @@ async function deliverToLead({ lead, message, subject, messageType, auto = false
       recordId: lead.id,
       channel: logChannel,
       status: logStatus,
-      providerResponse: result.providerResponse ? JSON.stringify(result.providerResponse) : null,
+      providerResponse: result.data ? JSON.stringify(result.data) : null,
       error: result.error ? String(result.error) : null,
       auto,
       triggerReason,
@@ -144,30 +100,11 @@ async function deliverToLead({ lead, message, subject, messageType, auto = false
 }
 
 /**
- * Builds the admin Telegram alert fired when a WhatsApp send fails.
- * Includes the original message body so the admin can relay it manually.
+ * Builds the admin Telegram alert when a lead has not yet connected their Telegram.
+ * Includes the full message so the admin can relay it manually via DM / comment.
  */
-function buildWhatsAppFailureAlert({ lead, message, messageType, error, auto, triggerReason }) {
-  const label = TYPE_LABELS[messageType] || 'MESSAGE'
-  const autoFlag = auto ? ' · <i>AUTO</i>' : ''
-
-  return (
-    `⚠️ <b>WhatsApp send FAILED — ${label}${autoFlag}</b>\n\n` +
-    `<b>Lead:</b> ${lead.fullName}` + (lead.handle ? ` · @${lead.handle}` : '') + `\n` +
-    `<b>Phone:</b> ${lead.phone}\n` +
-    `<b>Platform:</b> ${lead.sourcePlatform}\n` +
-    `<b>Error:</b> ${error || 'unknown'}\n\n` +
-    `<b>Message to relay manually:</b>\n${message}` +
-    (triggerReason ? `\n\n<i>Trigger: ${triggerReason}</i>` : '')
-  )
-}
-
-/**
- * Builds the Telegram relay notification for leads with no direct contact channel.
- * Only shown when the lead has neither email nor phone.
- */
-function buildRelayText({ lead, message, messageType, auto, triggerReason }) {
-  const label = TYPE_LABELS[messageType] || '✅ MESSAGE SENT'
+function buildNoTelegramAlert({ lead, message, messageType, auto, triggerReason }) {
+  const label = TYPE_LABELS[messageType] || '✅ MESSAGE'
   const autoFlag = auto ? ' · <i>AUTO</i>' : ''
 
   return (
@@ -175,9 +112,9 @@ function buildRelayText({ lead, message, messageType, auto, triggerReason }) {
     `<b>Lead:</b> ${lead.fullName}` + (lead.handle ? ` · @${lead.handle}` : '') + `\n` +
     `<b>Platform:</b> ${lead.sourcePlatform}` + (lead.sourceType ? ` · ${lead.sourceType}` : '') + `\n` +
     (lead.skinConcern ? `<b>Concern:</b> ${lead.skinConcern.replace(/_/g, ' ')}\n` : '') +
-    `\n<b>Message to send:</b>\n${message}` +
-    `\n<i>📭 No email or phone on file — please relay this message manually</i>` +
-    (triggerReason ? `\n\n<i>Trigger: ${triggerReason}</i>` : '')
+    `\n<b>Message to relay manually:</b>\n${message}` +
+    `\n\n⚠️ <i>Telegram not connected — lead has not started the bot yet</i>` +
+    (triggerReason ? `\n<i>Trigger: ${triggerReason}</i>` : '')
   )
 }
 

@@ -25,6 +25,8 @@ export default function SkincareForm({ onSuccess, onBack, prefill = {} }) {
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [submitted, setSubmitted] = useState(false)
+  const [telegramBotLink, setTelegramBotLink] = useState(null)
 
   function handleChange(e) {
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
@@ -36,7 +38,7 @@ export default function SkincareForm({ onSuccess, onBack, prefill = {} }) {
     setLoading(true)
     try {
       // Merge visible form fields with hidden tracking data from URL params
-      await submitLead({
+      const result = await submitLead({
         ...form,
         sourceType: prefill.sourceType || undefined,
         handle: prefill.handle || undefined,
@@ -48,7 +50,8 @@ export default function SkincareForm({ onSuccess, onBack, prefill = {} }) {
         utmContent: prefill.utmContent || undefined,
         utmTerm: prefill.utmTerm || undefined,
       })
-      onSuccess()
+      setTelegramBotLink(result.data?.telegramBotLink || null)
+      setSubmitted(true)
     } catch (err) {
       const messages = err.errors?.length
         ? err.errors.join(' · ')
@@ -59,6 +62,44 @@ export default function SkincareForm({ onSuccess, onBack, prefill = {} }) {
     }
   }
 
+  // ── Telegram success state ──────────────────────────────────────────────────
+  if (submitted) {
+    return (
+      <section className="px-6 py-14 bg-white min-h-screen">
+        <div className="max-w-lg mx-auto text-center">
+          <div className="text-5xl mb-4">✅</div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-3">You're registered!</h2>
+          <p className="text-gray-500 text-sm mb-2">
+            Your details have been received. Our team will be in touch soon.
+          </p>
+          {telegramBotLink && (
+            <>
+              <p className="text-gray-700 text-sm font-medium mb-6 mt-4 leading-relaxed">
+                To receive your personalised skincare advice on Telegram,<br />
+                tap the button below and click <strong>Start</strong> in the Telegram app.
+              </p>
+              <a
+                href={telegramBotLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-primary w-full block mb-4"
+              >
+                Continue on Telegram
+              </a>
+            </>
+          )}
+          <button
+            onClick={onSuccess}
+            className="text-sm text-gray-400 hover:text-gray-600 hover:underline mt-2 block w-full"
+          >
+            Continue without Telegram
+          </button>
+        </div>
+      </section>
+    )
+  }
+
+  // ── Form ───────────────────────────────────────────────────────────────────
   return (
     <section className="px-6 py-14 bg-white min-h-screen">
       <div className="max-w-lg mx-auto">
