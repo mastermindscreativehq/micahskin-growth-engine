@@ -13,6 +13,54 @@ import TermsOfServicePage from './pages/TermsOfServicePage.jsx'
 import ContactPage from './pages/ContactPage.jsx'
 import { checkAdminSession, logoutAdmin } from './api/index.js'
 
+// ---------------------------------------------------------------------------
+// Version staleness detection
+// ---------------------------------------------------------------------------
+
+function useVersionCheck() {
+  const [needsRefresh, setNeedsRefresh] = useState(false)
+
+  useEffect(() => {
+    async function check() {
+      try {
+        const res = await fetch('/version.json', { cache: 'no-store' })
+        if (!res.ok) return
+        const data = await res.json()
+        if (data.hash && data.hash !== __GIT_HASH__) {
+          setNeedsRefresh(true)
+        }
+      } catch {
+        // Dev mode or network failure — silently skip.
+      }
+    }
+
+    check()
+
+    // Re-check when the browser restores a page from the back-forward cache.
+    function onPageShow(e) {
+      if (e.persisted) check()
+    }
+    window.addEventListener('pageshow', onPageShow)
+    return () => window.removeEventListener('pageshow', onPageShow)
+  }, [])
+
+  return needsRefresh
+}
+
+function UpdateBanner() {
+  return (
+    <div className="fixed top-0 inset-x-0 z-50 flex items-center justify-center gap-4 bg-brand-600 px-4 py-2 text-sm text-white">
+      <span>A new version is available.</span>
+      <button
+        onClick={() => window.location.reload()}
+        className="font-semibold underline underline-offset-2 hover:opacity-80 transition-opacity"
+      >
+        Refresh now
+      </button>
+    </div>
+  )
+}
+
 // Maps lowercase query-param values to the canonical platform string stored in the DB.
 const PLATFORM_MAP = { instagram: 'Instagram', tiktok: 'TikTok', other: 'Other' }
 
@@ -118,13 +166,18 @@ function AdminView() {
 }
 
 export default function App() {
+  const needsRefresh = useVersionCheck()
+
   return (
-    <Routes>
-      <Route path="/" element={<Layout><HomeView /></Layout>} />
-      <Route path="/privacy-policy" element={<Layout><PrivacyPolicyPage /></Layout>} />
-      <Route path="/terms-of-service" element={<Layout><TermsOfServicePage /></Layout>} />
-      <Route path="/contact" element={<Layout><ContactPage /></Layout>} />
-      <Route path="/admin" element={<AdminView />} />
-    </Routes>
+    <>
+      {needsRefresh && <UpdateBanner />}
+      <Routes>
+        <Route path="/" element={<Layout><HomeView /></Layout>} />
+        <Route path="/privacy-policy" element={<Layout><PrivacyPolicyPage /></Layout>} />
+        <Route path="/terms-of-service" element={<Layout><TermsOfServicePage /></Layout>} />
+        <Route path="/contact" element={<Layout><ContactPage /></Layout>} />
+        <Route path="/admin" element={<AdminView />} />
+      </Routes>
+    </>
   )
 }
