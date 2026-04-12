@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { submitAcademyRegistration } from '../api/index.js'
+import PhoneInput, { combinePhone } from './PhoneInput.jsx'
 
 const PLATFORMS = ['TikTok', 'Instagram', 'Other']
 const LEVELS = [
@@ -12,7 +13,8 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {} }) {
   const [form, setForm] = useState({
     fullName: '',
     email: '',
-    phone: '',
+    countryKey: 'NG',
+    localPhone: '',
     businessType: '',
     experienceLevel: '',
     goals: '',
@@ -35,7 +37,13 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {} }) {
     try {
       // Merge visible form fields with hidden tracking data from URL params
       const result = await submitAcademyRegistration({
-        ...form,
+        fullName: form.fullName,
+        email: form.email,
+        phone: combinePhone(form.countryKey, form.localPhone),
+        businessType: form.businessType,
+        experienceLevel: form.experienceLevel,
+        goals: form.goals,
+        sourcePlatform: form.sourcePlatform,
         sourceType: prefill.sourceType || undefined,
         handle: prefill.handle || undefined,
         campaign: prefill.campaign || undefined,
@@ -146,17 +154,13 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {} }) {
           </div>
 
           <div>
-            <label className="form-label" htmlFor="phone">WhatsApp / Phone Number</label>
-            <input
-              id="phone"
-              name="phone"
-              type="tel"
-              className="form-input"
-              placeholder="+234 806 000 0000"
-              value={form.phone}
-              onChange={handleChange}
+            <label className="form-label">WhatsApp / Phone Number</label>
+            <PhoneInput
+              countryKey={form.countryKey}
+              localPhone={form.localPhone}
+              onCountryChange={(v) => setForm(prev => ({ ...prev, countryKey: v }))}
+              onLocalChange={(v) => setForm(prev => ({ ...prev, localPhone: v }))}
             />
-            <p className="mt-1 text-xs text-gray-400">Include your country code — e.g. +234… (Nigeria), +44… (UK), +1… (US)</p>
           </div>
 
           <div>

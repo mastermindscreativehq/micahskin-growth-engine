@@ -37,6 +37,7 @@ export default function AdminLogin({ onSuccess }) {
             MICAHSKIN <span className="text-brand-600">CRM</span>
           </h1>
           <p className="text-sm text-gray-400 mt-1">Team access only</p>
+          <p className="text-xs text-gray-300 font-mono mt-1">Build: {__GIT_HASH__}</p>
         </div>
 
         {/* Login card */}

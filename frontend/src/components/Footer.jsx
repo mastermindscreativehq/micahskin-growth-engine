@@ -37,6 +37,10 @@ export default function Footer() {
           © {new Date().getFullYear()} MICAHSKIN. All rights reserved.
         </p>
 
+        <p className="text-xs text-gray-200 font-mono">
+          Build: {__GIT_HASH__}
+        </p>
+
         <Link
           to="/admin"
           className="text-xs text-gray-200 hover:text-gray-400 transition-colors mt-1"

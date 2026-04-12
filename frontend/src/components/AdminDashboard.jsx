@@ -867,21 +867,21 @@ export default function AdminDashboard({ onBack, onLogout }) {
     <div className="min-h-screen bg-gray-50">
       {/* Top bar */}
       <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-3">
           <div>
             <h1 className="text-lg font-bold text-gray-900">MICAHSKIN <span className="text-brand-600">CRM</span></h1>
             <p className="text-xs text-gray-400">Internal dashboard</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={onBack}
-              className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs sm:text-sm text-gray-600 hover:bg-gray-50 transition-colors"
             >
-              ← Back to site
+              ← Back
             </button>
             <button
               onClick={onLogout}
-              className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors"
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs sm:text-sm text-gray-500 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors"
             >
               Sign out
             </button>
@@ -889,13 +889,13 @@ export default function AdminDashboard({ onBack, onLogout }) {
         </div>
 
         {/* Tab nav */}
-        <div className="mx-auto max-w-6xl px-4">
-          <nav className="flex gap-1">
+        <div className="mx-auto max-w-6xl px-4 overflow-x-auto">
+          <nav className="flex gap-1 min-w-max">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+                className={`border-b-2 px-4 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'border-brand-500 text-brand-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -909,7 +909,7 @@ export default function AdminDashboard({ onBack, onLogout }) {
       </header>
 
       {/* Content */}
-      <main className="mx-auto max-w-6xl px-4 py-8">
+      <main className="mx-auto max-w-6xl px-3 sm:px-4 py-5 sm:py-8">
         {activeTab === 'overview' && <OverviewTab />}
         {activeTab === 'leads' && <LeadsTab />}
         {activeTab === 'academy' && <AcademyTab />}
