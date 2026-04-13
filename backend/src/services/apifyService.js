@@ -223,7 +223,7 @@ async function triggerCommentScrapeRun(postUrls) {
     throw err
   }
 
-  const actorId = process.env.APIFY_COMMENT_ACTOR_ID || 'apify~instagram-comment-scraper'
+  const actorId = process.env.APIFY_COMMENT_ACTOR_ID || 'apify/instagram-comment-scraper'
   const url = `${APIFY_BASE}/acts/${encodeURIComponent(actorId)}/runs?token=${encodeURIComponent(token)}`
 
   const input = {
