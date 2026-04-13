@@ -9,6 +9,9 @@ import {
   sendFollowUp,
   importInstagramDataset,
   fetchScrapingDebugAuth,
+  prepareInstagramComments,
+  runInstagramComments,
+  fetchCommentTargetStats,
 } from '../api/index.js'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -1080,6 +1083,7 @@ const DIAGNOSTICS_ROWS = [
 ]
 
 function ScrapingTab() {
+  // ── Phase 15: Post discovery import ──────────────────────────────────────
   const [datasetId, setDatasetId]   = useState('')
   const [platform, setPlatform]     = useState('instagram')
   const [loading, setLoading]       = useState(false)
@@ -1087,11 +1091,34 @@ function ScrapingTab() {
   const [error, setError]           = useState(null)
   const [authStatus, setAuthStatus] = useState(null)
 
+  // ── Phase 16: Comment target pipeline ────────────────────────────────────
+  const [commentDatasetId, setCommentDatasetId]   = useState('')
+  const [prepareLoading, setPrepareLoading]       = useState(false)
+  const [prepareResult, setPrepareResult]         = useState(null)
+  const [prepareError, setPrepareError]           = useState(null)
+
+  const [harvestLimit, setHarvestLimit]   = useState('50')
+  const [harvestLoading, setHarvestLoading] = useState(false)
+  const [harvestResult, setHarvestResult]   = useState(null)
+  const [harvestError, setHarvestError]     = useState(null)
+
+  const [targetStats, setTargetStats]   = useState(null)
+  const [statsLoading, setStatsLoading] = useState(false)
+
   useEffect(() => {
     fetchScrapingDebugAuth()
       .then(setAuthStatus)
       .catch(() => setAuthStatus({ routeLive: false, authenticated: false, adminSessionPresent: false }))
+    loadTargetStats()
   }, [])
+
+  function loadTargetStats() {
+    setStatsLoading(true)
+    fetchCommentTargetStats()
+      .then(d => setTargetStats(d.data))
+      .catch(() => {})
+      .finally(() => setStatsLoading(false))
+  }
 
   async function handleImport() {
     if (!datasetId.trim()) {
@@ -1111,17 +1138,53 @@ function ScrapingTab() {
     }
   }
 
+  async function handlePrepare() {
+    if (!commentDatasetId.trim()) {
+      setPrepareError('Dataset ID is required.')
+      return
+    }
+    setPrepareLoading(true)
+    setPrepareError(null)
+    setPrepareResult(null)
+    try {
+      const data = await prepareInstagramComments(commentDatasetId.trim())
+      setPrepareResult(data.data)
+      loadTargetStats()
+    } catch (err) {
+      setPrepareError(err.message || 'Prepare failed. Check the server logs.')
+    } finally {
+      setPrepareLoading(false)
+    }
+  }
+
+  async function handleHarvest() {
+    const limit = parseInt(harvestLimit) || 50
+    setHarvestLoading(true)
+    setHarvestError(null)
+    setHarvestResult(null)
+    try {
+      const data = await runInstagramComments(limit)
+      setHarvestResult(data.data)
+      loadTargetStats()
+    } catch (err) {
+      setHarvestError(err.message || 'Harvest failed. Check the server logs.')
+    } finally {
+      setHarvestLoading(false)
+    }
+  }
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="space-y-8">
+
+      {/* ── Header ── */}
       <div>
-        <h2 className="text-xl font-semibold text-gray-900">Instagram Lead Import</h2>
+        <h2 className="text-xl font-semibold text-gray-900">Instagram Scraping Pipeline</h2>
         <p className="text-sm text-gray-500 mt-1">
-          Trigger an Apify dataset import and run the full ingestion pipeline — no terminal required.
+          Import discovery datasets, extract comment targets, and trigger harvests — no terminal required.
         </p>
       </div>
 
-      {/* Route / auth health pill */}
+      {/* ── Route / auth health pill ── */}
       {authStatus && (
         <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-sm ${
           authStatus.authenticated
@@ -1141,9 +1204,14 @@ function ScrapingTab() {
         </div>
       )}
 
-      {/* Import form */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          STAGE 1 — Post Discovery Import
+          ══════════════════════════════════════════════════════════════════ */}
       <div className="rounded-xl border border-gray-200 bg-white p-6 space-y-5">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Import Dataset</h3>
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Stage 1 — Import Discovery Dataset</h3>
+          <p className="text-xs text-gray-400 mt-1">Fetch posts/hashtag data from an Apify dataset and ingest them as CRM leads.</p>
+        </div>
 
         <div className="grid gap-4 sm:grid-cols-[1fr_160px]">
           <div>
@@ -1176,21 +1244,15 @@ function ScrapingTab() {
         >
           {loading ? 'Importing…' : 'Import Dataset'}
         </button>
-      </div>
 
-      {/* Error state */}
-      {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          <strong>Error:</strong> {error}
-        </div>
-      )}
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <strong>Error:</strong> {error}
+          </div>
+        )}
 
-      {/* Results */}
-      {result && (
-        <div className="space-y-4">
-          {/* Metric tiles */}
-          <div className="rounded-xl border border-green-200 bg-white p-6 space-y-4">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Import Results</h3>
+        {result && (
+          <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {IMPORT_METRICS.map(({ label, key, color }) => (
                 <div key={key} className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-center">
@@ -1199,33 +1261,207 @@ function ScrapingTab() {
                 </div>
               ))}
             </div>
-          </div>
-
-          {/* Diagnostics box */}
-          <div className="rounded-xl border border-gray-200 bg-gray-50 p-5">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Last Import Diagnostics</h3>
-            <dl className="space-y-1">
-              {DIAGNOSTICS_ROWS.map(({ label, key }) => (
-                <div key={key} className="flex justify-between text-sm">
-                  <dt className="text-gray-600 font-mono">{label}</dt>
-                  <dd className={`font-semibold tabular-nums ${
-                    key === 'errors' && (result[key] ?? 0) > 0 ? 'text-red-600' :
-                    key === 'qualifiedLeads' && (result[key] ?? 0) > 0 ? 'text-green-700' :
-                    'text-gray-900'
-                  }`}>
-                    {result[key] ?? 0}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-            <div className="mt-3 border-t border-gray-200 pt-3 text-xs text-gray-400 font-mono space-y-0.5">
-              <div>rawFetched = droppedInvalidShape + duplicatesSkipped + droppedMissingText + sentToProcessing</div>
-              <div>sentToProcessing = processed + errors</div>
-              <div>processed = qualifiedLeads + rejected</div>
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-5">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Diagnostics</h4>
+              <dl className="space-y-1">
+                {DIAGNOSTICS_ROWS.map(({ label, key }) => (
+                  <div key={key} className="flex justify-between text-sm">
+                    <dt className="text-gray-600 font-mono">{label}</dt>
+                    <dd className={`font-semibold tabular-nums ${
+                      key === 'errors' && (result[key] ?? 0) > 0 ? 'text-red-600' :
+                      key === 'qualifiedLeads' && (result[key] ?? 0) > 0 ? 'text-green-700' :
+                      'text-gray-900'
+                    }`}>
+                      {result[key] ?? 0}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="mt-3 border-t border-gray-200 pt-3 text-xs text-gray-400 font-mono space-y-0.5">
+                <div>rawFetched = droppedInvalidShape + duplicatesSkipped + droppedMissingText + sentToProcessing</div>
+                <div>sentToProcessing = processed + errors</div>
+                <div>processed = qualifiedLeads + rejected</div>
+              </div>
             </div>
           </div>
+        )}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          STAGE 2 — Prepare Comment Targets
+          ══════════════════════════════════════════════════════════════════ */}
+      <div className="rounded-xl border border-gray-200 bg-white p-6 space-y-5">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Stage 2 — Prepare Comment Targets</h3>
+          <p className="text-xs text-gray-400 mt-1">
+            Extract valid post/reel URLs from a discovery dataset and queue them for comment scraping.
+            Rejects hashtag explore and profile URLs. Deduplicates by shortcode.
+          </p>
         </div>
-      )}
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Discovery Dataset ID</label>
+          <input
+            type="text"
+            value={commentDatasetId}
+            onChange={(e) => { setCommentDatasetId(e.target.value); setPrepareError(null) }}
+            onKeyDown={(e) => e.key === 'Enter' && !prepareLoading && handlePrepare()}
+            placeholder="e.g. abc123xyz456 (same as Stage 1)"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-brand-400"
+          />
+        </div>
+
+        <button
+          onClick={handlePrepare}
+          disabled={prepareLoading || !commentDatasetId.trim()}
+          className="rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 active:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+        >
+          {prepareLoading ? 'Preparing…' : 'Prepare Comment Targets'}
+        </button>
+
+        {prepareError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <strong>Error:</strong> {prepareError}
+          </div>
+        )}
+
+        {prepareResult && (
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-5 space-y-3">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-indigo-700">Prepare Results</h4>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {[
+                { label: 'Raw Items Seen',    key: 'rawItemsSeen',       color: 'text-gray-900' },
+                { label: 'Valid Candidates',  key: 'validCandidates',    color: 'text-indigo-700' },
+                { label: 'New Saved',         key: 'newTargetsSaved',    color: 'text-green-700' },
+                { label: 'Dupes Skipped',     key: 'duplicatesSkipped',  color: 'text-gray-500' },
+                { label: 'Invalid / Skipped', key: 'invalidSkipped',     color: 'text-yellow-600' },
+                { label: 'Bad Shape',         key: 'droppedInvalidShape',color: 'text-yellow-600' },
+              ].map(({ label, key, color }) => (
+                <div key={key} className="rounded-lg border border-indigo-100 bg-white px-4 py-3 text-center">
+                  <div className={`text-2xl font-bold ${color}`}>{prepareResult[key] ?? 0}</div>
+                  <div className="mt-0.5 text-xs text-gray-500">{label}</div>
+                </div>
+              ))}
+            </div>
+            <div className="text-xs text-indigo-500 font-mono">
+              rawItemsSeen = droppedInvalidShape + invalidSkipped + duplicatesSkipped + validCandidates
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          STAGE 3 — Run Comment Harvest
+          ══════════════════════════════════════════════════════════════════ */}
+      <div className="rounded-xl border border-gray-200 bg-white p-6 space-y-5">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Stage 3 — Run Comment Harvest</h3>
+          <p className="text-xs text-gray-400 mt-1">
+            Send pending targets to Apify's Instagram Comment Scraper. Targets are marked
+            <em> running</em> until the Apify run completes (check console for results).
+          </p>
+        </div>
+
+        {/* Pipeline status bar */}
+        <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Target Pipeline Status</span>
+            <button
+              onClick={loadTargetStats}
+              disabled={statsLoading}
+              className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50 transition-colors"
+            >
+              {statsLoading ? 'Refreshing…' : '↺ Refresh'}
+            </button>
+          </div>
+          {targetStats ? (
+            <div className="grid grid-cols-5 gap-2 text-center">
+              {[
+                { label: 'Total',   value: targetStats.total,   color: 'text-gray-900' },
+                { label: 'Pending', value: targetStats.pending, color: 'text-yellow-600' },
+                { label: 'Running', value: targetStats.running, color: 'text-blue-600' },
+                { label: 'Done',    value: targetStats.done,    color: 'text-green-600' },
+                { label: 'Failed',  value: targetStats.failed,  color: 'text-red-600'  },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                  <div className={`text-xl font-bold ${color}`}>{value ?? 0}</div>
+                  <div className="text-xs text-gray-400">{label}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-gray-400">Loading stats…</div>
+          )}
+        </div>
+
+        <div className="flex items-end gap-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">Batch Limit</label>
+            <input
+              type="number"
+              min="1"
+              max="200"
+              value={harvestLimit}
+              onChange={(e) => setHarvestLimit(e.target.value)}
+              className="w-28 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+            />
+          </div>
+          <button
+            onClick={handleHarvest}
+            disabled={harvestLoading || (targetStats && targetStats.pending === 0)}
+            className="rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 active:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+          >
+            {harvestLoading ? 'Triggering…' : 'Run Comment Harvest'}
+          </button>
+        </div>
+
+        {harvestError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <strong>Error:</strong> {harvestError}
+          </div>
+        )}
+
+        {harvestResult && (
+          <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-5 space-y-3">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Harvest Triggered</h4>
+            {harvestResult.targetsQueued === 0 ? (
+              <p className="text-sm text-gray-600">{harvestResult.message}</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="rounded-lg border border-emerald-100 bg-white px-4 py-3 text-center">
+                    <div className="text-2xl font-bold text-emerald-700">{harvestResult.targetsQueued}</div>
+                    <div className="text-xs text-gray-500">Targets Queued</div>
+                  </div>
+                  <div className="rounded-lg border border-emerald-100 bg-white px-4 py-3 text-center">
+                    <div className="text-2xl font-bold text-gray-900">{harvestResult.pendingFound}</div>
+                    <div className="text-xs text-gray-500">Pending Found</div>
+                  </div>
+                  <div className="rounded-lg border border-emerald-100 bg-white px-4 py-3 text-center">
+                    <div className="text-xs font-bold text-blue-700 break-all leading-tight pt-1">{harvestResult.apifyRunId ?? '—'}</div>
+                    <div className="text-xs text-gray-500 mt-1">Apify Run ID</div>
+                  </div>
+                  <div className="rounded-lg border border-emerald-100 bg-white px-4 py-3 text-center">
+                    <div className="text-sm font-bold text-gray-700">{harvestResult.apifyRunStatus ?? '—'}</div>
+                    <div className="text-xs text-gray-500">Run Status</div>
+                  </div>
+                </div>
+                {harvestResult.apifyRunUrl && (
+                  <a
+                    href={harvestResult.apifyRunUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block text-xs text-emerald-700 underline hover:text-emerald-900"
+                  >
+                    View run in Apify console →
+                  </a>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
     </div>
   )
 }

@@ -1,10 +1,11 @@
 /**
  * scrapingController.js
  * Thin HTTP handlers for the scraping/import routes.
- * All business logic lives in leadIngestionService.
+ * All business logic lives in leadIngestionService and commentScrapeService.
  */
 
 const { importApifyDataset } = require('../services/leadIngestionService')
+const { prepareCommentTargets, runCommentHarvest, getCommentTargetStats } = require('../services/commentScrapeService')
 
 // ── POST /api/scraping/apify/import-instagram ─────────────────────────────────
 // Body: { datasetId: string, platform?: string }
@@ -100,4 +101,54 @@ async function listRawItems(req, res) {
   }
 }
 
-module.exports = { importInstagram, listRawItems }
+// ── POST /api/scraping/apify/prepare-instagram-comments ───────────────────────
+// Body: { datasetId: string }
+// Auth: requireAuth (admin only)
+// Reads discovery items from an Apify dataset, extracts valid post/reel URLs,
+// deduplicates against DB, and saves new comment_scrape_targets rows.
+async function prepareInstagramComments(req, res) {
+  const { datasetId } = req.body
+
+  if (!datasetId || typeof datasetId !== 'string' || !datasetId.trim()) {
+    return res.status(400).json({ success: false, message: 'datasetId is required.' })
+  }
+
+  try {
+    const summary = await prepareCommentTargets(datasetId.trim())
+    return res.status(200).json({ success: true, data: summary })
+  } catch (err) {
+    console.error('[ScrapingController] prepareInstagramComments failed:', err.message)
+    return res.status(err.status || 500).json({ success: false, message: err.message })
+  }
+}
+
+// ── POST /api/scraping/apify/run-instagram-comments ───────────────────────────
+// Body: { limit?: number }   (default 50, max 200)
+// Auth: requireAuth (admin only)
+// Picks pending comment_scrape_targets, triggers Apify run, marks rows 'running'.
+async function runInstagramComments(req, res) {
+  const limit = req.body.limit ?? 50
+
+  try {
+    const result = await runCommentHarvest(limit)
+    return res.status(200).json({ success: true, data: result })
+  } catch (err) {
+    console.error('[ScrapingController] runInstagramComments failed:', err.message)
+    return res.status(err.status || 500).json({ success: false, message: err.message })
+  }
+}
+
+// ── GET /api/scraping/comment-targets/stats ───────────────────────────────────
+// Auth: requireAuth (admin only)
+// Returns aggregate counts: { pending, running, done, failed, total }
+async function commentTargetStats(req, res) {
+  try {
+    const stats = await getCommentTargetStats()
+    return res.status(200).json({ success: true, data: stats })
+  } catch (err) {
+    console.error('[ScrapingController] commentTargetStats failed:', err.message)
+    return res.status(500).json({ success: false, message: err.message })
+  }
+}
+
+module.exports = { importInstagram, listRawItems, prepareInstagramComments, runInstagramComments, commentTargetStats }

@@ -200,4 +200,73 @@ function parseDate(value) {
  * @property {object}  rawJson
  */
 
-module.exports = { fetchAndNormaliseDataset }
+/**
+ * Trigger an Apify actor run for Instagram comment scraping.
+ *
+ * Actor is configured via APIFY_COMMENT_ACTOR_ID env var.
+ * Defaults to 'apify~instagram-comment-scraper'.
+ *
+ * @param {string[]} postUrls  Canonical Instagram post/reel URLs to scrape comments from
+ * @returns {Promise<{runId: string, runUrl: string, status: string}>}
+ */
+async function triggerCommentScrapeRun(postUrls) {
+  const token = process.env.APIFY_API_TOKEN
+  if (!token) {
+    const err = new Error('APIFY_API_TOKEN is not configured')
+    err.status = 500
+    throw err
+  }
+
+  if (!Array.isArray(postUrls) || postUrls.length === 0) {
+    const err = new Error('postUrls must be a non-empty array')
+    err.status = 400
+    throw err
+  }
+
+  const actorId = process.env.APIFY_COMMENT_ACTOR_ID || 'apify~instagram-comment-scraper'
+  const url = `${APIFY_BASE}/acts/${encodeURIComponent(actorId)}/runs?token=${encodeURIComponent(token)}`
+
+  const input = {
+    directUrls: postUrls,
+    resultsType: 'comments',
+    resultsLimit: 50,
+    includeNestedComments: false,
+  }
+
+  console.log(`[Apify] Triggering comment scrape run for ${postUrls.length} URL(s) via actor ${actorId}`)
+
+  let result
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = await res.text()
+      const err = new Error(`Apify API returned ${res.status}: ${body}`)
+      err.status = 502
+      throw err
+    }
+    result = await res.json()
+  } catch (fetchErr) {
+    if (fetchErr.status) throw fetchErr
+    const err = new Error(`Failed to reach Apify API: ${fetchErr.message}`)
+    err.status = 502
+    throw err
+  }
+
+  const run = result.data
+  const runId = run.id
+  const runUrl = `https://console.apify.com/actors/${actorId}/runs/${runId}`
+
+  console.log(`[Apify] Comment scrape run started — ID: ${runId}, status: ${run.status}`)
+
+  return {
+    runId,
+    runUrl,
+    status: run.status,
+  }
+}
+
+module.exports = { fetchAndNormaliseDataset, triggerCommentScrapeRun }

@@ -216,3 +216,51 @@ export async function fetchScrapingDebugAuth() {
   })
   return res.json()
 }
+
+/**
+ * Extract valid post/reel URLs from a discovery dataset and save them as
+ * comment_scrape_targets (pending).
+ * Returns PrepareSummary: { rawItemsSeen, droppedInvalidShape, validCandidates,
+ *   newTargetsSaved, duplicatesSkipped, invalidSkipped }
+ */
+export async function prepareInstagramComments(datasetId) {
+  const res = await fetch(`${BASE_URL}/api/scraping/apify/prepare-instagram-comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ datasetId }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
+
+/**
+ * Pick up to `limit` pending comment scrape targets and trigger an Apify run.
+ * Returns HarvestResult: { pendingFound, targetsQueued, apifyRunId, apifyRunUrl,
+ *   apifyRunStatus }
+ */
+export async function runInstagramComments(limit = 50) {
+  const res = await fetch(`${BASE_URL}/api/scraping/apify/run-instagram-comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ limit }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
+
+/**
+ * Fetch aggregate counts for comment_scrape_targets by status.
+ * Returns: { pending, running, done, failed, total }
+ */
+export async function fetchCommentTargetStats() {
+  const res = await fetch(`${BASE_URL}/api/scraping/comment-targets/stats`, {
+    credentials: 'include',
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}

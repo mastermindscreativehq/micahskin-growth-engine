@@ -2,13 +2,22 @@
  * routes/scraping.js
  * All routes require admin authentication (requireAuth middleware).
  *
- * POST /api/scraping/apify/import-instagram   — trigger Apify dataset import
- * GET  /api/scraping/raw-items                — browse ingested raw items
+ * POST /api/scraping/apify/import-instagram            — trigger Apify dataset import (Phase 15)
+ * GET  /api/scraping/raw-items                         — browse ingested raw items
+ * POST /api/scraping/apify/prepare-instagram-comments  — extract post URLs → comment_scrape_targets
+ * POST /api/scraping/apify/run-instagram-comments      — trigger Apify comment scrape run
+ * GET  /api/scraping/comment-targets/stats             — aggregate counts by status
  */
 
 const express = require('express')
 const requireAuth = require('../middleware/requireAuth')
-const { importInstagram, listRawItems } = require('../controllers/scrapingController')
+const {
+  importInstagram,
+  listRawItems,
+  prepareInstagramComments,
+  runInstagramComments,
+  commentTargetStats,
+} = require('../controllers/scrapingController')
 
 const router = express.Router()
 
@@ -34,5 +43,16 @@ router.post('/apify/import-instagram', importInstagram)
 // Browse raw ingested items (with optional filtering)
 // Query: ?page=1&limit=50&platform=instagram&temperature=hot&decision=ingest
 router.get('/raw-items', listRawItems)
+
+// Extract valid post/reel URLs from a discovery dataset → save as comment_scrape_targets
+// Body: { datasetId: string }
+router.post('/apify/prepare-instagram-comments', prepareInstagramComments)
+
+// Pick pending targets, trigger Apify comment scrape run, mark rows as 'running'
+// Body: { limit?: number }
+router.post('/apify/run-instagram-comments', runInstagramComments)
+
+// Aggregate counts by status: { pending, running, done, failed, total }
+router.get('/comment-targets/stats', commentTargetStats)
 
 module.exports = router

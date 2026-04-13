@@ -165,6 +165,23 @@ model SocialLeadDecision {
   @@map("social_lead_decisions")
 }
 
+// Post/reel URLs extracted from discovery datasets and queued for comment harvesting
+model CommentScrapeTarget {
+  id              String   @id @default(cuid())
+  platform        String   // 'instagram'
+  sourceDatasetId String   // Apify discovery dataset ID this target came from
+  sourceUrl       String?  // raw URL from Apify item before normalisation
+  postUrl         String   // canonical https://www.instagram.com/p/{code}/ or /reel/{code}/
+  shortcode       String   @unique  // post shortcode — deduplication key
+  postType        String   @default("post")  // 'post' | 'reel'
+  status          String   @default("pending")  // pending | running | done | failed
+  apifyRunId      String?  // Apify run ID once triggered
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("comment_scrape_targets")
+}
+
 // Tracks every outbound message sent to a lead or registrant
 model MessageLog {
   id               String   @id @default(cuid())
