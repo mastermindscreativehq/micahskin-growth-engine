@@ -258,7 +258,10 @@ async function triggerCommentScrapeRun(postUrls) {
 
   const run = result.data
   const runId = run.id
-  const runUrl = `https://console.apify.com/actors/${actorId}/runs/${runId}`
+  // Apify console URLs use '~' as the username/actor-name separator;
+  // the REST API accepts '/' but the console does not.
+  const consoleActorId = actorId.replace('/', '~')
+  const runUrl = `https://console.apify.com/actors/${consoleActorId}/runs/${runId}`
 
   console.log(`[Apify] Comment scrape run started — ID: ${runId}, status: ${run.status}`)
 
