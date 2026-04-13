@@ -1050,14 +1050,33 @@ function Pagination({ page, pages, total, onPage }) {
 // ── Scraping Tab ─────────────────────────────────────────────────────────────
 
 const IMPORT_METRICS = [
-  { label: 'Raw Fetched',      key: 'importedRaw' },
-  { label: 'Dupes Skipped',    key: 'duplicatesSkipped' },
-  { label: 'Processed',        key: 'processed' },
-  { label: 'Qualified Leads',  key: 'qualifiedLeads' },
-  { label: 'Hot',              key: 'hot' },
-  { label: 'Warm',             key: 'warm' },
-  { label: 'Cold',             key: 'cold' },
-  { label: 'Rejected',         key: 'rejected' },
+  { label: 'Raw Fetched',      key: 'rawFetched',          color: 'text-gray-900' },
+  { label: 'Dupes Skipped',    key: 'duplicatesSkipped',   color: 'text-gray-500' },
+  { label: 'Sent to Pipeline', key: 'sentToProcessing',    color: 'text-blue-700' },
+  { label: 'Processed',        key: 'processed',           color: 'text-gray-900' },
+  { label: 'Qualified Leads',  key: 'qualifiedLeads',      color: 'text-green-700' },
+  { label: 'Hot',              key: 'hot',                 color: 'text-red-600' },
+  { label: 'Warm',             key: 'warm',                color: 'text-orange-500' },
+  { label: 'Cold',             key: 'cold',                color: 'text-blue-500' },
+  { label: 'Rejected',         key: 'rejected',            color: 'text-gray-400' },
+  { label: 'No Text',          key: 'droppedMissingText',  color: 'text-yellow-600' },
+  { label: 'Bad Shape',        key: 'droppedInvalidShape', color: 'text-yellow-600' },
+  { label: 'Errors',           key: 'errors',              color: 'text-red-700' },
+]
+
+const DIAGNOSTICS_ROWS = [
+  { label: 'Raw Fetched',              key: 'rawFetched' },
+  { label: 'Dropped — invalid shape',  key: 'droppedInvalidShape' },
+  { label: 'Duplicates skipped',       key: 'duplicatesSkipped' },
+  { label: 'Dropped — missing text',   key: 'droppedMissingText' },
+  { label: 'Sent to processing',       key: 'sentToProcessing' },
+  { label: 'Processed (total)',        key: 'processed' },
+  { label: '↳ Qualified leads',        key: 'qualifiedLeads' },
+  { label: '  ↳ Hot',                  key: 'hot' },
+  { label: '  ↳ Warm',                 key: 'warm' },
+  { label: '↳ Rejected',               key: 'rejected' },
+  { label: '↳ Cold (rejected tier)',   key: 'cold' },
+  { label: 'Errors (item-level)',      key: 'errors' },
 ]
 
 function ScrapingTab() {
@@ -1168,15 +1187,42 @@ function ScrapingTab() {
 
       {/* Results */}
       {result && (
-        <div className="rounded-xl border border-green-200 bg-white p-6 space-y-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Import Results</h3>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {IMPORT_METRICS.map(({ label, key }) => (
-              <div key={key} className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-center">
-                <div className="text-2xl font-bold text-gray-900">{result[key] ?? 0}</div>
-                <div className="mt-0.5 text-xs text-gray-500">{label}</div>
-              </div>
-            ))}
+        <div className="space-y-4">
+          {/* Metric tiles */}
+          <div className="rounded-xl border border-green-200 bg-white p-6 space-y-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Import Results</h3>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {IMPORT_METRICS.map(({ label, key, color }) => (
+                <div key={key} className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-center">
+                  <div className={`text-2xl font-bold ${color}`}>{result[key] ?? 0}</div>
+                  <div className="mt-0.5 text-xs text-gray-500">{label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Diagnostics box */}
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-5">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Last Import Diagnostics</h3>
+            <dl className="space-y-1">
+              {DIAGNOSTICS_ROWS.map(({ label, key }) => (
+                <div key={key} className="flex justify-between text-sm">
+                  <dt className="text-gray-600 font-mono">{label}</dt>
+                  <dd className={`font-semibold tabular-nums ${
+                    key === 'errors' && (result[key] ?? 0) > 0 ? 'text-red-600' :
+                    key === 'qualifiedLeads' && (result[key] ?? 0) > 0 ? 'text-green-700' :
+                    'text-gray-900'
+                  }`}>
+                    {result[key] ?? 0}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            <div className="mt-3 border-t border-gray-200 pt-3 text-xs text-gray-400 font-mono space-y-0.5">
+              <div>rawFetched = droppedInvalidShape + duplicatesSkipped + droppedMissingText + sentToProcessing</div>
+              <div>sentToProcessing = processed + errors</div>
+              <div>processed = qualifiedLeads + rejected</div>
+            </div>
           </div>
         </div>
       )}

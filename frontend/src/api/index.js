@@ -190,8 +190,9 @@ export async function sendFollowUp(id, num) {
 /**
  * Trigger an Apify dataset import from the admin CRM.
  * Uses the existing browser session — no terminal or manual cookie copy needed.
- * Returns ImportSummary: { importedRaw, duplicatesSkipped, processed,
- *   qualifiedLeads, hot, warm, cold, rejected }
+ * Returns ImportSummary: { rawFetched, duplicatesSkipped, sentToProcessing,
+ *   processed, qualifiedLeads, hot, warm, cold, rejected,
+ *   droppedMissingText, droppedInvalidShape, errors }
  */
 export async function importInstagramDataset(datasetId, platform = 'instagram') {
   const res = await fetch(`${BASE_URL}/api/scraping/apify/import-instagram`, {

@@ -5,12 +5,21 @@
  * Pipeline steps for each raw item:
  *   1. Normalise (done by apifyService before this runs)
  *   2. Deduplicate — skip if externalId already in raw_social_items
- *   3. Persist raw item to raw_social_items
- *   4. Classify intent (intentClassifierService)
- *   5. Score + assign temperature (leadScoringService)
- *   6. Persist decision to social_lead_decisions
- *   7. If decision = 'ingest' (hot or warm) → create CRM Lead record
- *   8. Link created Lead ID back to the decision row
+ *   3. Pre-filter — skip if text is missing/too short (droppedMissingText)
+ *   4. Persist raw item to raw_social_items
+ *   5. Classify intent (intentClassifierService)
+ *   6. Score + assign temperature (leadScoringService)
+ *   7. Persist decision to social_lead_decisions
+ *   8. If decision = 'ingest' (hot or warm) → create CRM Lead record
+ *   9. Link created Lead ID back to the decision row
+ *
+ * Every non-duplicate item lands in exactly one outcome bucket:
+ *   droppedMissingText | processed (qualifiedLeads | rejected) | errors
+ *
+ * Invariants guaranteed:
+ *   rawFetched = droppedInvalidShape + duplicatesSkipped + droppedMissingText + sentToProcessing
+ *   sentToProcessing = processed + errors
+ *   processed = qualifiedLeads + rejected
  *
  * Returns an ImportSummary object to the controller.
  */
@@ -48,41 +57,99 @@ async function importApifyDataset(datasetId, platform) {
   console.log(`[Ingestion] Starting import — datasetId=${datasetId}, platform=${platform}`)
 
   // 1 — Fetch + normalise from Apify
-  const items = await fetchAndNormaliseDataset(datasetId, platform)
+  const { rawCount, items, droppedInvalidShape } = await fetchAndNormaliseDataset(datasetId, platform)
 
-  if (items.length === 0) {
-    console.log('[Ingestion] Dataset is empty or produced no normalisable items.')
-    return buildSummary(0, [], [])
+  console.log(
+    `[Ingestion] Apify rawCount=${rawCount} | normalised=${items.length} | ` +
+    `droppedInvalidShape=${droppedInvalidShape}`,
+  )
+
+  if (rawCount === 0) {
+    console.log('[Ingestion] Dataset is empty or produced no items.')
+    return buildSummary({
+      rawCount: 0,
+      droppedInvalidShape: 0,
+      skippedDupes: 0,
+      droppedMissingText: 0,
+      decisions: [],
+      errors: 0,
+    })
   }
 
-  // 2 — Batch dedupe check before the loop (one DB query instead of N)
+  // 2 — Batch dedupe check (one DB query instead of N)
   const allExternalIds = items.map(i => i.externalId)
   const existingIds = await findExistingIds(allExternalIds)
-
   const newItems = items.filter(i => !existingIds.has(i.externalId))
-  const skippedDupes = items.length - newItems.length
+  const skippedDupes = existingIds.size
 
-  console.log(`[Ingestion] ${items.length} total | ${skippedDupes} duplicates skipped | ${newItems.length} to process`)
+  console.log(
+    `[Ingestion] deduped: ${items.length} normalised | ${skippedDupes} already in DB | ` +
+    `${newItems.length} new`,
+  )
 
-  // 3–7 — Process each new item sequentially to keep DB load manageable
-  const decisions = []
+  // 3 — Pre-filter: drop items with no usable text before hitting the DB
+  let droppedMissingText = 0
+  const itemsToProcess = []
 
   for (const item of newItems) {
+    if (!item.text || item.text.trim().length < 3) {
+      droppedMissingText++
+      console.warn(
+        `[Ingestion] droppedMissingText — externalId=${item.externalId} ` +
+        `url=${item.sourceUrl || 'n/a'} username=@${item.username || 'unknown'}`,
+      )
+    } else {
+      itemsToProcess.push(item)
+    }
+  }
+
+  const sentToProcessing = itemsToProcess.length
+
+  console.log(
+    `[Ingestion] pipeline: rawCount=${rawCount} | droppedInvalidShape=${droppedInvalidShape} | ` +
+    `skippedDupes=${skippedDupes} | droppedMissingText=${droppedMissingText} | ` +
+    `sentToProcessing=${sentToProcessing}`,
+  )
+
+  // 4–9 — Process each new item sequentially to keep DB load manageable
+  const decisions = []
+  let errors = 0
+
+  for (const item of itemsToProcess) {
     try {
       const result = await processOneItem(item)
       decisions.push(result)
     } catch (err) {
-      // Log and continue — one bad item should not abort the whole import
-      console.error(`[Ingestion] Failed to process item ${item.externalId}:`, err.message)
+      errors++
+      // Log full details so the admin can diagnose why items fail
+      console.error(
+        `[Ingestion] ITEM ERROR — externalId=${item.externalId} ` +
+        `url=${item.sourceUrl || 'n/a'} username=@${item.username || 'unknown'} — ` +
+        `${err.message}`,
+        err.stack,
+      )
     }
   }
 
-  const summary = buildSummary(items.length, decisions, existingIds)
+  const summary = buildSummary({ rawCount, droppedInvalidShape, skippedDupes, droppedMissingText, decisions, errors })
+
+  // Verify pipeline invariants in logs — helps catch future accounting regressions
+  const expectedRaw = droppedInvalidShape + skippedDupes + droppedMissingText + summary.sentToProcessing
+  if (expectedRaw !== rawCount) {
+    console.warn(
+      `[Ingestion] INVARIANT MISMATCH: rawCount=${rawCount} but ` +
+      `droppedInvalidShape(${droppedInvalidShape}) + skippedDupes(${skippedDupes}) + ` +
+      `droppedMissingText(${droppedMissingText}) + sentToProcessing(${summary.sentToProcessing}) = ${expectedRaw}`,
+    )
+  }
 
   console.log(
-    `[Ingestion] Done — raw=${summary.importedRaw}, qualified=${summary.qualifiedLeads}, ` +
-    `hot=${summary.hot}, warm=${summary.warm}, cold=${summary.cold}, rejected=${summary.rejected}, ` +
-    `dupes=${summary.duplicatesSkipped}`,
+    `[Ingestion] Done — rawFetched=${summary.rawFetched} | dupes=${summary.duplicatesSkipped} | ` +
+    `sentToProcessing=${summary.sentToProcessing} | processed=${summary.processed} | ` +
+    `qualified=${summary.qualifiedLeads} | rejected=${summary.rejected} | ` +
+    `hot=${summary.hot} warm=${summary.warm} cold=${summary.cold} | ` +
+    `droppedMissingText=${summary.droppedMissingText} | droppedInvalidShape=${summary.droppedInvalidShape} | ` +
+    `errors=${summary.errors}`,
   )
 
   return summary
@@ -91,7 +158,7 @@ async function importApifyDataset(datasetId, platform) {
 // ── Core per-item pipeline ────────────────────────────────────────────────────
 
 async function processOneItem(item) {
-  // Step 3 — Persist raw item
+  // Step 4 — Persist raw item
   const raw = await prisma.rawSocialItem.create({
     data: {
       platform: item.platform,
@@ -109,17 +176,17 @@ async function processOneItem(item) {
     },
   })
 
-  // Step 4 — Intent classification
+  // Step 5 — Intent classification
   const classification = classify(item.text)
 
-  // Step 5 — Score + temperature
+  // Step 6 — Score + temperature
   const scoring = scoreItem(item, classification)
 
   const decisionReason =
     `${classification.reason} | ` +
     scoring.breakdown.join(', ')
 
-  // Step 6 — Persist decision
+  // Step 7 — Persist decision
   const decision = await prisma.socialLeadDecision.create({
     data: {
       rawSocialItemId: raw.id,
@@ -133,23 +200,29 @@ async function processOneItem(item) {
     },
   })
 
-  // Step 7 — Create CRM Lead if hot or warm
+  // Step 8 — Create CRM Lead if hot or warm
   let createdLeadId = null
   if (scoring.decision === 'ingest') {
     createdLeadId = await createCrmLead(item, classification, scoring, raw.id)
 
-    // Step 8 — Link lead back to decision
+    // Step 9 — Link lead back to decision
     if (createdLeadId) {
       await prisma.socialLeadDecision.update({
         where: { id: decision.id },
         data: { createdLeadId },
       })
+    } else {
+      console.warn(
+        `[Ingestion] Lead creation failed for ingest-decision item ` +
+        `externalId=${item.externalId} — counted in qualifiedLeads (decision=ingest) ` +
+        `but no CRM record was written`,
+      )
     }
   }
 
   return {
     temperature: scoring.temperature,
-    decision: scoring.decision,
+    decision: scoring.decision,   // 'ingest' | 'reject'
     intentType: classification.intentType,
     createdLeadId,
   }
@@ -215,22 +288,39 @@ function buildIntentTag(classification, temperature) {
   return `consumer:${temperature}`
 }
 
-function buildSummary(totalFetched, decisions, existingIds) {
-  const hot = decisions.filter(d => d.temperature === 'hot').length
-  const warm = decisions.filter(d => d.temperature === 'warm').length
-  const cold = decisions.filter(d => d.temperature === 'cold').length
-  const rejected = decisions.filter(d => d.decision === 'reject').length
-  const qualifiedLeads = decisions.filter(d => d.createdLeadId !== null).length
+/**
+ * Build the canonical ImportSummary object.
+ * All invariants are enforced here — every item must end up in exactly one bucket.
+ *
+ * Invariants:
+ *   rawFetched = droppedInvalidShape + duplicatesSkipped + droppedMissingText + sentToProcessing
+ *   sentToProcessing = processed + errors
+ *   processed = qualifiedLeads + rejected
+ */
+function buildSummary({ rawCount, droppedInvalidShape, skippedDupes, droppedMissingText, decisions, errors }) {
+  const hot           = decisions.filter(d => d.temperature === 'hot').length
+  const warm          = decisions.filter(d => d.temperature === 'warm').length
+  const cold          = decisions.filter(d => d.temperature === 'cold').length
+  // qualifiedLeads = items scored hot or warm (decision === 'ingest')
+  const qualifiedLeads = decisions.filter(d => d.decision === 'ingest').length
+  // rejected = items scored cold or below (decision === 'reject')
+  const rejected      = decisions.filter(d => d.decision === 'reject').length
+  const processed     = decisions.length  // qualifiedLeads + rejected
+  const sentToProcessing = processed + errors
 
   return {
-    importedRaw: totalFetched,
-    duplicatesSkipped: existingIds.size,
-    processed: decisions.length,
+    rawFetched: rawCount,
+    duplicatesSkipped: skippedDupes,
+    sentToProcessing,
+    processed,
     qualifiedLeads,
     hot,
     warm,
     cold,
     rejected,
+    droppedMissingText,
+    droppedInvalidShape,
+    errors,
   }
 }
 
@@ -238,14 +328,18 @@ function buildSummary(totalFetched, decisions, existingIds) {
 
 /**
  * @typedef {object} ImportSummary
- * @property {number} importedRaw        Total items returned by Apify
- * @property {number} duplicatesSkipped  Items that were already in the DB
- * @property {number} processed          Items that went through the pipeline
- * @property {number} qualifiedLeads     CRM Lead records created (hot + warm)
+ * @property {number} rawFetched          Total items returned by Apify (before any filtering)
+ * @property {number} duplicatesSkipped   Items already in the DB (externalId match)
+ * @property {number} sentToProcessing    New items with usable text sent through classify+score
+ * @property {number} processed           Items that completed the pipeline (qualifiedLeads + rejected)
+ * @property {number} qualifiedLeads      Items scored hot/warm — CRM Lead record attempted
  * @property {number} hot
  * @property {number} warm
  * @property {number} cold
- * @property {number} rejected
+ * @property {number} rejected            Items scored cold/reject — no Lead created
+ * @property {number} droppedMissingText  New items skipped due to empty/too-short text
+ * @property {number} droppedInvalidShape Items skipped during normalisation (no external ID)
+ * @property {number} errors              Items that threw an unexpected error during processing
  */
 
 module.exports = { importApifyDataset }

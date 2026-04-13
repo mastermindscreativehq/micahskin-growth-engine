@@ -15,7 +15,7 @@ const APIFY_BASE = 'https://api.apify.com/v2'
  *
  * @param {string} datasetId  Apify dataset ID (e.g. "s5Ngxm3r8sNPy4hW3")
  * @param {string} platform   Source platform label (default: "instagram")
- * @returns {Promise<NormalisedItem[]>}
+ * @returns {Promise<{rawCount: number, items: NormalisedItem[], droppedInvalidShape: number}>}
  */
 async function fetchAndNormaliseDataset(datasetId, platform = 'instagram') {
   const token = process.env.APIFY_API_TOKEN
@@ -58,7 +58,23 @@ async function fetchAndNormaliseDataset(datasetId, platform = 'instagram') {
   console.log(`[Apify] Received ${raw.length} raw items from dataset ${datasetId}`)
 
   if (platform === 'instagram') {
-    return raw.map(normaliseInstagramItem).filter(Boolean)
+    const items = []
+    let droppedInvalidShape = 0
+
+    for (const rawItem of raw) {
+      const normalised = normaliseInstagramItem(rawItem)
+      if (normalised) {
+        items.push(normalised)
+      } else {
+        droppedInvalidShape++
+      }
+    }
+
+    if (droppedInvalidShape > 0) {
+      console.warn(`[Apify] ${droppedInvalidShape} item(s) dropped — no usable external ID`)
+    }
+
+    return { rawCount: raw.length, items, droppedInvalidShape }
   }
 
   const err = new Error(`Unsupported platform: ${platform}`)
