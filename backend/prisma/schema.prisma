@@ -125,6 +125,46 @@ model Reply {
   @@map("replies")
 }
 
+// Raw items ingested from social media scrapers (Apify, etc.)
+model RawSocialItem {
+  id             String   @id @default(cuid())
+  platform       String   // instagram | tiktok | youtube | etc.
+  sourceType     String   // hashtag_post | profile_post | comment | etc.
+  sourceUrl      String?
+  externalId     String   @unique  // Apify/platform post ID — deduplication key
+  username       String?
+  displayName    String?
+  text           String?  // caption or comment text
+  matchedHashtag String?  // first hashtag that triggered the scrape
+  postedAt       DateTime?
+  likesCount     Int      @default(0)
+  commentsCount  Int      @default(0)
+  rawJson        Json     // full Apify item payload for audit
+  createdAt      DateTime @default(now())
+
+  decision SocialLeadDecision?
+
+  @@map("raw_social_items")
+}
+
+// Classification + scoring decision made for each raw social item
+model SocialLeadDecision {
+  id              String   @id @default(cuid())
+  rawSocialItemId String   @unique
+  rawSocialItem   RawSocialItem @relation(fields: [rawSocialItemId], references: [id])
+  intentType      String?  // consumer | academy | noise
+  concern         String?  // acne | hyperpigmentation | stretch_marks | etc.
+  academyIntent   String?  // start_brand | skincare_training | private_label | etc.
+  score           Int
+  temperature     String   // hot | warm | cold | reject
+  decision        String   // ingest | reject
+  reason          String?  // human-readable explanation of score/decision
+  createdLeadId   String?  // Lead.id if a CRM lead was created from this item
+  createdAt       DateTime @default(now())
+
+  @@map("social_lead_decisions")
+}
+
 // Tracks every outbound message sent to a lead or registrant
 model MessageLog {
   id               String   @id @default(cuid())
