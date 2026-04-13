@@ -80,12 +80,42 @@ async function importApifyDataset(datasetId, platform) {
   const allExternalIds = items.map(i => i.externalId)
   const existingIds = await findExistingIds(allExternalIds)
   const newItems = items.filter(i => !existingIds.has(i.externalId))
-  const skippedDupes = existingIds.size
+  // FIX: count actual items removed from the batch, not unique DB IDs matched.
+  // existingIds.size undercounts when the same externalId appears >1 time in this
+  // batch AND that ID is already in the DB — those extras were previously unaccounted.
+  const skippedDupes = items.length - newItems.length
 
   console.log(
-    `[Ingestion] deduped: ${items.length} normalised | ${skippedDupes} already in DB | ` +
-    `${newItems.length} new`,
+    `[Ingestion] after-dedupe: normalised=${items.length} | dbMatches=${existingIds.size} | ` +
+    `skippedDupes=${skippedDupes} | newItems=${newItems.length}`,
   )
+
+  // Detect within-batch duplicates whose IDs are already in the DB.
+  // These are the items that were previously "phantom" (filtered but not counted).
+  if (skippedDupes > existingIds.size) {
+    const phantomCount = skippedDupes - existingIds.size
+    const seenIds = new Set()
+    const phantomSamples = []
+    for (const item of items) {
+      if (existingIds.has(item.externalId)) {
+        if (seenIds.has(item.externalId) && phantomSamples.length < 3) {
+          phantomSamples.push(item)
+        }
+        seenIds.add(item.externalId)
+      }
+    }
+    console.warn(
+      `[Ingestion] WITHIN-BATCH DUPES: ${phantomCount} item(s) share an externalId that ` +
+      `appears >1 time in this batch AND is already in DB — previously missing from accounting`,
+    )
+    phantomSamples.forEach((s, idx) => {
+      console.warn(
+        `[Ingestion] phantom-dupe[${idx + 1}]: externalId=${s.externalId} | ` +
+        `sourceUrl=${s.sourceUrl || 'n/a'} | ` +
+        `text=${(s.text || '').slice(0, 80)}`,
+      )
+    })
+  }
 
   // 3 — Pre-filter: drop items with no usable text before hitting the DB
   let droppedMissingText = 0
