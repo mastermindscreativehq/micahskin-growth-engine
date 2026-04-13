@@ -184,3 +184,34 @@ export async function sendFollowUp(id, num) {
   if (!res.ok) throw data
   return data
 }
+
+// ── Scraping / Import ─────────────────────────────────────────────────────────
+
+/**
+ * Trigger an Apify dataset import from the admin CRM.
+ * Uses the existing browser session — no terminal or manual cookie copy needed.
+ * Returns ImportSummary: { importedRaw, duplicatesSkipped, processed,
+ *   qualifiedLeads, hot, warm, cold, rejected }
+ */
+export async function importInstagramDataset(datasetId, platform = 'instagram') {
+  const res = await fetch(`${BASE_URL}/api/scraping/apify/import-instagram`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ datasetId, platform }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
+
+/**
+ * Check that the scraping route is live and whether the current browser
+ * session is authenticated. Public — works even when not logged in.
+ */
+export async function fetchScrapingDebugAuth() {
+  const res = await fetch(`${BASE_URL}/api/scraping/debug-auth`, {
+    credentials: 'include',
+  })
+  return res.json()
+}

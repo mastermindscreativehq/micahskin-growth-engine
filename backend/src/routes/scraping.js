@@ -12,7 +12,19 @@ const { importInstagram, listRawItems } = require('../controllers/scrapingContro
 
 const router = express.Router()
 
-// All scraping routes are admin-only
+// ── GET /api/scraping/debug-auth ──────────────────────────────────────────────
+// Public — reports session/auth state without requiring auth.
+// Lets you verify the route is reachable and your session cookie is present
+// directly from the browser, without any terminal work.
+router.get('/debug-auth', (req, res) => {
+  res.json({
+    routeLive: true,
+    authenticated: !!(req.session && req.session.authenticated),
+    adminSessionPresent: !!req.session,
+  })
+})
+
+// All remaining scraping routes are admin-only
 router.use(requireAuth)
 
 // Trigger an Apify dataset import

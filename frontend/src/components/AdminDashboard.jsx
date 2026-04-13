@@ -7,6 +7,8 @@ import {
   updateRegistrationStatus,
   sendInitialReply,
   sendFollowUp,
+  importInstagramDataset,
+  fetchScrapingDebugAuth,
 } from '../api/index.js'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -1045,12 +1047,150 @@ function Pagination({ page, pages, total, onPage }) {
   )
 }
 
+// ── Scraping Tab ─────────────────────────────────────────────────────────────
+
+const IMPORT_METRICS = [
+  { label: 'Raw Fetched',      key: 'importedRaw' },
+  { label: 'Dupes Skipped',    key: 'duplicatesSkipped' },
+  { label: 'Processed',        key: 'processed' },
+  { label: 'Qualified Leads',  key: 'qualifiedLeads' },
+  { label: 'Hot',              key: 'hot' },
+  { label: 'Warm',             key: 'warm' },
+  { label: 'Cold',             key: 'cold' },
+  { label: 'Rejected',         key: 'rejected' },
+]
+
+function ScrapingTab() {
+  const [datasetId, setDatasetId]   = useState('')
+  const [platform, setPlatform]     = useState('instagram')
+  const [loading, setLoading]       = useState(false)
+  const [result, setResult]         = useState(null)
+  const [error, setError]           = useState(null)
+  const [authStatus, setAuthStatus] = useState(null)
+
+  useEffect(() => {
+    fetchScrapingDebugAuth()
+      .then(setAuthStatus)
+      .catch(() => setAuthStatus({ routeLive: false, authenticated: false, adminSessionPresent: false }))
+  }, [])
+
+  async function handleImport() {
+    if (!datasetId.trim()) {
+      setError('Dataset ID is required.')
+      return
+    }
+    setLoading(true)
+    setError(null)
+    setResult(null)
+    try {
+      const data = await importInstagramDataset(datasetId.trim(), platform)
+      setResult(data.data)
+    } catch (err) {
+      setError(err.message || 'Import failed. Check the server logs.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h2 className="text-xl font-semibold text-gray-900">Instagram Lead Import</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Trigger an Apify dataset import and run the full ingestion pipeline — no terminal required.
+        </p>
+      </div>
+
+      {/* Route / auth health pill */}
+      {authStatus && (
+        <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-sm ${
+          authStatus.authenticated
+            ? 'border-green-200 bg-green-50 text-green-800'
+            : 'border-red-200 bg-red-50 text-red-800'
+        }`}>
+          <span className={`h-2 w-2 shrink-0 rounded-full ${
+            authStatus.authenticated ? 'bg-green-500' : 'bg-red-500'
+          }`} />
+          <span>
+            Route:&nbsp;<strong>{authStatus.routeLive ? 'live' : 'unreachable'}</strong>
+            &nbsp;&middot;&nbsp;
+            Auth:&nbsp;<strong>{authStatus.authenticated ? 'authenticated' : 'not authenticated'}</strong>
+            &nbsp;&middot;&nbsp;
+            Session:&nbsp;<strong>{authStatus.adminSessionPresent ? 'present' : 'missing'}</strong>
+          </span>
+        </div>
+      )}
+
+      {/* Import form */}
+      <div className="rounded-xl border border-gray-200 bg-white p-6 space-y-5">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Import Dataset</h3>
+
+        <div className="grid gap-4 sm:grid-cols-[1fr_160px]">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">Apify Dataset ID</label>
+            <input
+              type="text"
+              value={datasetId}
+              onChange={(e) => { setDatasetId(e.target.value); setError(null) }}
+              onKeyDown={(e) => e.key === 'Enter' && !loading && handleImport()}
+              placeholder="e.g. abc123xyz456"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-brand-400"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">Platform</label>
+            <select
+              value={platform}
+              onChange={(e) => setPlatform(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+            >
+              <option value="instagram">Instagram</option>
+            </select>
+          </div>
+        </div>
+
+        <button
+          onClick={handleImport}
+          disabled={loading || !datasetId.trim()}
+          className="rounded-lg bg-brand-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-brand-700 active:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+        >
+          {loading ? 'Importing…' : 'Import Dataset'}
+        </button>
+      </div>
+
+      {/* Error state */}
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <strong>Error:</strong> {error}
+        </div>
+      )}
+
+      {/* Results */}
+      {result && (
+        <div className="rounded-xl border border-green-200 bg-white p-6 space-y-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Import Results</h3>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {IMPORT_METRICS.map(({ label, key }) => (
+              <div key={key} className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-center">
+                <div className="text-2xl font-bold text-gray-900">{result[key] ?? 0}</div>
+                <div className="mt-0.5 text-xs text-gray-500">{label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
-  { id: 'leads', label: 'Leads' },
-  { id: 'academy', label: 'Academy' },
+  { id: 'leads',    label: 'Leads' },
+  { id: 'academy',  label: 'Academy' },
+  { id: 'scraping', label: 'Scraping' },
 ]
 
 export default function AdminDashboard({ onBack, onLogout }) {
@@ -1104,8 +1244,9 @@ export default function AdminDashboard({ onBack, onLogout }) {
       {/* Content */}
       <main className="mx-auto max-w-6xl px-3 sm:px-4 py-5 sm:py-8">
         {activeTab === 'overview' && <OverviewTab />}
-        {activeTab === 'leads' && <LeadsTab />}
-        {activeTab === 'academy' && <AcademyTab />}
+        {activeTab === 'leads'    && <LeadsTab />}
+        {activeTab === 'academy'  && <AcademyTab />}
+        {activeTab === 'scraping' && <ScrapingTab />}
       </main>
     </div>
   )
