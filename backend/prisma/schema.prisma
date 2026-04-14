@@ -98,6 +98,18 @@ model Lead {
   productRecoSent         Boolean   @default(false)
   productRecoSentAt       DateTime?
 
+  // ── Action Engine state tracking (Phase 17) ──────────────────────────────────
+  diagnosisStatus       String?   // pending | sent | skipped | failed | blocked
+  checkInStatus         String?   // pending | sent | skipped | failed | blocked
+  productRecoStatus     String?   // pending | sent | skipped | failed | blocked
+  academyOfferSendAfter DateTime? // set by diagnosis engine when academyFitScore >= threshold
+  academyOfferSent      Boolean   @default(false) // atomic claim flag
+  academyOfferSentAt    DateTime?
+  academyOfferStatus    String?   // pending | sent | skipped | failed | blocked
+  lastActionType        String?   // last action executed by the engine
+  lastActionAt          DateTime? // when the last action ran
+  actionBlockedReason   String?   // why automation was blocked for this lead
+
   utmSource      String?
   replies        Reply[]
   utmMedium      String?

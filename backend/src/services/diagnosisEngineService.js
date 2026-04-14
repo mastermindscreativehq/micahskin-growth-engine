@@ -16,6 +16,9 @@
 const prisma = require('../lib/prisma')
 const { analyzeLead } = require('./diagnosisService')
 
+// Keep in sync with actionEngineService ACADEMY_FIT_THRESHOLD
+const ACADEMY_FIT_THRESHOLD = parseInt(process.env.ACADEMY_FIT_THRESHOLD || '65', 10)
+
 // ── Concern inference ─────────────────────────────────────────────────────────
 
 function inferPrimaryConcern(lead) {
@@ -455,6 +458,24 @@ async function diagnoseLead(leadId) {
 
   await saveDiagnosisResult(leadId, result)
   console.log(`[DiagnosisEngine] Saved → leadId=${leadId}`)
+
+  // Set academyOfferSendAfter timing when fit score qualifies.
+  // Timing = productRecoSendAfter + 2d, or diagnosedAt + 5d as fallback.
+  // Only written once — never overwritten if already set.
+  if (result.academyFitScore >= ACADEMY_FIT_THRESHOLD && !lead.academyOfferSendAfter) {
+    const base = lead.productRecoSendAfter
+      ? new Date(lead.productRecoSendAfter)
+      : result.diagnosedAt
+    const academyOfferSendAfter = new Date(base.getTime() + 2 * 24 * 60 * 60 * 1000)
+    await prisma.lead.update({
+      where: { id: leadId },
+      data:  { academyOfferSendAfter },
+    })
+    console.log(
+      `[DiagnosisEngine] academyOfferSendAfter set → ${academyOfferSendAfter.toISOString()} ` +
+      `(score=${result.academyFitScore}, leadId=${leadId})`
+    )
+  }
 
   return result
 }

@@ -851,6 +851,84 @@ function LeadsTab() {
                           </div>
                         )}
 
+                        {/* Action Engine Status Panel */}
+                        {(lead.diagnosisStatus || lead.checkInStatus || lead.productRecoStatus ||
+                          lead.academyOfferStatus || lead.lastActionType || lead.actionBlockedReason ||
+                          lead.diagnosisSent || lead.checkInSent || lead.productRecoSent) && (
+                          <div className="rounded-lg border border-emerald-100 bg-emerald-50/40 px-3 py-2.5 space-y-2">
+                            {/* Header */}
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="font-semibold text-emerald-700 uppercase tracking-wide">Action Engine</span>
+                              {lead.lastActionType && (
+                                <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 capitalize">
+                                  last: {lead.lastActionType.replace(/_/g, ' ')}
+                                </span>
+                              )}
+                              {lead.lastActionAt && (
+                                <span className="text-emerald-400 text-[10px]">{fmtDateTime(lead.lastActionAt)}</span>
+                              )}
+                            </div>
+
+                            {/* Action status grid */}
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+                              {[
+                                {
+                                  label: 'Diagnosis',
+                                  status: lead.diagnosisStatus || (lead.diagnosisSent ? 'sent' : null),
+                                  sentAt: lead.diagnosisSentAt,
+                                },
+                                {
+                                  label: 'Check-in',
+                                  status: lead.checkInStatus || (lead.checkInSent ? 'sent' : null),
+                                  sentAt: lead.checkInSentAt,
+                                },
+                                {
+                                  label: 'Product Reco',
+                                  status: lead.productRecoStatus || (lead.productRecoSent ? 'sent' : null),
+                                  sentAt: lead.productRecoSentAt,
+                                },
+                                {
+                                  label: 'Academy Offer',
+                                  status: lead.academyOfferStatus || (lead.academyOfferSent ? 'sent' : null),
+                                  sentAt: lead.academyOfferSentAt,
+                                  hide: !lead.academyFitScore || lead.academyFitScore < 65,
+                                },
+                              ].filter(s => !s.hide).map(({ label, status, sentAt }) => {
+                                if (!status) return null
+                                const colorMap = {
+                                  sent:    'text-green-700 bg-green-100',
+                                  skipped: 'text-gray-500 bg-gray-100',
+                                  failed:  'text-red-600 bg-red-100',
+                                  blocked: 'text-amber-700 bg-amber-100',
+                                  pending: 'text-blue-700 bg-blue-100',
+                                }
+                                return (
+                                  <div key={label} className="flex items-center gap-1.5">
+                                    <span className="shrink-0 text-gray-500 w-20">{label}:</span>
+                                    <span
+                                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize ${colorMap[status] || 'text-gray-500 bg-gray-100'}`}
+                                      title={sentAt ? fmtDateTime(sentAt) : undefined}
+                                    >
+                                      {status}{sentAt ? ` ✓` : ''}
+                                    </span>
+                                    {sentAt && (
+                                      <span className="text-gray-400 text-[10px]">{fmtDateTime(sentAt)}</span>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+
+                            {/* Blocked reason */}
+                            {lead.actionBlockedReason && (
+                              <div className="flex items-center gap-1.5 text-xs border-t border-emerald-100 pt-1.5">
+                                <span className="text-amber-600 font-semibold">⚠ Blocked:</span>
+                                <span className="text-amber-700 capitalize">{lead.actionBlockedReason.replace(/_/g, ' ')}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {/* Follow-up schedule with sent / overdue indicators */}
                         {(lead.followUp1 || lead.followUp2 || lead.followUp3) && (
                           <div className="flex flex-wrap gap-4 text-xs">
