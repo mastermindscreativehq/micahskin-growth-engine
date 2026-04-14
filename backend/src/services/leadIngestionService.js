@@ -29,6 +29,7 @@ const { fetchAndNormaliseDataset } = require('./apifyService')
 const { classify } = require('./intentClassifierService')
 const { scoreItem } = require('./leadScoringService')
 const { findExistingIds } = require('./dedupeService')
+const { diagnoseLead } = require('./diagnosisEngineService')
 
 // ── Concern → Lead.skinConcern mapping ───────────────────────────────────────
 // Lead.skinConcern accepts: acne | dark_spots | stretch_marks | dry_skin |
@@ -295,6 +296,14 @@ async function createCrmLead(item, classification, scoring, rawSocialItemId) {
       `[Ingestion] Created Lead ${lead.id} for @${item.username || 'unknown'} ` +
       `(${scoring.temperature}, ${scoring.score}pts)`,
     )
+
+    // Run diagnosis asynchronously — do not block the ingestion loop
+    setImmediate(() => {
+      diagnoseLead(lead.id).catch((err) =>
+        console.error(`[Ingestion] Diagnosis failed for lead ${lead.id}:`, err.message)
+      )
+    })
+
     return lead.id
   } catch (err) {
     console.error(`[Ingestion] Failed to create Lead for item ${rawSocialItemId}:`, err.message)

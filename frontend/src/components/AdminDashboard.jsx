@@ -758,6 +758,99 @@ function LeadsTab() {
                           </div>
                         )}
 
+                        {/* Diagnosis Engine Panel */}
+                        {(lead.diagnosisSummary || lead.primaryConcern) && (
+                          <div className="rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 space-y-2">
+                            {/* Header */}
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="font-semibold text-indigo-700 uppercase tracking-wide">Diagnosis Engine</span>
+                              {lead.diagnosisSource && (
+                                <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600 capitalize">
+                                  {lead.diagnosisSource.replace(/_/g, ' ')}
+                                </span>
+                              )}
+                              {lead.confidenceScore != null && (
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                  lead.confidenceScore >= 70 ? 'bg-green-100 text-green-700' :
+                                  lead.confidenceScore >= 40 ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-gray-100 text-gray-500'
+                                }`}>
+                                  {lead.confidenceScore}% confidence
+                                </span>
+                              )}
+                              {lead.diagnosedAt && (
+                                <span className="text-indigo-400 text-[10px]">{fmtDateTime(lead.diagnosedAt)}</span>
+                              )}
+                            </div>
+
+                            {/* Summary */}
+                            {lead.diagnosisSummary && (
+                              <p className="text-xs text-indigo-900 leading-relaxed font-medium">
+                                {lead.diagnosisSummary}
+                              </p>
+                            )}
+
+                            {/* Concern + intent grid */}
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3">
+                              {[
+                                { label: 'Primary Concern',    value: lead.primaryConcern?.replace(/_/g, ' ') },
+                                { label: 'Secondary Concern',  value: lead.secondaryConcern?.replace(/_/g, ' ') },
+                                { label: 'Routine Type',       value: lead.routineType?.replace(/_/g, ' ') },
+                                { label: 'Urgency',            value: lead.urgencyLevel },
+                                { label: 'Conversion Intent',  value: lead.conversionIntent },
+                                { label: 'Next Best Action',   value: lead.nextBestAction?.replace(/_/g, ' ') },
+                              ].filter(f => f.value).map(({ label, value }) => (
+                                <div key={label} className="flex gap-1.5">
+                                  <span className="shrink-0 font-medium text-gray-500 w-28">{label}:</span>
+                                  <span className={`capitalize font-semibold ${
+                                    label === 'Urgency' && value === 'high' ? 'text-red-600' :
+                                    label === 'Urgency' && value === 'medium' ? 'text-amber-600' :
+                                    label === 'Next Best Action' && value === 'manual consult' ? 'text-red-600' :
+                                    label === 'Next Best Action' && value === 'push academy' ? 'text-purple-700' :
+                                    'text-indigo-800'
+                                  }`}>{value}</span>
+                                </div>
+                              ))}
+                              {lead.academyFitScore != null && (
+                                <div className="flex gap-1.5">
+                                  <span className="shrink-0 font-medium text-gray-500 w-28">Academy Fit:</span>
+                                  <span className={`font-bold ${
+                                    lead.academyFitScore >= 60 ? 'text-purple-700' :
+                                    lead.academyFitScore >= 30 ? 'text-amber-600' :
+                                    'text-gray-500'
+                                  }`}>{lead.academyFitScore}/100</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Recommended products */}
+                            {lead.recommendedProductsText && (
+                              <div className="text-xs border-t border-indigo-100 pt-1.5">
+                                <p className="font-semibold text-indigo-700 mb-0.5">Recommended Products</p>
+                                <p className="text-gray-700 leading-relaxed">{lead.recommendedProductsText}</p>
+                              </div>
+                            )}
+
+                            {/* Recommended reply draft */}
+                            {lead.recommendedReply && (
+                              <div className="border-t border-indigo-100 pt-1.5">
+                                <div className="flex items-start gap-2">
+                                  <div className="flex-1">
+                                    <p className="text-[10px] font-semibold text-indigo-600 uppercase tracking-wide mb-0.5">Reply Draft (operator use)</p>
+                                    <p className="text-xs text-gray-700 leading-relaxed italic">{lead.recommendedReply}</p>
+                                  </div>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(lead.recommendedReply) }}
+                                    className="shrink-0 rounded border border-indigo-200 px-2 py-0.5 text-[10px] text-indigo-600 hover:bg-indigo-100 transition-colors"
+                                  >
+                                    Copy
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {/* Follow-up schedule with sent / overdue indicators */}
                         {(lead.followUp1 || lead.followUp2 || lead.followUp3) && (
                           <div className="flex flex-wrap gap-4 text-xs">

@@ -1,5 +1,6 @@
 const prisma = require("../lib/prisma");
 const { fetchApifyDatasetItems } = require("./apifyService");
+const { diagnoseLead } = require("./diagnosisEngineService");
 
 function parseDate(value) {
   if (!value) return null;
@@ -146,7 +147,7 @@ async function importInstagramCommentDataset(datasetId) {
         const message =
           normalized.commentText || "(imported from Instagram comment)";
 
-        await prisma.lead.create({
+        const newLead = await prisma.lead.create({
           data: {
             fullName,
             sourcePlatform: "Instagram",
@@ -160,6 +161,13 @@ async function importInstagramCommentDataset(datasetId) {
             suggestedReply: `Hi ${fullName}! I noticed your comment and wanted to reach out directly. Would you like me to walk you through what would work best for you?`,
           },
         });
+
+        // Run diagnosis asynchronously — do not block the import loop
+        setImmediate(() => {
+          diagnoseLead(newLead.id).catch((err) =>
+            console.error(`[CommentImport] Diagnosis failed for lead ${newLead.id}:`, err.message)
+          )
+        })
 
         leadsCreated += 1;
         if (firstFiveLeadUsernames.length < 5) {

@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma')
+const { diagnoseLead } = require('./diagnosisEngineService')
 
 // ── Session helpers ───────────────────────────────────────────────────────────
 
@@ -133,29 +134,41 @@ async function handleTelegramMessage(userId, text) {
         where: { telegramChatId: userId },
       })
 
+      const now = new Date()
+      const diagnosisSendAfter   = new Date(now.getTime() + 1  * 60 * 60 * 1000)   // +1h
+      const checkInSendAfter     = new Date(now.getTime() + 24 * 60 * 60 * 1000)   // +24h
+      const productRecoSendAfter = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000) // +3 days
+
+      let leadId
+
       if (existingLead) {
         await prisma.lead.update({
           where: { id: existingLead.id },
           data: {
             telegramStage: 'intake_complete',
             telegramLastMessage: text,
-            telegramLastMessageAt: new Date(),
-            // Only override skinConcern if we detected something specific
+            telegramLastMessageAt: now,
             skinConcern: skinConcern !== 'general' ? skinConcern : existingLead.skinConcern,
             status: ['new', 'contacted', 'engaged'].includes(existingLead.status)
               ? 'interested'
               : existingLead.status,
-            // Store collected answers into named fields
             telegramRoutineGoal: collectedData.goal || null,
             telegramSkinType: collectedData.skinType || null,
             telegramProductsUsed: collectedData.products || null,
             telegramSensitivity: collectedData.sensitivity || null,
             telegramBudget: collectedData.budget || null,
             telegramRoutineLevel: collectedData.routine || null,
+            // Set follow-up timing only if not already scheduled
+            ...(existingLead.diagnosisSendAfter ? {} : {
+              diagnosisSendAfter,
+              checkInSendAfter,
+              productRecoSendAfter,
+            }),
           },
         })
+        leadId = existingLead.id
       } else {
-        await prisma.lead.create({
+        const newLead = await prisma.lead.create({
           data: {
             fullName: userId,
             sourcePlatform: 'Telegram',
@@ -163,7 +176,7 @@ async function handleTelegramMessage(userId, text) {
             message: `Telegram intake: ${collectedData.goal || 'not specified'}`,
             telegramChatId: userId,
             telegramStarted: true,
-            telegramConnectedAt: new Date(),
+            telegramConnectedAt: now,
             telegramStage: 'intake_complete',
             status: 'interested',
             telegramRoutineGoal: collectedData.goal || null,
@@ -172,11 +185,22 @@ async function handleTelegramMessage(userId, text) {
             telegramSensitivity: collectedData.sensitivity || null,
             telegramBudget: collectedData.budget || null,
             telegramRoutineLevel: collectedData.routine || null,
+            diagnosisSendAfter,
+            checkInSendAfter,
+            productRecoSendAfter,
           },
         })
+        leadId = newLead.id
       }
 
-      console.log(`[TelegramSession] userId=${userId} — intake complete | concern=${skinConcern} | lead=${existingLead?.id ?? 'created'}`)
+      console.log(`[TelegramSession] userId=${userId} — intake complete | concern=${skinConcern} | lead=${leadId}`)
+
+      // Run diagnosis asynchronously — do not block the bot response
+      setImmediate(() => {
+        diagnoseLead(leadId).catch((err) =>
+          console.error(`[TelegramSession] Diagnosis failed for lead ${leadId}:`, err.message)
+        )
+      })
 
       return "Perfect \u2014 we\u2019ve received your details. We\u2019ll prepare a routine for you shortly \ud83c\udf3f"
     }
