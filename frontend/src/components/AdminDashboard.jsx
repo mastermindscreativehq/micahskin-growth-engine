@@ -12,6 +12,7 @@ import {
   prepareInstagramComments,
   runInstagramComments,
   fetchCommentTargetStats,
+  importInstagramCommentDataset,
 } from '../api/index.js'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -1102,6 +1103,12 @@ function ScrapingTab() {
   const [harvestResult, setHarvestResult]   = useState(null)
   const [harvestError, setHarvestError]     = useState(null)
 
+  // ── Phase 16: Stage 4 — Import Comment Leads ──────────────────────────────
+  const [commentImportDatasetId, setCommentImportDatasetId] = useState('')
+  const [commentImportLoading, setCommentImportLoading]     = useState(false)
+  const [commentImportResult, setCommentImportResult]       = useState(null)
+  const [commentImportError, setCommentImportError]         = useState(null)
+
   const [targetStats, setTargetStats]   = useState(null)
   const [statsLoading, setStatsLoading] = useState(false)
 
@@ -1170,6 +1177,24 @@ function ScrapingTab() {
       setHarvestError(err.message || 'Harvest failed. Check the server logs.')
     } finally {
       setHarvestLoading(false)
+    }
+  }
+
+  async function handleCommentImport() {
+    if (!commentImportDatasetId.trim()) {
+      setCommentImportError('Dataset ID is required.')
+      return
+    }
+    setCommentImportLoading(true)
+    setCommentImportError(null)
+    setCommentImportResult(null)
+    try {
+      const data = await importInstagramCommentDataset(commentImportDatasetId.trim())
+      setCommentImportResult(data.data)
+    } catch (err) {
+      setCommentImportError(err.message || 'Import failed. Check the server logs.')
+    } finally {
+      setCommentImportLoading(false)
     }
   }
 
@@ -1458,6 +1483,65 @@ function ScrapingTab() {
                 )}
               </>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          STAGE 4 — Import Comment Leads
+          ══════════════════════════════════════════════════════════════════ */}
+      <div className="rounded-xl border border-gray-200 bg-white p-6 space-y-5">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Stage 4 — Import Comment Leads</h3>
+          <p className="text-xs text-gray-400 mt-1">
+            Ingest a completed Apify comment-scrape dataset. Commenters are normalised and
+            inserted as leads. Duplicates (by username) are skipped.
+          </p>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Comment Dataset ID</label>
+          <input
+            type="text"
+            value={commentImportDatasetId}
+            onChange={(e) => { setCommentImportDatasetId(e.target.value); setCommentImportError(null) }}
+            onKeyDown={(e) => e.key === 'Enter' && !commentImportLoading && handleCommentImport()}
+            placeholder="e.g. abc123xyz456 (Apify output dataset)"
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
+          />
+        </div>
+
+        <button
+          onClick={handleCommentImport}
+          disabled={commentImportLoading || !commentImportDatasetId.trim()}
+          className="rounded-lg bg-violet-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-violet-700 active:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+        >
+          {commentImportLoading ? 'Importing…' : 'Import Comment Leads'}
+        </button>
+
+        {commentImportError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {commentImportError}
+          </div>
+        )}
+
+        {commentImportResult && (
+          <div className="rounded-xl border border-violet-100 bg-violet-50 p-5 space-y-3">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-violet-700">Import Results</h4>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              {[
+                { label: 'Raw Items',       key: 'rawItems',        color: 'text-gray-900'    },
+                { label: 'Normalised',      key: 'normalizedCount', color: 'text-violet-700'  },
+                { label: 'Skipped Invalid', key: 'skippedInvalid',  color: 'text-yellow-600'  },
+                { label: 'Inserted',        key: 'inserted',        color: 'text-emerald-700' },
+                { label: 'Duplicates',      key: 'duplicates',      color: 'text-gray-400'    },
+              ].map(({ label, key, color }) => (
+                <div key={key} className="rounded-lg border border-violet-100 bg-white px-4 py-3 text-center">
+                  <div className={`text-2xl font-bold ${color}`}>{commentImportResult[key] ?? 0}</div>
+                  <div className="mt-0.5 text-xs text-gray-500">{label}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

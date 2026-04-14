@@ -264,3 +264,19 @@ export async function fetchCommentTargetStats() {
   if (!res.ok) throw data
   return data
 }
+
+/**
+ * Import a completed Apify comment-scrape dataset and convert commenters into leads.
+ * Returns: { rawItems, normalizedCount, skippedInvalid, inserted, duplicates }
+ */
+export async function importInstagramCommentDataset(datasetId) {
+  const res = await fetch(`${BASE_URL}/api/scraping/apify/import-instagram-comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ datasetId }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
