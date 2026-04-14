@@ -201,6 +201,21 @@ model MessageLog {
   @@map("message_logs")
 }
 
+// Tracks a full orchestration run (Stage 1→4) for status polling and audit
+model OrchestrationRun {
+  id                 String   @id @default(uuid())
+  platform           String   // 'instagram'
+  discoveryDatasetId String
+  commentRunId       String?  // Apify run ID returned by Stage 3 (null when no targets queued)
+  commentDatasetId   String?  // Apify output dataset ID — populated once run SUCCEEDS
+  status             String   @default("running")  // running | completed | failed
+  stage4Result       Json?    // result from importInstagramCommentDataset
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("orchestration_runs")
+}
+
 //
 model InstagramCommentLead {
   id               String   @id @default(cuid())

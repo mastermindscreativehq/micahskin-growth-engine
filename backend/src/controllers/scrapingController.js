@@ -1,12 +1,16 @@
 /**
  * scrapingController.js
  * Thin HTTP handlers for the scraping/import routes.
- * All business logic lives in leadIngestionService and commentScrapeService.
+ * All business logic lives in leadIngestionService, commentScrapeService, and orchestrationService.
  */
 
 const { importApifyDataset } = require('../services/leadIngestionService')
 const { prepareCommentTargets, runCommentHarvest, getCommentTargetStats } = require('../services/commentScrapeService')
 const { importInstagramCommentDataset } = require('../services/commentIngestionService')
+const {
+  runInstagramOrchestration: _runInstagramOrchestration,
+  checkOrchestrationStatus: _checkOrchestrationStatus,
+} = require('../services/orchestrationService')
 
 // ── POST /api/scraping/apify/import-instagram ─────────────────────────────────
 // Body: { datasetId: string, platform?: string }
@@ -171,4 +175,67 @@ async function importInstagramComments(req, res) {
   }
 }
 
-module.exports = { importInstagram, listRawItems, prepareInstagramComments, runInstagramComments, commentTargetStats, importInstagramComments }
+// ── POST /api/scraping/apify/run-instagram-orchestration ─────────────────────
+// Body: { discoveryDatasetId: string, platform?: string, harvestLimit?: number }
+// Auth: requireAuth (admin only)
+// Runs Stage 1 (lead ingestion) + Stage 2 (prepare targets) + Stage 3 (harvest)
+// in sequence for a single discovery dataset.
+async function runInstagramOrchestrationHandler(req, res) {
+  const { discoveryDatasetId, platform = 'instagram', harvestLimit = 50 } = req.body
+
+  if (!discoveryDatasetId || typeof discoveryDatasetId !== 'string' || !discoveryDatasetId.trim()) {
+    return res.status(400).json({ success: false, message: 'discoveryDatasetId is required.' })
+  }
+
+  const supportedPlatforms = ['instagram']
+  if (!supportedPlatforms.includes(platform)) {
+    return res.status(400).json({
+      success: false,
+      message: `Unsupported platform "${platform}". Supported: ${supportedPlatforms.join(', ')}.`,
+    })
+  }
+
+  try {
+    const data = await _runInstagramOrchestration({
+      discoveryDatasetId: discoveryDatasetId.trim(),
+      platform,
+      harvestLimit,
+    })
+    return res.status(200).json({ success: true, data })
+  } catch (err) {
+    console.error('[ScrapingController] runInstagramOrchestration failed:', err.message)
+    return res.status(err.status || 500).json({ success: false, message: err.message })
+  }
+}
+
+// ── GET /api/scraping/apify/orchestration-status/:runId ──────────────────────
+// Param: runId — OrchestrationRun.id (UUID)
+// Auth: requireAuth (admin only)
+// Polls Apify for the comment harvest run status. If SUCCEEDED, auto-triggers
+// Stage 4 (comment ingestion) and updates the OrchestrationRun to "completed".
+async function checkOrchestrationStatusHandler(req, res) {
+  const { runId } = req.params
+
+  if (!runId || typeof runId !== 'string' || !runId.trim()) {
+    return res.status(400).json({ success: false, message: 'runId param is required.' })
+  }
+
+  try {
+    const data = await _checkOrchestrationStatus(runId.trim())
+    return res.status(200).json({ success: true, data })
+  } catch (err) {
+    console.error('[ScrapingController] checkOrchestrationStatus failed:', err.message)
+    return res.status(err.status || 500).json({ success: false, message: err.message })
+  }
+}
+
+module.exports = {
+  importInstagram,
+  listRawItems,
+  prepareInstagramComments,
+  runInstagramComments,
+  commentTargetStats,
+  importInstagramComments,
+  runInstagramOrchestrationHandler,
+  checkOrchestrationStatusHandler,
+}

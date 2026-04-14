@@ -2,11 +2,13 @@
  * routes/scraping.js
  * All routes require admin authentication (requireAuth middleware).
  *
- * POST /api/scraping/apify/import-instagram            — trigger Apify dataset import (Phase 15)
- * GET  /api/scraping/raw-items                         — browse ingested raw items
- * POST /api/scraping/apify/prepare-instagram-comments  — extract post URLs → comment_scrape_targets
- * POST /api/scraping/apify/run-instagram-comments      — trigger Apify comment scrape run
- * GET  /api/scraping/comment-targets/stats             — aggregate counts by status
+ * POST /api/scraping/apify/import-instagram                — trigger Apify dataset import (Phase 15)
+ * GET  /api/scraping/raw-items                             — browse ingested raw items
+ * POST /api/scraping/apify/prepare-instagram-comments      — extract post URLs → comment_scrape_targets
+ * POST /api/scraping/apify/run-instagram-comments          — trigger Apify comment scrape run
+ * GET  /api/scraping/comment-targets/stats                 — aggregate counts by status
+ * POST /api/scraping/apify/run-instagram-orchestration     — Stage 1 + Stage 2 + Stage 3 in sequence
+ * GET  /api/scraping/apify/orchestration-status/:runId     — poll run; auto-triggers Stage 4 on SUCCEEDED
  */
 
 const express = require('express')
@@ -18,6 +20,8 @@ const {
   runInstagramComments,
   commentTargetStats,
   importInstagramComments,
+  runInstagramOrchestrationHandler,
+  checkOrchestrationStatusHandler,
 } = require('../controllers/scrapingController')
 
 const router = express.Router()
@@ -59,5 +63,13 @@ router.get('/comment-targets/stats', commentTargetStats)
 // Import harvested comments from an Apify comment dataset → instagram_comment_leads
 // Body: { datasetId: string }
 router.post('/apify/import-instagram-comments', importInstagramComments)
+
+// Run Stage 1 (lead ingestion) + Stage 2 (prepare targets) + Stage 3 (harvest) in sequence
+// Body: { discoveryDatasetId: string, platform?: string, harvestLimit?: number }
+router.post('/apify/run-instagram-orchestration', runInstagramOrchestrationHandler)
+
+// Poll Apify run status; auto-triggers Stage 4 comment ingestion on SUCCEEDED
+// Param: :runId — OrchestrationRun.id (UUID returned by run-instagram-orchestration)
+router.get('/apify/orchestration-status/:runId', checkOrchestrationStatusHandler)
 
 module.exports = router

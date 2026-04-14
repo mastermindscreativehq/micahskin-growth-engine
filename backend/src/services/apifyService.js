@@ -316,4 +316,49 @@ async function fetchApifyDatasetItems(datasetId) {
   return raw
 }
 
-module.exports = { fetchAndNormaliseDataset, triggerCommentScrapeRun, fetchApifyDatasetItems }
+/**
+ * Check the current status of an Apify actor run and return its output dataset ID.
+ * Used by orchestrationService to detect when a comment harvest has finished.
+ *
+ * Apify run statuses: READY | RUNNING | SUCCEEDED | FAILED | TIMED-OUT | ABORTED
+ *
+ * @param {string} runId  Apify run ID (returned by triggerCommentScrapeRun)
+ * @returns {Promise<{status: string, defaultDatasetId: string|null}>}
+ */
+async function getApifyRunStatus(runId) {
+  const token = process.env.APIFY_API_TOKEN
+  if (!token) {
+    const err = new Error('APIFY_API_TOKEN is not configured')
+    err.status = 500
+    throw err
+  }
+
+  const url = `${APIFY_BASE}/actor-runs/${encodeURIComponent(runId)}?token=${encodeURIComponent(token)}`
+
+  let result
+  try {
+    const res = await fetch(url)
+    if (!res.ok) {
+      const body = await res.text()
+      const err = new Error(`Apify run status check failed: ${res.status} ${body}`)
+      err.status = 502
+      throw err
+    }
+    result = await res.json()
+  } catch (fetchErr) {
+    if (fetchErr.status) throw fetchErr
+    const err = new Error(`Failed to reach Apify API: ${fetchErr.message}`)
+    err.status = 502
+    throw err
+  }
+
+  const run = result.data
+  console.log(`[Apify] Run ${runId} — status=${run.status} defaultDatasetId=${run.defaultDatasetId || 'none'}`)
+
+  return {
+    status: run.status,
+    defaultDatasetId: run.defaultDatasetId || null,
+  }
+}
+
+module.exports = { fetchAndNormaliseDataset, triggerCommentScrapeRun, fetchApifyDatasetItems, getApifyRunStatus }
