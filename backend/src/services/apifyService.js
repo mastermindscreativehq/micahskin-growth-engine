@@ -272,4 +272,48 @@ async function triggerCommentScrapeRun(postUrls) {
   }
 }
 
-module.exports = { fetchAndNormaliseDataset, triggerCommentScrapeRun }
+/**
+ * Fetch raw items from an Apify dataset without normalisation.
+ * Used by commentIngestionService to ingest comment datasets.
+ *
+ * @param {string} datasetId  Apify dataset ID
+ * @returns {Promise<object[]>}
+ */
+async function fetchApifyDatasetItems(datasetId) {
+  const token = process.env.APIFY_API_TOKEN
+  if (!token) {
+    const err = new Error('APIFY_API_TOKEN is not configured')
+    err.status = 500
+    throw err
+  }
+
+  const url = `${APIFY_BASE}/datasets/${datasetId}/items?clean=true&format=json&token=${encodeURIComponent(token)}`
+
+  let raw
+  try {
+    const res = await fetch(url)
+    if (!res.ok) {
+      const body = await res.text()
+      const err = new Error(`Apify dataset fetch failed: ${res.status} ${body}`)
+      err.status = 502
+      throw err
+    }
+    raw = await res.json()
+  } catch (fetchErr) {
+    if (fetchErr.status) throw fetchErr
+    const err = new Error(`Failed to reach Apify API: ${fetchErr.message}`)
+    err.status = 502
+    throw err
+  }
+
+  if (!Array.isArray(raw)) {
+    const err = new Error('Apify dataset response was not an array')
+    err.status = 502
+    throw err
+  }
+
+  console.log(`[Apify] fetchApifyDatasetItems: ${raw.length} items from dataset ${datasetId}`)
+  return raw
+}
+
+module.exports = { fetchAndNormaliseDataset, triggerCommentScrapeRun, fetchApifyDatasetItems }

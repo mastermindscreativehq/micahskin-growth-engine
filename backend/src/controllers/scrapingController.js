@@ -6,6 +6,7 @@
 
 const { importApifyDataset } = require('../services/leadIngestionService')
 const { prepareCommentTargets, runCommentHarvest, getCommentTargetStats } = require('../services/commentScrapeService')
+const { importInstagramCommentDataset } = require('../services/commentIngestionService')
 
 // ── POST /api/scraping/apify/import-instagram ─────────────────────────────────
 // Body: { datasetId: string, platform?: string }
@@ -151,4 +152,23 @@ async function commentTargetStats(req, res) {
   }
 }
 
-module.exports = { importInstagram, listRawItems, prepareInstagramComments, runInstagramComments, commentTargetStats }
+// ── POST /api/scraping/apify/import-instagram-comments ────────────────────────
+// Body: { datasetId: string }
+// Auth: requireAuth (admin only)
+async function importInstagramComments(req, res) {
+  const { datasetId } = req.body
+
+  if (!datasetId || typeof datasetId !== 'string' || !datasetId.trim()) {
+    return res.status(400).json({ success: false, message: 'datasetId is required.' })
+  }
+
+  try {
+    const result = await importInstagramCommentDataset(datasetId.trim())
+    return res.status(200).json({ success: true, data: result })
+  } catch (err) {
+    console.error('[ScrapingController] importInstagramComments failed:', err.message)
+    return res.status(err.status || 500).json({ success: false, message: err.message })
+  }
+}
+
+module.exports = { importInstagram, listRawItems, prepareInstagramComments, runInstagramComments, commentTargetStats, importInstagramComments }

@@ -17,6 +17,7 @@ const {
   prepareInstagramComments,
   runInstagramComments,
   commentTargetStats,
+  importInstagramComments,
 } = require('../controllers/scrapingController')
 
 const router = express.Router()
@@ -54,5 +55,9 @@ router.post('/apify/run-instagram-comments', runInstagramComments)
 
 // Aggregate counts by status: { pending, running, done, failed, total }
 router.get('/comment-targets/stats', commentTargetStats)
+
+// Import harvested comments from an Apify comment dataset → instagram_comment_leads
+// Body: { datasetId: string }
+router.post('/apify/import-instagram-comments', importInstagramComments)
 
 module.exports = router

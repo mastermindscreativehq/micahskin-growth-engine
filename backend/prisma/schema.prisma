@@ -200,3 +200,28 @@ model MessageLog {
 
   @@map("message_logs")
 }
+
+//
+model InstagramCommentLead {
+  id               String   @id @default(cuid())
+  platform         String   @default("instagram")
+  sourceDatasetId  String?
+  apifyRunId       String?
+  commentId        String?  @unique
+  postUrl          String?
+  commentText      String?  @db.Text
+  commentedAt      DateTime?
+  commenterUsername String?
+  commenterProfilePicUrl String?
+  ownerUsername    String?
+  rawJson          Json?
+  status           String   @default("new")
+  intentScore      Int      @default(0)
+  intentLabel      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([commenterUsername])
+  @@index([status])
+  @@index([sourceDatasetId])
+}
