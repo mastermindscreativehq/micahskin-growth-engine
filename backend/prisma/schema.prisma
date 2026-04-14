@@ -257,3 +257,14 @@ model InstagramCommentLead {
   @@index([status])
   @@index([sourceDatasetId])
 }
+
+//
+model TelegramSession {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  stage     String
+  data      Json
+  completed Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
