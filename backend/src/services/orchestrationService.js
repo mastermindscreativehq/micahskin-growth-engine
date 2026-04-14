@@ -242,4 +242,60 @@ async function checkOrchestrationStatus(runId) {
  * @property {object|null} stage4             Stage 4 import result (set on completed)
  */
 
-module.exports = { runInstagramOrchestration, checkOrchestrationStatus }
+// ── Background orchestration poller ──────────────────────────────────────────
+
+/**
+ * One polling cycle: find every OrchestrationRun in "running" state and advance
+ * it through checkOrchestrationStatus(), which is already idempotent — terminal
+ * runs return their cached result instantly without hitting Apify again.
+ */
+async function pollRunningOrchestrations() {
+  let runs
+  try {
+    runs = await prisma.orchestrationRun.findMany({
+      where: { status: 'running' },
+      select: { id: true, commentRunId: true },
+    })
+  } catch (err) {
+    console.error('[OrchestrationPoller] DB query failed:', err.message)
+    return
+  }
+
+  if (runs.length === 0) return
+
+  console.log(`[OrchestrationPoller] Checking ${runs.length} running orchestration(s)...`)
+
+  for (const run of runs) {
+    try {
+      const result = await checkOrchestrationStatus(run.id)
+      if (result.status !== 'running') {
+        console.log(
+          `[OrchestrationPoller] Run ${run.id} → ${result.status}` +
+          (result.apifyStatus ? ` (Apify: ${result.apifyStatus})` : ''),
+        )
+      }
+    } catch (err) {
+      console.error(`[OrchestrationPoller] checkOrchestrationStatus(${run.id}) failed:`, err.message)
+    }
+  }
+}
+
+/**
+ * Starts the background orchestration poller.
+ * Polls every 30 s by default (overridable via ORCHESTRATION_POLL_INTERVAL_MS).
+ * Runs once immediately on boot so any run that completed while the server was
+ * down is picked up without waiting a full interval.
+ *
+ * When the Apify comment run SUCCEEDS, checkOrchestrationStatus() automatically
+ * calls importInstagramCommentDataset() (Stage 4) and marks the run "completed".
+ * On FAILED / TIMED-OUT / ABORTED it marks the run "failed". The function is
+ * idempotent: once a run is in a terminal state it is never re-processed.
+ */
+function startOrchestrationPoller() {
+  const intervalMs = parseInt(process.env.ORCHESTRATION_POLL_INTERVAL_MS || '30000', 10)
+  console.log(`✅ Orchestration poller started (checks every ${intervalMs / 1000}s)`)
+  pollRunningOrchestrations()
+  setInterval(pollRunningOrchestrations, intervalMs)
+}
+
+module.exports = { runInstagramOrchestration, checkOrchestrationStatus, startOrchestrationPoller }
