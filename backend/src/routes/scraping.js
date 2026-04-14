@@ -23,6 +23,7 @@ const {
   runInstagramOrchestrationHandler,
   checkOrchestrationStatusHandler,
 } = require('../controllers/scrapingController')
+const { generateContentFromComments } = require('../services/contentEngine')
 
 const router = express.Router()
 
@@ -71,5 +72,17 @@ router.post('/apify/run-instagram-orchestration', runInstagramOrchestrationHandl
 // Poll Apify run status; auto-triggers Stage 4 comment ingestion on SUCCEEDED
 // Param: :runId — OrchestrationRun.id (UUID returned by run-instagram-orchestration)
 router.get('/apify/orchestration-status/:runId', checkOrchestrationStatusHandler)
+
+// POST /api/scraping/content-ideas
+// Body: { comments: string[] }
+// Returns: content idea sets grouped by detected skin concern, ordered by comment volume.
+router.post('/content-ideas', (req, res) => {
+  const { comments } = req.body
+  if (!Array.isArray(comments)) {
+    return res.status(400).json({ error: 'comments must be a string array' })
+  }
+  const ideas = generateContentFromComments(comments)
+  res.json({ ideas, total: ideas.length })
+})
 
 module.exports = router

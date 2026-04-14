@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma')
 const { sendTelegramToUser, sendTelegramMessage } = require('../services/telegramService')
+const { analyzeLead } = require('../services/diagnosisService')
 
 // ── Flow definitions ──────────────────────────────────────────────────────────
 //
@@ -287,9 +288,12 @@ async function handleLeadReply({ lead, chatId, text }) {
     if (['new', 'contacted'].includes(lead.status)) updateData.status = 'engaged'
     autoResponse = getNextQuestion(updateData.telegramStage, flowType)
 
-  // ── Stage: intake_complete — acknowledge only, never repeat questions ──────
+  // ── Stage: intake_complete — SILENT MODE. Bot does not respond. ───────────
   } else if (effectiveStage === 'intake_complete') {
-    autoResponse = 'Thanks \u2014 I\u2019ve added that to your consultation notes. Our team will continue with you here shortly.'
+    // Intake is done. Persist any tracking fields but send nothing.
+    await prisma.lead.update({ where: { id: lead.id }, data: updateData })
+    console.log(`[Telegram Webhook] Lead ${lead.id} — stage=intake_complete | bot silent (no reply sent)`)
+    return
 
   // ── Active intake stage — advance within current flow ─────────────────────
   } else {
@@ -316,6 +320,31 @@ async function handleLeadReply({ lead, chatId, text }) {
       if (nextStage === 'intake_complete') {
         if (['new', 'contacted', 'engaged'].includes(lead.status)) updateData.status = 'interested'
         autoResponse = flow.completeMessage
+
+        // ── Generate diagnosis and schedule follow-up messages ───────────────
+        try {
+          // Merge DB record with answers captured in this request so analyzeLead
+          // has access to the very last answer (just stored in updateData).
+          const merged = { ...lead, ...updateData }
+          const diag = analyzeLead(merged)
+          const now = new Date()
+
+          updateData.diagnosis            = { text: diag.diagnosis, notes: diag.notes }
+          updateData.routine              = diag.routine
+          updateData.products             = { recommendations: diag.productRecommendations }
+          updateData.diagnosisGeneratedAt = now
+          // T+1h → full diagnosis + routine
+          updateData.diagnosisSendAfter   = new Date(now.getTime() + 60 * 60 * 1000)
+          // T+24h → check-in
+          updateData.checkInSendAfter     = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+          // T+3 days → product recommendation
+          updateData.productRecoSendAfter = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000)
+
+          console.log(`[Telegram Webhook] Diagnosis generated for lead ${lead.id} | concern=${diag.diagnosis.slice(0, 60)}…`)
+        } catch (diagErr) {
+          console.error('[Telegram Webhook] diagnosisService error:', diagErr.message)
+          // Non-fatal — intake still completes even if diagnosis generation fails
+        }
       } else {
         autoResponse = getNextQuestion(nextStage, flowType)
       }

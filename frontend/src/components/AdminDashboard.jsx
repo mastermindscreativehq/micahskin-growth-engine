@@ -653,6 +653,111 @@ function LeadsTab() {
                           <div className="text-xs text-gray-400 italic">Telegram not connected</div>
                         )}
 
+                        {/* Diagnosis Panel */}
+                        {lead.diagnosis && (
+                          <div className="rounded-lg border border-emerald-100 bg-emerald-50/50 px-3 py-2.5 space-y-2">
+                            {/* Header */}
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="font-semibold text-emerald-700 uppercase tracking-wide">Skin Diagnosis</span>
+                              {lead.diagnosisGeneratedAt && (
+                                <span className="text-emerald-500">{fmtDateTime(lead.diagnosisGeneratedAt)}</span>
+                              )}
+                              {/* Auto follow-up send status badges */}
+                              <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${lead.diagnosisSent ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {lead.diagnosisSent ? `✓ Diagnosis sent${lead.diagnosisSentAt ? ` ${fmtDateTime(lead.diagnosisSentAt)}` : ''}` : 'Diagnosis pending'}
+                              </span>
+                              {lead.checkInSent !== undefined && (
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${lead.checkInSent ? 'bg-green-100 text-green-700' : lead.checkInSendAfter ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-400'}`}>
+                                  {lead.checkInSent ? `✓ Check-in sent${lead.checkInSentAt ? ` ${fmtDateTime(lead.checkInSentAt)}` : ''}` : 'Check-in pending'}
+                                </span>
+                              )}
+                              {lead.productRecoSent !== undefined && (
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${lead.productRecoSent ? 'bg-green-100 text-green-700' : lead.productRecoSendAfter ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-400'}`}>
+                                  {lead.productRecoSent ? `✓ Products sent${lead.productRecoSentAt ? ` ${fmtDateTime(lead.productRecoSentAt)}` : ''}` : 'Products pending'}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Diagnosis text */}
+                            <p className="text-xs text-emerald-900 leading-relaxed">
+                              <span className="font-semibold">Assessment: </span>
+                              {lead.diagnosis.text}
+                            </p>
+
+                            {/* Routine */}
+                            {lead.routine && (
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 text-xs">
+                                {lead.routine.morning?.length > 0 && (
+                                  <div>
+                                    <p className="font-semibold text-emerald-700 mb-0.5">Morning</p>
+                                    <ol className="list-decimal list-inside space-y-0.5 text-gray-700">
+                                      {lead.routine.morning.map((step, i) => (
+                                        <li key={i}>{step}</li>
+                                      ))}
+                                    </ol>
+                                  </div>
+                                )}
+                                {lead.routine.night?.length > 0 && (
+                                  <div>
+                                    <p className="font-semibold text-emerald-700 mb-0.5">Night</p>
+                                    <ol className="list-decimal list-inside space-y-0.5 text-gray-700">
+                                      {lead.routine.night.map((step, i) => (
+                                        <li key={i}>{step}</li>
+                                      ))}
+                                    </ol>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Product recommendations */}
+                            {lead.products?.recommendations?.length > 0 && (
+                              <div className="text-xs">
+                                <p className="font-semibold text-emerald-700 mb-0.5">Product Recommendations</p>
+                                <ul className="space-y-0.5 text-gray-700">
+                                  {lead.products.recommendations.map((p, i) => (
+                                    <li key={i} className="flex gap-1"><span className="text-emerald-500">•</span>{p}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {/* Notes */}
+                            {lead.diagnosis.notes?.length > 0 && (
+                              <div className="text-xs border-t border-emerald-100 pt-1.5">
+                                <p className="font-semibold text-emerald-700 mb-0.5">Clinical Notes</p>
+                                <ul className="space-y-0.5 text-gray-600">
+                                  {lead.diagnosis.notes.map((n, i) => (
+                                    <li key={i} className="flex gap-1"><span className="text-emerald-400">→</span>{n}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {/* Auto follow-up schedule */}
+                            {(lead.diagnosisSendAfter || lead.checkInSendAfter || lead.productRecoSendAfter) && (
+                              <div className="flex flex-wrap gap-3 text-xs border-t border-emerald-100 pt-1.5 text-gray-500">
+                                <span className="font-medium text-emerald-600">Auto-send schedule:</span>
+                                {lead.diagnosisSendAfter && (
+                                  <span className={lead.diagnosisSent ? 'line-through text-gray-400' : 'text-emerald-700'}>
+                                    Diagnosis → {fmtDateTime(lead.diagnosisSendAfter)}
+                                  </span>
+                                )}
+                                {lead.checkInSendAfter && (
+                                  <span className={lead.checkInSent ? 'line-through text-gray-400' : 'text-emerald-700'}>
+                                    Check-in → {fmtDateTime(lead.checkInSendAfter)}
+                                  </span>
+                                )}
+                                {lead.productRecoSendAfter && (
+                                  <span className={lead.productRecoSent ? 'line-through text-gray-400' : 'text-emerald-700'}>
+                                    Products → {fmtDateTime(lead.productRecoSendAfter)}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {/* Follow-up schedule with sent / overdue indicators */}
                         {(lead.followUp1 || lead.followUp2 || lead.followUp3) && (
                           <div className="flex flex-wrap gap-4 text-xs">

@@ -5,6 +5,7 @@ const prisma = require('./lib/prisma')
 const { startScheduler } = require('./services/schedulerService')
 const { startAutoTrigger } = require('./services/autoTriggerService')
 const { startOrchestrationPoller } = require('./services/orchestrationService')
+const { startFollowUpService } = require('./services/followUpService')
 
 const PORT = process.env.PORT || 4000
 
@@ -28,6 +29,8 @@ async function start() {
     startAutoTrigger()
     // Phase 15 — orchestration poller: auto-triggers Stage 4 when Apify run succeeds
     startOrchestrationPoller()
+    // Phase 16 — diagnosis follow-up service: auto-sends diagnosis, check-in, product reco to leads
+    startFollowUpService()
   })
 }
 

@@ -64,6 +64,23 @@ model Lead {
   telegramSensitivity       String?   // routine path: skin sensitivity / reactivity
   telegramBudget            String?   // routine path: budget | mid-range | premium
   telegramRoutineLevel      String?   // routine path: simple | balanced | complete
+  // ── Diagnosis output (generated once when intake_complete) ────────────────
+  diagnosis               Json?     // { text: string, notes: string[] }
+  routine                 Json?     // { morning: string[], night: string[] }
+  products                Json?     // { recommendations: string[] }
+  diagnosisGeneratedAt    DateTime?
+
+  // ── Auto follow-up direct sends (separate from admin alert system) ─────────
+  diagnosisSendAfter      DateTime? // intake_complete + 1 hour
+  diagnosisSent           Boolean   @default(false)
+  diagnosisSentAt         DateTime?
+  checkInSendAfter        DateTime? // intake_complete + 24 hours
+  checkInSent             Boolean   @default(false)
+  checkInSentAt           DateTime?
+  productRecoSendAfter    DateTime? // intake_complete + 3 days
+  productRecoSent         Boolean   @default(false)
+  productRecoSentAt       DateTime?
+
   utmSource      String?
   replies        Reply[]
   utmMedium      String?
