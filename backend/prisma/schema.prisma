@@ -110,6 +110,16 @@ model Lead {
   lastActionAt          DateTime? // when the last action ran
   actionBlockedReason   String?   // why automation was blocked for this lead
 
+  // ── Conversion Engine — consult + course monetisation offers (Phase 18) ──────
+  consultOfferSendAfter DateTime? // diagnosedAt + 2 hours (set by diagnosis engine)
+  consultOfferSent      Boolean   @default(false)
+  consultOfferSentAt    DateTime?
+  consultOfferStatus    String?   // pending | sent | skipped | failed | blocked
+  courseOfferSendAfter  DateTime? // diagnosedAt + 2 days (set by diagnosis engine)
+  courseOfferSent       Boolean   @default(false)
+  courseOfferSentAt     DateTime?
+  courseOfferStatus     String?   // pending | sent | skipped | failed | blocked
+
   utmSource      String?
   replies        Reply[]
   utmMedium      String?

@@ -4,13 +4,13 @@ import Layout from './components/Layout.jsx'
 import Hero from './components/Hero.jsx'
 import ChoiceSection from './components/ChoiceSection.jsx'
 import SkincareForm from './components/SkincareForm.jsx'
-import AcademyForm from './components/AcademyForm.jsx'
 import SuccessMessage from './components/SuccessMessage.jsx'
 import AdminLogin from './components/AdminLogin.jsx'
 import AdminDashboard from './components/AdminDashboard.jsx'
 import PrivacyPolicyPage from './pages/PrivacyPolicyPage.jsx'
 import TermsOfServicePage from './pages/TermsOfServicePage.jsx'
 import ContactPage from './pages/ContactPage.jsx'
+import AcademyPage from './pages/AcademyPage.jsx'
 import { checkAdminSession, logoutAdmin } from './api/index.js'
 
 // ---------------------------------------------------------------------------
@@ -81,8 +81,9 @@ function parseUrlPrefill() {
   }
 }
 
-// Home handles the multi-step skincare / academy funnel as internal state.
+// Home handles the skincare funnel as internal state; academy navigates to /academy.
 function HomeView() {
+  const navigate = useNavigate()
   const [view, setView] = useState('home')
   const [prefill] = useState(parseUrlPrefill)
 
@@ -96,29 +97,21 @@ function HomeView() {
     )
   }
 
-  if (view === 'academy-form') {
-    return (
-      <AcademyForm
-        prefill={prefill}
-        onSuccess={() => setView('academy-done')}
-        onBack={() => setView('home')}
-      />
-    )
-  }
-
   if (view === 'skincare-done') {
     return <SuccessMessage type="skincare" onReset={() => setView('home')} />
-  }
-
-  if (view === 'academy-done') {
-    return <SuccessMessage type="academy" onReset={() => setView('home')} />
   }
 
   return (
     <>
       <Hero />
       <ChoiceSection
-        onChoose={(path) => setView(path === 'skincare' ? 'skincare-form' : 'academy-form')}
+        onChoose={(path) => {
+          if (path === 'skincare') {
+            setView('skincare-form')
+          } else {
+            navigate('/academy')
+          }
+        }}
       />
     </>
   )
@@ -173,6 +166,7 @@ export default function App() {
       {needsRefresh && <UpdateBanner />}
       <Routes>
         <Route path="/" element={<Layout><HomeView /></Layout>} />
+        <Route path="/academy" element={<Layout><AcademyPage /></Layout>} />
         <Route path="/privacy-policy" element={<Layout><PrivacyPolicyPage /></Layout>} />
         <Route path="/terms-of-service" element={<Layout><TermsOfServicePage /></Layout>} />
         <Route path="/contact" element={<Layout><ContactPage /></Layout>} />

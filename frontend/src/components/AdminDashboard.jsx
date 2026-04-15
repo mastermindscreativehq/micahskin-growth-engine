@@ -851,6 +851,58 @@ function LeadsTab() {
                           </div>
                         )}
 
+                        {/* Conversion Status Panel — consult + course offers */}
+                        {(lead.consultOfferSendAfter || lead.consultOfferSent ||
+                          lead.courseOfferSendAfter  || lead.courseOfferSent  ||
+                          lead.consultOfferStatus    || lead.courseOfferStatus) && (
+                          <div className="rounded-lg border border-violet-100 bg-violet-50/40 px-3 py-2.5 space-y-2">
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="font-semibold text-violet-700 uppercase tracking-wide">Conversion</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                              {[
+                                {
+                                  label:  'Consult Offer',
+                                  status: lead.consultOfferStatus || (lead.consultOfferSent ? 'sent' : (lead.consultOfferSendAfter ? 'pending' : null)),
+                                  sentAt: lead.consultOfferSentAt,
+                                  due:    lead.consultOfferSendAfter,
+                                },
+                                {
+                                  label:  'Course Offer',
+                                  status: lead.courseOfferStatus  || (lead.courseOfferSent  ? 'sent' : (lead.courseOfferSendAfter  ? 'pending' : null)),
+                                  sentAt: lead.courseOfferSentAt,
+                                  due:    lead.courseOfferSendAfter,
+                                },
+                              ].filter(s => s.status).map(({ label, status, sentAt, due }) => {
+                                const colorMap = {
+                                  sent:    'text-green-700 bg-green-100',
+                                  skipped: 'text-gray-500 bg-gray-100',
+                                  failed:  'text-red-600 bg-red-100',
+                                  blocked: 'text-amber-700 bg-amber-100',
+                                  pending: 'text-blue-700 bg-blue-100',
+                                }
+                                return (
+                                  <div key={label} className="flex items-center gap-1.5">
+                                    <span className="shrink-0 text-gray-500 w-24">{label}:</span>
+                                    <span
+                                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize ${colorMap[status] || 'text-gray-500 bg-gray-100'}`}
+                                      title={sentAt ? fmtDateTime(sentAt) : (due ? `due ${fmtDateTime(due)}` : undefined)}
+                                    >
+                                      {status}{sentAt ? ' ✓' : ''}
+                                    </span>
+                                    {sentAt && (
+                                      <span className="text-gray-400 text-[10px]">{fmtDateTime(sentAt)}</span>
+                                    )}
+                                    {!sentAt && due && status === 'pending' && (
+                                      <span className="text-blue-400 text-[10px]">due {fmtDateTime(due)}</span>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+
                         {/* Action Engine Status Panel */}
                         {(lead.diagnosisStatus || lead.checkInStatus || lead.productRecoStatus ||
                           lead.academyOfferStatus || lead.lastActionType || lead.actionBlockedReason ||

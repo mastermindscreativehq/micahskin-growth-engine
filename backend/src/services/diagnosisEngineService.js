@@ -459,6 +459,31 @@ async function diagnoseLead(leadId) {
   await saveDiagnosisResult(leadId, result)
   console.log(`[DiagnosisEngine] Saved → leadId=${leadId}`)
 
+  // Set consult + course offer timing (conversion engine — Phase 18).
+  // Only set when lead has a Telegram chatId (delivery channel confirmed).
+  // Never overwritten once set.
+  if (lead.telegramChatId) {
+    const timingUpdates = {}
+    const base = result.diagnosedAt
+
+    if (!lead.consultOfferSendAfter) {
+      timingUpdates.consultOfferSendAfter = new Date(base.getTime() + 2 * 60 * 60 * 1000)
+    }
+    if (!lead.courseOfferSendAfter) {
+      timingUpdates.courseOfferSendAfter = new Date(base.getTime() + 2 * 24 * 60 * 60 * 1000)
+    }
+
+    if (Object.keys(timingUpdates).length > 0) {
+      await prisma.lead.update({ where: { id: leadId }, data: timingUpdates })
+      console.log(
+        `[DiagnosisEngine] conversion timing set | ` +
+        `consultOffer=${timingUpdates.consultOfferSendAfter?.toISOString() ?? 'existing'} | ` +
+        `courseOffer=${timingUpdates.courseOfferSendAfter?.toISOString() ?? 'existing'} | ` +
+        `leadId=${leadId}`
+      )
+    }
+  }
+
   // Set academyOfferSendAfter timing when fit score qualifies.
   // Timing = productRecoSendAfter + 2d, or diagnosedAt + 5d as fallback.
   // Only written once — never overwritten if already set.

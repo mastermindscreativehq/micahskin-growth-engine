@@ -9,7 +9,7 @@ const LEVELS = [
   { value: 'advanced', label: 'Advanced — Growing an existing brand' },
 ]
 
-export default function AcademyForm({ onSuccess, onBack, prefill = {} }) {
+export default function AcademyForm({ onSuccess, onBack, prefill = {}, embedded = false }) {
   // step: 'form' → 'packages' → (redirect to Paystack)
   const [step, setStep] = useState('form')
   const [registrationId, setRegistrationId] = useState(null)
@@ -218,28 +218,33 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {} }) {
   }
 
   // ── Form ───────────────────────────────────────────────────────────────────
-  return (
-    <section className="px-6 py-14 bg-white min-h-screen">
-      <div className="max-w-lg mx-auto">
+  const formContent = (
+    <div className="max-w-lg mx-auto">
+      {!embedded && (
         <button
           onClick={onBack}
           className="text-sm text-brand-600 hover:underline mb-8 inline-block"
         >
           ← Back
         </button>
+      )}
 
-        <h2 className="text-2xl font-bold text-gray-900 mb-1">Join the MICAHSKIN Academy</h2>
-        <p className="text-gray-500 text-sm mb-8">
-          Register for the masterclass and learn how to build and grow a skincare brand.
-        </p>
+      {!embedded && (
+        <>
+          <h2 className="text-2xl font-bold text-gray-900 mb-1">Join the MICAHSKIN Academy</h2>
+          <p className="text-gray-500 text-sm mb-8">
+            Register for the masterclass and learn how to build and grow a skincare brand.
+          </p>
+        </>
+      )}
 
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3 mb-6">
-            {error}
-          </div>
-        )}
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3 mb-6">
+          {error}
+        </div>
+      )}
 
-        <form onSubmit={handleSubmit} className="space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-5">
           <div>
             <label className="form-label" htmlFor="fullName">Full Name *</label>
             <input
@@ -344,6 +349,13 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {} }) {
           </button>
         </form>
       </div>
+  )
+
+  if (embedded) return formContent
+
+  return (
+    <section className="px-6 py-14 bg-white min-h-screen">
+      {formContent}
     </section>
   )
 }

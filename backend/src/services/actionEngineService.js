@@ -30,6 +30,43 @@ const { sendTelegramToUser } = require('./telegramService')
 // Configurable via env var — keep in sync with diagnosisEngineService threshold
 const ACADEMY_FIT_THRESHOLD = parseInt(process.env.ACADEMY_FIT_THRESHOLD || '65', 10)
 
+// Concerns that always route to a consult (clinical / chronic conditions)
+const CONSULT_CONCERN_LIST = ['eczema', 'severe_acne', 'chronic']
+
+// ── Conversion decision logic ─────────────────────────────────────────────────
+
+/**
+ * Returns true when this lead should receive a direct consultation offer
+ * (WhatsApp redirect). Consult takes absolute priority over course.
+ *
+ * @param {object} lead
+ * @returns {boolean}
+ */
+function shouldSendConsultOffer(lead) {
+  return (
+    lead.urgencyLevel === 'high' ||
+    lead.nextBestAction === 'manual_consult' ||
+    (lead.confidenceScore != null && lead.confidenceScore < 70) ||
+    CONSULT_CONCERN_LIST.includes(lead.primaryConcern)
+  )
+}
+
+/**
+ * Returns true when this lead should receive a course / scalable offer.
+ * Automatically blocked when shouldSendConsultOffer is true.
+ *
+ * @param {object} lead
+ * @returns {boolean}
+ */
+function shouldSendCourseOffer(lead) {
+  return (
+    lead.academyFitScore != null &&
+    lead.academyFitScore >= ACADEMY_FIT_THRESHOLD &&
+    lead.nextBestAction !== 'manual_consult' &&
+    lead.urgencyLevel !== 'high'
+  )
+}
+
 // ── Message builders ──────────────────────────────────────────────────────────
 
 /**
@@ -173,6 +210,72 @@ function buildAcademyOfferMessage(lead) {
   )
 }
 
+/**
+ * Consult offer — expert, serious, urgent tone.
+ * Drives lead to WhatsApp for 1-on-1 consultation.
+ * Fires for: urgencyLevel=high | nextBestAction=manual_consult |
+ *            confidenceScore<70 | clinical concern (eczema/severe_acne/chronic)
+ *
+ * @param {object} lead
+ * @returns {string}
+ */
+function buildConsultMessage(lead) {
+  const firstName = lead.fullName.split(' ')[0]
+  const concern   = lead.primaryConcern
+    ? lead.primaryConcern.replace(/_/g, ' ')
+    : 'your skin concern'
+
+  const intro = lead.urgencyLevel === 'high'
+    ? `Your skin situation is serious enough that a personalised, expert consultation is the right next step — not a generic routine.`
+    : `Your ${concern} profile has enough complexity that a direct 1-on-1 consultation will give you better results than a self-managed routine.`
+
+  return (
+    `Hi ${firstName} 👩‍⚕️\n\n` +
+    `${intro}\n\n` +
+    `I want to speak with you directly, assess your skin properly, and give you a clear plan — ` +
+    `not just a product list.\n\n` +
+    `<b>What the consultation covers:</b>\n` +
+    `• Root cause of your ${concern}\n` +
+    `• What's making it worse (and what to stop immediately)\n` +
+    `• A personalised step-by-step treatment plan\n` +
+    `• Product recommendations matched to your exact skin\n\n` +
+    `👉 Message me directly on WhatsApp to book your slot:\n` +
+    `https://wa.me/+2348140468759\n\n` +
+    `Slots are limited. Tap the link to claim yours.`
+  )
+}
+
+/**
+ * Course offer — positions the course as a system, not just content.
+ * Transformation-led copy, drives to course link.
+ * Fires for: academyFitScore>=65, urgencyLevel≠high, nextBestAction≠manual_consult.
+ *
+ * @param {object} lead
+ * @returns {string}
+ */
+function buildCourseMessage(lead) {
+  const firstName = lead.fullName.split(' ')[0]
+  const concern   = lead.primaryConcern
+    ? lead.primaryConcern.replace(/_/g, ' ')
+    : 'your skin concern'
+
+  return (
+    `Hi ${firstName} 🎯\n\n` +
+    `Here's the truth about ${concern}: products alone don't fix it. ` +
+    `You need to understand <b>why</b> it happens and build a system that stops it.\n\n` +
+    `That's exactly what our skincare course teaches.\n\n` +
+    `<b>What you'll learn:</b>\n` +
+    `• Why your skin reacts the way it does\n` +
+    `• Which ingredients actually work for ${concern} — and which make it worse\n` +
+    `• How to build a routine that delivers visible results in weeks\n` +
+    `• How to read product labels and stop wasting money on the wrong things\n\n` +
+    `This isn't tips content. It's a complete system — built around your exact concern.\n\n` +
+    `👉 Get full access here:\n` +
+    `YOUR_COURSE_LINK\n\n` +
+    `Reply <b>COURSE</b> if you'd like more details before you decide.`
+  )
+}
+
 // ── Evaluation (pure — no DB writes) ─────────────────────────────────────────
 
 /**
@@ -249,6 +352,34 @@ function evaluateNextActionForLead(lead) {
       return { action: null, blocked: true, reason: 'manual_consult_required' }
     }
     return { action: 'academy_offer', blocked: false, reason: null }
+  }
+
+  // E. Consult offer — fires T+2h after diagnosis, for qualifying leads
+  if (
+    lead.consultOfferSendAfter &&
+    new Date(lead.consultOfferSendAfter) <= now &&
+    !lead.consultOfferSent
+  ) {
+    if (!shouldSendConsultOffer(lead)) {
+      return { action: null, blocked: true, reason: 'consult_criteria_not_met' }
+    }
+    return { action: 'consult_offer', blocked: false, reason: null }
+  }
+
+  // F. Course offer — fires T+2d after diagnosis, for qualifying leads.
+  //    Blocked if consult offer would also qualify (consult has absolute priority).
+  if (
+    lead.courseOfferSendAfter &&
+    new Date(lead.courseOfferSendAfter) <= now &&
+    !lead.courseOfferSent
+  ) {
+    if (shouldSendConsultOffer(lead)) {
+      return { action: null, blocked: true, reason: 'consult_offer_priority' }
+    }
+    if (!shouldSendCourseOffer(lead)) {
+      return { action: null, blocked: true, reason: 'course_criteria_not_met' }
+    }
+    return { action: 'course_offer', blocked: false, reason: null }
   }
 
   return { action: null, blocked: false, reason: null }
@@ -579,10 +710,185 @@ async function _processAcademyOffers() {
   }
 }
 
+/**
+ * E. Consult offer sends — T+2h after diagnosis.
+ *
+ * Fires when shouldSendConsultOffer() is true:
+ *   urgencyLevel=high | nextBestAction=manual_consult |
+ *   confidenceScore<70 | eczema/severe_acne/chronic
+ *
+ * If criteria not met → marks skipped (idempotent, no retry).
+ */
+async function _processConsultOffers() {
+  const now = new Date()
+
+  const leads = await prisma.lead.findMany({
+    where: {
+      consultOfferSendAfter: { lte: now },
+      consultOfferSent:      false,
+      telegramChatId:        { not: null },
+    },
+  })
+
+  for (const lead of leads) {
+    if (lead.status === 'closed') {
+      console.log(`[ActionEngine] skipped (lead closed) → ${lead.id}`)
+      continue
+    }
+
+    // Atomic claim — prevents duplicate sends across concurrent ticks
+    const claimed = await prisma.lead.updateMany({
+      where: { id: lead.id, consultOfferSent: false },
+      data:  { consultOfferSent: true },
+    })
+    if (claimed.count === 0) continue  // another process claimed it first
+
+    if (!shouldSendConsultOffer(lead)) {
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data:  {
+          consultOfferStatus: 'skipped',
+          lastActionType:     'consult_offer',
+          lastActionAt:       now,
+        },
+      })
+      console.log(`[ActionEngine] skipped (consult criteria not met) → ${lead.id}`)
+      continue
+    }
+
+    console.log(`[ActionEngine] evaluating lead ${lead.id} (${lead.fullName}) for consult offer`)
+
+    try {
+      const msg    = buildConsultMessage(lead)
+      const result = await sendTelegramToUser(lead.telegramChatId, msg)
+      if (!result.success && !result.skipped) throw new Error(JSON.stringify(result.error) || 'telegram send failed')
+
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data:  {
+          consultOfferSentAt:  now,
+          consultOfferStatus:  'sent',
+          lastActionType:      'consult_offer',
+          lastActionAt:        now,
+          actionBlockedReason: null,
+        },
+      })
+      await _logAction(lead.id, lead.telegramChatId, 'consult_offer', result)
+      console.log(`[ActionEngine] consult offer sent → ${lead.id}`)
+
+    } catch (err) {
+      console.error(`[ActionEngine] consult offer FAILED for ${lead.id}:`, err.message)
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data:  {
+          consultOfferSent:   false,   // revert claim so next tick retries
+          consultOfferStatus: 'failed',
+          lastActionType:     'consult_offer',
+          lastActionAt:       now,
+        },
+      }).catch(() => {})
+    }
+  }
+}
+
+/**
+ * F. Course offer sends — T+2d after diagnosis.
+ *
+ * Fires when shouldSendCourseOffer() is true AND shouldSendConsultOffer() is false.
+ * Consult offer has absolute priority — if both conditions are met, course is blocked.
+ */
+async function _processCourseOffers() {
+  const now = new Date()
+
+  const leads = await prisma.lead.findMany({
+    where: {
+      courseOfferSendAfter: { lte: now },
+      courseOfferSent:      false,
+      telegramChatId:       { not: null },
+    },
+  })
+
+  for (const lead of leads) {
+    if (lead.status === 'closed') {
+      console.log(`[ActionEngine] skipped (lead closed) → ${lead.id}`)
+      continue
+    }
+
+    // Atomic claim
+    const claimed = await prisma.lead.updateMany({
+      where: { id: lead.id, courseOfferSent: false },
+      data:  { courseOfferSent: true },
+    })
+    if (claimed.count === 0) continue
+
+    // Rule: if consult criteria are met, consult has absolute priority
+    if (shouldSendConsultOffer(lead)) {
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data:  {
+          courseOfferStatus:   'blocked',
+          actionBlockedReason: 'consult_offer_priority',
+          lastActionType:      'course_offer_blocked',
+          lastActionAt:        now,
+        },
+      })
+      console.log(`[ActionEngine] skipped (consult offer has priority) → ${lead.id}`)
+      continue
+    }
+
+    if (!shouldSendCourseOffer(lead)) {
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data:  {
+          courseOfferStatus: 'skipped',
+          lastActionType:    'course_offer',
+          lastActionAt:      now,
+        },
+      })
+      console.log(`[ActionEngine] skipped (course criteria not met) → ${lead.id}`)
+      continue
+    }
+
+    console.log(`[ActionEngine] evaluating lead ${lead.id} (${lead.fullName}) for course offer`)
+
+    try {
+      const msg    = buildCourseMessage(lead)
+      const result = await sendTelegramToUser(lead.telegramChatId, msg)
+      if (!result.success && !result.skipped) throw new Error(JSON.stringify(result.error) || 'telegram send failed')
+
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data:  {
+          courseOfferSentAt:   now,
+          courseOfferStatus:   'sent',
+          lastActionType:      'course_offer',
+          lastActionAt:        now,
+          actionBlockedReason: null,
+        },
+      })
+      await _logAction(lead.id, lead.telegramChatId, 'course_offer', result)
+      console.log(`[ActionEngine] course offer sent → ${lead.id}`)
+
+    } catch (err) {
+      console.error(`[ActionEngine] course offer FAILED for ${lead.id}:`, err.message)
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data:  {
+          courseOfferSent:   false,    // revert claim so next tick retries
+          courseOfferStatus: 'failed',
+          lastActionType:    'course_offer',
+          lastActionAt:      now,
+        },
+      }).catch(() => {})
+    }
+  }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Runs one full action engine cycle: diagnosis → check-in → product reco → academy offer.
+ * Runs one full action engine cycle:
+ *   diagnosis → check-in → product reco → academy offer → consult offer → course offer
  * Called every 60s by the background poller.
  */
 async function runPendingLeadActions() {
@@ -591,6 +897,8 @@ async function runPendingLeadActions() {
     await _processCheckIns()
     await _processProductRecos()
     await _processAcademyOffers()
+    await _processConsultOffers()
+    await _processCourseOffers()
   } catch (err) {
     console.error('[ActionEngine] Unhandled error in runPendingLeadActions:', err.message)
   }
@@ -611,8 +919,12 @@ module.exports = {
   startActionEngine,
   runPendingLeadActions,
   evaluateNextActionForLead,
+  shouldSendConsultOffer,
+  shouldSendCourseOffer,
   buildDiagnosisMessage,
   buildCheckInMessage,
   buildProductRecommendationMessage,
   buildAcademyOfferMessage,
+  buildConsultMessage,
+  buildCourseMessage,
 }
