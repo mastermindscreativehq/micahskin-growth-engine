@@ -140,6 +140,21 @@ export async function updateRegistrationStatus(id, status) {
   return data
 }
 
+// ── Academy Access Gate ───────────────────────────────────────────────────────
+
+/**
+ * Check whether a registration has completed payment.
+ * Returns { paid: true, telegramBotLink, fullName, package } on success,
+ * or { paid: false } if payment isn't confirmed yet.
+ * Only call this from /academy/success — do NOT expose telegramBotLink elsewhere.
+ */
+export async function fetchAcademyAccess(registrationId) {
+  const res = await fetch(`${BASE_URL}/api/academy/access/${encodeURIComponent(registrationId)}`)
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
+
 // ── Academy Payment ───────────────────────────────────────────────────────────
 
 /**

@@ -61,10 +61,15 @@ async function selectPackage(req, res) {
     }
 
     // Initialize transaction — amount in kobo, leadId embedded in metadata
+    // callback_url brings the user back to the success gate after payment
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+    const callbackUrl = `${frontendUrl}/academy/success?registrationId=${leadId}`
+
     const paystackRes = await paystackPost('/transaction/initialize', {
       email: registration.email,
       amount: amountNgn * 100,
       metadata: { leadId },
+      callback_url: callbackUrl,
     })
 
     if (!paystackRes.status || !paystackRes.data?.authorization_url) {
@@ -116,10 +121,15 @@ async function paystackWebhook(req, res) {
         return res.sendStatus(200)
       }
 
+      // Paystack sends amount in kobo — convert to naira
+      const amountNgn = (event.data?.amount ?? 0) / 100
+
       const registration = await prisma.academyRegistration.update({
         where: { id: leadId },
         data: { paymentStatus: 'paid', academyStatus: 'enrolled' },
       })
+
+      console.log('ACADEMY PAID:', leadId, amountNgn)
 
       // Track payment conversion against the matching Lead (look up by email)
       if (registration.email) {
@@ -131,7 +141,7 @@ async function paystackWebhook(req, res) {
           await trackEvent({
             leadId: matchedLead.id,
             type: 'academy_paid',
-            value: registration.academyAmount ?? undefined,
+            value: amountNgn,
           })
         }
       }

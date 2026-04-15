@@ -13,10 +13,8 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {}, leadId = 
   // step: 'form' → 'packages' → (redirect to Paystack)
   const [step, setStep] = useState('form')
   const [registrationId, setRegistrationId] = useState(null)
-  const [telegramBotLink, setTelegramBotLink] = useState(null)
   const [packageLoading, setPackageLoading] = useState(null) // 'premium' | 'basic' | null
   const [packageError, setPackageError] = useState(null)
-  const [showNoTelegramModal, setShowNoTelegramModal] = useState(false)
 
   const [form, setForm] = useState({
     fullName: '',
@@ -58,7 +56,6 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {}, leadId = 
         utmTerm: prefill.utmTerm || undefined,
       })
       setRegistrationId(result.data?.id || null)
-      setTelegramBotLink(result.data?.telegramBotLink || null)
       if (leadId) {
         trackConversion(leadId, 'academy_signup')
       }
@@ -147,49 +144,7 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {}, leadId = 
             </div>
           </div>
 
-          <div className="mt-6 text-center">
-            <button
-              onClick={() => setShowNoTelegramModal(true)}
-              className="text-xs text-gray-400 hover:text-gray-600 hover:underline"
-            >
-              I don't have Telegram
-            </button>
-          </div>
         </div>
-
-        {showNoTelegramModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-            <div className="bg-white rounded-2xl p-6 max-w-sm w-full text-center shadow-xl">
-              <div className="text-4xl mb-3">📱</div>
-              <h3 className="text-lg font-bold text-gray-900 mb-2">Download Telegram</h3>
-              <p className="text-gray-500 text-sm mb-5">
-                Takes 30 seconds. This is where your academy content will be sent.
-              </p>
-              <a
-                href="https://play.google.com/store/apps/details?id=org.telegram.messenger"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-primary w-full block mb-3"
-              >
-                Download for Android
-              </a>
-              <a
-                href="https://apps.apple.com/app/telegram-messenger/id686449807"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-primary w-full block mb-4"
-              >
-                Download for iPhone (iOS)
-              </a>
-              <button
-                onClick={() => setShowNoTelegramModal(false)}
-                className="text-sm text-gray-400 hover:text-gray-600 hover:underline"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        )}
       </section>
     )
   }

@@ -11,6 +11,7 @@ import PrivacyPolicyPage from './pages/PrivacyPolicyPage.jsx'
 import TermsOfServicePage from './pages/TermsOfServicePage.jsx'
 import ContactPage from './pages/ContactPage.jsx'
 import AcademyPage from './pages/AcademyPage.jsx'
+import AcademySuccessPage from './pages/AcademySuccessPage.jsx'
 import { checkAdminSession, logoutAdmin } from './api/index.js'
 
 // ---------------------------------------------------------------------------
@@ -167,6 +168,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Layout><HomeView /></Layout>} />
         <Route path="/academy" element={<Layout><AcademyPage /></Layout>} />
+        <Route path="/academy/success" element={<Layout><AcademySuccessPage /></Layout>} />
         <Route path="/privacy-policy" element={<Layout><PrivacyPolicyPage /></Layout>} />
         <Route path="/terms-of-service" element={<Layout><TermsOfServicePage /></Layout>} />
         <Route path="/contact" element={<Layout><ContactPage /></Layout>} />
