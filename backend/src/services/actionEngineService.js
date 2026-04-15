@@ -33,6 +33,10 @@ const ACADEMY_FIT_THRESHOLD = parseInt(process.env.ACADEMY_FIT_THRESHOLD || '65'
 // Concerns that always route to a consult (clinical / chronic conditions)
 const CONSULT_CONCERN_LIST = ['eczema', 'severe_acne', 'chronic']
 
+// Conversion link constants — override via env vars in production
+const ACADEMY_LINK  = process.env.ACADEMY_LINK  || 'https://micahskin-growth-engine.vercel.app/academy'
+const WHATSAPP_LINK = process.env.WHATSAPP_LINK || 'https://wa.me/+2348140468759'
+
 // ── Conversion decision logic ─────────────────────────────────────────────────
 
 /**
@@ -191,7 +195,7 @@ function buildProductRecommendationMessage(lead) {
 
 /**
  * Academy offer — only sent when fit score is strong.
- * Human, benefit-led, not spam.
+ * Outcome-driven, practical framework positioning.
  *
  * @param {object} lead
  * @returns {string}
@@ -200,19 +204,25 @@ function buildAcademyOfferMessage(lead) {
   const firstName = lead.fullName.split(' ')[0]
 
   return (
-    `Hi ${firstName} 🎓\n\n` +
-    `Based on what you've shared about your skin goals, I think you'd genuinely benefit ` +
-    `from our Skincare Academy — it's designed for people who want to properly understand ` +
-    `their skin, not just follow generic advice.\n\n` +
-    `You'll learn how to build effective routines, understand ingredients, ` +
-    `and achieve results that last.\n\n` +
-    `Reply <b>ACADEMY</b> and I'll send you the full details.`
+    `Hi ${firstName} 👋\n\n` +
+    `Based on what you shared, I think you'd benefit from the MICAHSKIN Academy.\n\n` +
+    `This is not just a skincare class.\n\n` +
+    `It shows you how to:\n` +
+    `• understand skin properly\n` +
+    `• build routines that actually make sense\n` +
+    `• choose products with confidence\n` +
+    `• grow a skincare brand the smart way\n` +
+    `• attract clients and build a real customer system\n\n` +
+    `So instead of guessing, wasting money, or struggling alone, you get a practical framework you can actually use.\n\n` +
+    `If you're serious about getting results for yourself or building something real in skincare, this is the next step.\n\n` +
+    `Register here:\n` +
+    `${ACADEMY_LINK}\n\n` +
+    `If you want, reply ACADEMY and I'll guide you further.`
   )
 }
 
 /**
- * Consult offer — expert, serious, urgent tone.
- * Drives lead to WhatsApp for 1-on-1 consultation.
+ * Consult offer — personal guidance framing, drives to WhatsApp.
  * Fires for: urgencyLevel=high | nextBestAction=manual_consult |
  *            confidenceScore<70 | clinical concern (eczema/severe_acne/chronic)
  *
@@ -221,27 +231,17 @@ function buildAcademyOfferMessage(lead) {
  */
 function buildConsultMessage(lead) {
   const firstName = lead.fullName.split(' ')[0]
-  const concern   = lead.primaryConcern
-    ? lead.primaryConcern.replace(/_/g, ' ')
-    : 'your skin concern'
-
-  const intro = lead.urgencyLevel === 'high'
-    ? `Your skin situation is serious enough that a personalised, expert consultation is the right next step — not a generic routine.`
-    : `Your ${concern} profile has enough complexity that a direct 1-on-1 consultation will give you better results than a self-managed routine.`
 
   return (
-    `Hi ${firstName} 👩‍⚕️\n\n` +
-    `${intro}\n\n` +
-    `I want to speak with you directly, assess your skin properly, and give you a clear plan — ` +
-    `not just a product list.\n\n` +
-    `<b>What the consultation covers:</b>\n` +
-    `• Root cause of your ${concern}\n` +
-    `• What's making it worse (and what to stop immediately)\n` +
-    `• A personalised step-by-step treatment plan\n` +
-    `• Product recommendations matched to your exact skin\n\n` +
-    `👉 Message me directly on WhatsApp to book your slot:\n` +
-    `https://wa.me/+2348140468759\n\n` +
-    `Slots are limited. Tap the link to claim yours.`
+    `Hi ${firstName} 👋\n\n` +
+    `I reviewed what you shared, and your case looks like something that needs more personal guidance.\n\n` +
+    `Rather than guessing with random products, the best next step is a direct consultation so we can look at:\n` +
+    `• your exact skin concern\n` +
+    `• what may be making it worse\n` +
+    `• what routine or products make sense for you\n` +
+    `• the fastest safe next action\n\n` +
+    `Message here to continue:\n` +
+    `${WHATSAPP_LINK}`
   )
 }
 
