@@ -5,12 +5,12 @@ const { processPaidEnrollment } = require('../services/academyOnboardingService'
 
 const PACKAGES = {
   premium: {
-    amountNgn: 60000,
+    amountNgn: parseInt(process.env.PREMIUM_PRICE_NGN, 10) || 60000,
     systemIncluded: true,
     upgradeEligible: false,
   },
   basic: {
-    amountNgn: 50000,
+    amountNgn: parseInt(process.env.BASIC_PRICE_NGN, 10) || 50000,
     systemIncluded: false,
     upgradeEligible: true,
   },

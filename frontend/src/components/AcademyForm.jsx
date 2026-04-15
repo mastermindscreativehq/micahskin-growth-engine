@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { submitAcademyRegistration, selectPackage, trackConversion } from '../api/index.js'
 import PhoneInput, { combinePhone } from './PhoneInput.jsx'
 
+const PREMIUM_PRICE = parseInt(import.meta.env.VITE_PREMIUM_PRICE_NGN, 10) || 60000
+const BASIC_PRICE = parseInt(import.meta.env.VITE_BASIC_PRICE_NGN, 10) || 50000
+
 const PLATFORMS = ['TikTok', 'Instagram', 'Other']
 const LEVELS = [
   { value: 'beginner', label: 'Beginner — Just starting out' },
@@ -108,7 +111,7 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {}, leadId = 
               <span className="text-xs font-semibold uppercase tracking-wide text-brand-600 bg-brand-50 px-2 py-0.5 rounded self-start mb-3">
                 Premium
               </span>
-              <div className="text-3xl font-bold text-gray-900 mb-1">₦60,000</div>
+              <div className="text-3xl font-bold text-gray-900 mb-1">₦{PREMIUM_PRICE.toLocaleString()}</div>
               <ul className="text-sm text-gray-600 space-y-1.5 mb-6 flex-1">
                 <li>✓ Full masterclass access</li>
                 <li>✓ Skincare system included</li>
@@ -128,7 +131,7 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {}, leadId = 
               <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 bg-gray-100 px-2 py-0.5 rounded self-start mb-3">
                 Basic
               </span>
-              <div className="text-3xl font-bold text-gray-900 mb-1">₦50,000</div>
+              <div className="text-3xl font-bold text-gray-900 mb-1">₦{BASIC_PRICE.toLocaleString()}</div>
               <ul className="text-sm text-gray-600 space-y-1.5 mb-6 flex-1">
                 <li>✓ Full masterclass access</li>
                 <li className="text-gray-400">✗ System not included</li>
