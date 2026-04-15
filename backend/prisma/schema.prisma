@@ -120,6 +120,13 @@ model Lead {
   courseOfferSentAt     DateTime?
   courseOfferStatus     String?   // pending | sent | skipped | failed | blocked
 
+  // ── Conversion Tracking (Phase 18) ─────────────────────────────────────────
+  leadStage         String    @default("new") // new | interested | engaged | converted
+  conversionType    String?   // academy_paid | consult_booked
+  conversionValue   Float?    // revenue amount when applicable
+  conversionAt      DateTime? // when conversion was confirmed
+  lastInteractionAt DateTime? // last click / signup / payment event
+
   utmSource      String?
   replies        Reply[]
   utmMedium      String?

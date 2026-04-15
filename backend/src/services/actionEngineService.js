@@ -202,6 +202,7 @@ function buildProductRecommendationMessage(lead) {
  */
 function buildAcademyOfferMessage(lead) {
   const firstName = lead.fullName.split(' ')[0]
+  const trackableLink = `${ACADEMY_LINK}?leadId=${lead.id}`
 
   return (
     `Hi ${firstName} 👋\n\n` +
@@ -216,7 +217,7 @@ function buildAcademyOfferMessage(lead) {
     `So instead of guessing, wasting money, or struggling alone, you get a practical framework you can actually use.\n\n` +
     `If you're serious about getting results for yourself or building something real in skincare, this is the next step.\n\n` +
     `Register here:\n` +
-    `${ACADEMY_LINK}\n\n` +
+    `${trackableLink}\n\n` +
     `If you want, reply ACADEMY and I'll guide you further.`
   )
 }
@@ -231,6 +232,7 @@ function buildAcademyOfferMessage(lead) {
  */
 function buildConsultMessage(lead) {
   const firstName = lead.fullName.split(' ')[0]
+  const trackableLink = `${WHATSAPP_LINK}?leadId=${lead.id}`
 
   return (
     `Hi ${firstName} 👋\n\n` +
@@ -241,7 +243,7 @@ function buildConsultMessage(lead) {
     `• what routine or products make sense for you\n` +
     `• the fastest safe next action\n\n` +
     `Message here to continue:\n` +
-    `${WHATSAPP_LINK}`
+    `${trackableLink}`
   )
 }
 

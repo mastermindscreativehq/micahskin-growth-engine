@@ -1,7 +1,8 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AcademyForm from '../components/AcademyForm.jsx'
 import SuccessMessage from '../components/SuccessMessage.jsx'
+import { trackConversion } from '../api/index.js'
 
 const PLATFORM_MAP = { instagram: 'Instagram', tiktok: 'TikTok', other: 'Other' }
 
@@ -9,6 +10,7 @@ function parsePrefill() {
   const params = new URLSearchParams(window.location.search)
   const rawSource = params.get('source') || ''
   return {
+    leadId: params.get('leadId') || '',
     sourcePlatform: PLATFORM_MAP[rawSource.toLowerCase()] || '',
     sourceType: params.get('source_type') || '',
     handle: params.get('handle') || '',
@@ -348,9 +350,12 @@ export default function AcademyPage() {
   const [prefill] = useState(parsePrefill)
   const formRef = useRef(null)
 
-  function scrollToForm() {
+  const scrollToForm = useCallback(() => {
     formRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+    if (prefill.leadId) {
+      trackConversion(prefill.leadId, 'academy_click')
+    }
+  }, [prefill.leadId])
 
   if (done) {
     return <SuccessMessage type="academy" onReset={() => navigate('/')} />
@@ -381,6 +386,7 @@ export default function AcademyPage() {
         </div>
         <AcademyForm
           prefill={prefill}
+          leadId={prefill.leadId || null}
           onSuccess={() => setDone(true)}
           onBack={() => navigate('/')}
           embedded

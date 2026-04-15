@@ -1,6 +1,7 @@
 const crypto = require('crypto')
 const https = require('https')
 const prisma = require('../lib/prisma')
+const { trackEvent } = require('../services/conversionService')
 
 const PACKAGES = {
   premium: {
@@ -115,10 +116,25 @@ async function paystackWebhook(req, res) {
         return res.sendStatus(200)
       }
 
-      await prisma.academyRegistration.update({
+      const registration = await prisma.academyRegistration.update({
         where: { id: leadId },
         data: { paymentStatus: 'paid', academyStatus: 'enrolled' },
       })
+
+      // Track payment conversion against the matching Lead (look up by email)
+      if (registration.email) {
+        const matchedLead = await prisma.lead.findFirst({
+          where: { email: registration.email },
+          orderBy: { createdAt: 'desc' },
+        })
+        if (matchedLead) {
+          await trackEvent({
+            leadId: matchedLead.id,
+            type: 'academy_paid',
+            value: registration.academyAmount ?? undefined,
+          })
+        }
+      }
     }
 
     return res.sendStatus(200)

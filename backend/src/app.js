@@ -13,6 +13,7 @@ const repliesRouter = require('./routes/replies')
 const telegramRouter = require('./routes/telegram')
 const paystackRouter = require('./routes/paystack')
 const scrapingRouter = require('./routes/scraping')
+const conversionRouter = require('./routes/conversionRoutes')
 const prisma = require('./lib/prisma')
 const requireAuth = require('./middleware/requireAuth')
 const { getWhatsAppHealth } = require('./services/whatsappService')
@@ -94,6 +95,9 @@ app.use('/api/paystack', paystackRouter)
 
 // Scraping — admin-only; Apify import + raw item browser
 app.use('/api/scraping', scrapingRouter)
+
+// Conversion tracking — public; records clicks, signups, payments against leads
+app.use('/api/conversion', conversionRouter)
 
 // ── Debug (admin-only) ───────────────────────────────────────────────────────
 

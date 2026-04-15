@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { submitAcademyRegistration, selectPackage } from '../api/index.js'
+import { submitAcademyRegistration, selectPackage, trackConversion } from '../api/index.js'
 import PhoneInput, { combinePhone } from './PhoneInput.jsx'
 
 const PLATFORMS = ['TikTok', 'Instagram', 'Other']
@@ -9,7 +9,7 @@ const LEVELS = [
   { value: 'advanced', label: 'Advanced — Growing an existing brand' },
 ]
 
-export default function AcademyForm({ onSuccess, onBack, prefill = {}, embedded = false }) {
+export default function AcademyForm({ onSuccess, onBack, prefill = {}, leadId = null, embedded = false }) {
   // step: 'form' → 'packages' → (redirect to Paystack)
   const [step, setStep] = useState('form')
   const [registrationId, setRegistrationId] = useState(null)
@@ -66,6 +66,9 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {}, embedded 
       })
       setRegistrationId(result.data?.id || null)
       setTelegramBotLink(result.data?.telegramBotLink || null)
+      if (leadId) {
+        trackConversion(leadId, 'academy_signup')
+      }
       setStep('packages')
     } catch (err) {
       const messages = err.errors?.length

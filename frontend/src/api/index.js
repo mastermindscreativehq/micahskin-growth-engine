@@ -157,6 +157,30 @@ export async function selectPackage(leadId, pkg) {
   return data
 }
 
+// ── Conversion Tracking ───────────────────────────────────────────────────────
+
+/**
+ * Record a conversion event (click, signup, payment) against a Lead.
+ * Best-effort — never throws; logs errors silently.
+ *
+ * @param {string}  leadId
+ * @param {string}  type   academy_click | consult_click | academy_signup | academy_paid
+ * @param {number}  [value]
+ */
+export async function trackConversion(leadId, type, value) {
+  try {
+    const body = { leadId, type }
+    if (value != null) body.value = value
+    await fetch(`${BASE_URL}/api/conversion/track`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    // Conversion tracking is non-blocking — swallow network errors silently
+  }
+}
+
 // ── Auto Reply Execution ──────────────────────────────────────────────────────
 
 /**
