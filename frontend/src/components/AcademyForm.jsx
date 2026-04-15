@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { submitAcademyRegistration, selectPackage, trackConversion } from '../api/index.js'
 import PhoneInput, { combinePhone } from './PhoneInput.jsx'
 
@@ -17,7 +17,6 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {}, leadId = 
   const [packageLoading, setPackageLoading] = useState(null) // 'premium' | 'basic' | null
   const [packageError, setPackageError] = useState(null)
   const [showNoTelegramModal, setShowNoTelegramModal] = useState(false)
-  const [showWarning, setShowWarning] = useState(false)
 
   const [form, setForm] = useState({
     fullName: '',
@@ -31,12 +30,6 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {}, leadId = 
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-
-  useEffect(() => {
-    if (step !== 'packages' || !telegramBotLink) return
-    const timer = setTimeout(() => setShowWarning(true), 12_000)
-    return () => clearTimeout(timer)
-  }, [step, telegramBotLink])
 
   function handleChange(e) {
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
@@ -154,33 +147,14 @@ export default function AcademyForm({ onSuccess, onBack, prefill = {}, leadId = 
             </div>
           </div>
 
-          {telegramBotLink && (
-            <div className="mt-6 text-center">
-              {showWarning && (
-                <p className="text-amber-700 text-sm font-medium bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-3">
-                  ⚠️ After payment, connect on Telegram to receive your academy content
-                </p>
-              )}
-              <p className="text-xs text-gray-400">
-                After payment, open{' '}
-                <a
-                  href={telegramBotLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-brand-600 hover:underline"
-                >
-                  Telegram
-                </a>{' '}
-                to access your masterclass.
-              </p>
-              <button
-                onClick={() => setShowNoTelegramModal(true)}
-                className="text-xs text-gray-400 hover:text-gray-600 hover:underline mt-1"
-              >
-                I don't have Telegram
-              </button>
-            </div>
-          )}
+          <div className="mt-6 text-center">
+            <button
+              onClick={() => setShowNoTelegramModal(true)}
+              className="text-xs text-gray-400 hover:text-gray-600 hover:underline"
+            >
+              I don't have Telegram
+            </button>
+          </div>
         </div>
 
         {showNoTelegramModal && (
