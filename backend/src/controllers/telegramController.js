@@ -1,6 +1,8 @@
 const prisma = require('../lib/prisma')
 const { sendTelegramToUser, sendTelegramMessage } = require('../services/telegramService')
 const { handleTelegramMessage } = require('../services/telegramSessionService')
+const { processPaidEnrollment } = require('../services/academyOnboardingService')
+const { handlePremiumIntakeReply } = require('../services/premiumDeliveryService')
 
 // ── Webhook handler ───────────────────────────────────────────────────────────
 
@@ -79,6 +81,13 @@ async function handleWebhook(req, res) {
  *   anything else → no auto-response
  */
 async function handleAcademyReply({ academy, chatId, text }) {
+  // Premium implementation clients get the full structured intake flow
+  if (academy.implementationClient === true) {
+    await handlePremiumIntakeReply(academy, chatId, text)
+    return
+  }
+
+  // Basic academy — simple 2-step goal collection
   const stage = academy.telegramStage ?? 'connected'
   let newStage    = academy.telegramStage
   let autoResponse = null
@@ -195,15 +204,26 @@ async function linkAcademy({ registrationId, chatId, username }) {
 
   const firstName = registration.fullName.split(' ')[0]
 
-  await sendTelegramToUser(
-    chatId,
-    `Hi ${firstName}! \ud83c\udf93 You\u2019re now connected to <b>MICAHSKIN Academy</b> on Telegram.\n\n` +
-    `Welcome \u2014 your academy access is confirmed. Here\u2019s what\u2019s coming your way:\n\n` +
-    `\u2705 Masterclass modules and training content\n` +
-    `\u2705 Step-by-step guidance to build your skincare brand\n` +
-    `\u2705 Direct support from the MICAHSKIN team\n\n` +
-    `We\u2019re excited to have you \u2014 stay tuned for your first module! Feel free to reply with any questions \ud83c\udf93`
-  )
+  // If payment already confirmed: skip generic welcome, send onboarding instead.
+  // processPaidEnrollment re-fetches the registration (which now has the chatId)
+  // and handles the full onboarding delivery + CRM state update idempotently.
+  if (registration.paymentStatus === 'paid' && registration.onboardingSent === false) {
+    processPaidEnrollment(registrationId, registration.academyAmount || 0).catch(err =>
+      console.error('[linkAcademy] processPaidEnrollment error:', err.message)
+    )
+  } else if (registration.paymentStatus !== 'paid') {
+    // Not yet paid — send the standard pre-payment welcome
+    await sendTelegramToUser(
+      chatId,
+      `Hi ${firstName}! \ud83c\udf93 You\u2019re now connected to <b>MICAHSKIN Academy</b> on Telegram.\n\n` +
+      `Welcome \u2014 once your payment is confirmed, your academy access will be activated here.\n\n` +
+      `\u2705 Masterclass modules and training content\n` +
+      `\u2705 Step-by-step guidance to build your skincare brand\n` +
+      `\u2705 Direct support from the MICAHSKIN team\n\n` +
+      `Stay tuned \u2014 feel free to reply with any questions \ud83c\udf93`
+    )
+  }
+  // else: already onboarded (onboardingSent === true) — no message needed
 
   await sendTelegramMessage(
     `\u2705 <b>Academy registrant connected Telegram</b>\n\n` +
@@ -212,6 +232,7 @@ async function linkAcademy({ registrationId, chatId, username }) {
     `<b>Telegram:</b> ${username ? `@${username}` : chatId}\n` +
     `<b>Chat ID:</b> ${chatId}\n` +
     `<b>Registration ID:</b> ${registrationId}\n` +
+    `<b>Payment:</b> ${registration.paymentStatus || 'not started'}\n` +
     `<b>Platform:</b> ${registration.sourcePlatform}` +
     (registration.sourceType ? ` \u00b7 ${registration.sourceType}` : '')
   ).catch(() => {})

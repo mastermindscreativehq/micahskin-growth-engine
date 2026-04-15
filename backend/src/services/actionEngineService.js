@@ -646,6 +646,7 @@ async function _processAcademyOffers() {
       academyOfferSendAfter: { lte: now },
       academyOfferSent:     false,
       telegramChatId:       { not: null },
+      conversionType:       { not: 'academy_paid' }, // skip leads who already purchased
     },
   })
 
@@ -729,6 +730,7 @@ async function _processConsultOffers() {
       consultOfferSendAfter: { lte: now },
       consultOfferSent:      false,
       telegramChatId:        { not: null },
+      conversionType:        { not: 'academy_paid' }, // skip leads who already purchased
     },
   })
 
@@ -807,6 +809,7 @@ async function _processCourseOffers() {
       courseOfferSendAfter: { lte: now },
       courseOfferSent:      false,
       telegramChatId:       { not: null },
+      conversionType:       { not: 'academy_paid' }, // skip leads who already purchased
     },
   })
 

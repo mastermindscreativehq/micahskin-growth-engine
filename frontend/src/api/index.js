@@ -140,6 +140,40 @@ export async function updateRegistrationStatus(id, status) {
   return data
 }
 
+/**
+ * Update premium delivery pipeline fields for a registration.
+ * fields: { implementationStage, systemSetupStatus, deliveryNotes, deliveryOwner,
+ *           implementationCallBooked, deliveryCompletedAt, implementationStatus }
+ */
+export async function updateImplementationDelivery(id, fields) {
+  const res = await fetch(`${BASE_URL}/api/academy/registrations/${id}/delivery`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(fields),
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
+
+/**
+ * Toggle one or more task flags for a premium registration.
+ * fields: { taskIntakeReviewed, taskScopeReady, taskCallBooked,
+ *           taskBuildStarted, taskDeliveryComplete }
+ */
+export async function updateImplementationTasks(id, fields) {
+  const res = await fetch(`${BASE_URL}/api/academy/registrations/${id}/tasks`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify(fields),
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
+
 // ── Academy Access Gate ───────────────────────────────────────────────────────
 
 /**

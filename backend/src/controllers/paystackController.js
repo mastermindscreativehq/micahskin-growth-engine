@@ -1,7 +1,7 @@
 const crypto = require('crypto')
 const https = require('https')
 const prisma = require('../lib/prisma')
-const { trackEvent } = require('../services/conversionService')
+const { processPaidEnrollment } = require('../services/academyOnboardingService')
 
 const PACKAGES = {
   premium: {
@@ -124,27 +124,10 @@ async function paystackWebhook(req, res) {
       // Paystack sends amount in kobo — convert to naira
       const amountNgn = (event.data?.amount ?? 0) / 100
 
-      const registration = await prisma.academyRegistration.update({
-        where: { id: leadId },
-        data: { paymentStatus: 'paid', academyStatus: 'enrolled' },
-      })
+      console.log('[Paystack] charge.success received:', leadId, amountNgn)
 
-      console.log('ACADEMY PAID:', leadId, amountNgn)
-
-      // Track payment conversion against the matching Lead (look up by email)
-      if (registration.email) {
-        const matchedLead = await prisma.lead.findFirst({
-          where: { email: registration.email },
-          orderBy: { createdAt: 'desc' },
-        })
-        if (matchedLead) {
-          await trackEvent({
-            leadId: matchedLead.id,
-            type: 'academy_paid',
-            value: amountNgn,
-          })
-        }
-      }
+      // Delegate all post-payment logic to the onboarding service
+      await processPaidEnrollment(leadId, amountNgn)
     }
 
     return res.sendStatus(200)

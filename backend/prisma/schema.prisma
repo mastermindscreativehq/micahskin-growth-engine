@@ -168,6 +168,55 @@ model AcademyRegistration {
   academyStatus    String?  // not_enrolled | enrolled
   systemIncluded   Boolean? // true for premium
   upgradeEligible  Boolean? // true for basic
+
+  // ── Post-payment onboarding state (Phase 19) ────────────────────────────────
+  enrollmentStatus        String?   // enrolled | cancelled
+  onboardingStatus        String?   // pending | sent | failed | skipped
+  onboardingSent          Boolean   @default(false) // atomic claim flag — prevents duplicate sends
+  onboardingPath          String?   // basic | premium
+  onboardingSentAt        DateTime?
+  premiumFollowupRequired Boolean   @default(false) // true for premium — requires implementation setup session
+  premiumFollowupSentAt   DateTime? // when admin was notified about premium follow-up
+
+  // ── Premium Delivery Pipeline (Phase 20) ─────────────────────────────────────
+  deliveryTier              String?   // basic | premium — set on payment confirmation
+  implementationClient      Boolean   @default(false) // true for premium buyers
+  implementationStatus      String?   // pending | active | paused | completed | cancelled
+  implementationStage       String?   // paid | onboarding_sent | intake_pending | intake_complete | review_pending | strategy_call_pending | strategy_call_booked | build_pending | build_in_progress | delivered | active
+  premiumIntakeStatus       String?   // pending | in_progress | complete | skipped
+  premiumIntakeCompletedAt  DateTime?
+  implementationCallBooked  Boolean   @default(false)
+  implementationCallBookedAt DateTime?
+  systemSetupStatus         String?   // not_started | in_progress | complete
+  deliveryCompletedAt       DateTime?
+  deliveryOwner             String?
+  deliveryNotes             String?
+
+  // ── Premium intake answers (collected via Telegram flow) ─────────────────────
+  intakeBrandName           String?
+  intakeBusinessType        String?
+  intakeBusinessStage       String?
+  intakeProductsServices    String?
+  intakeSalesChannel        String?
+  intakeTopProblem          String?
+  intakeMainGoal            String?
+  intakeNeedsLeadGen        Boolean?
+  intakeNeedsAutomation     Boolean?
+  intakeNeedsContent        Boolean?
+  intakeSupportMethod       String?
+
+  // ── Operational task flags (admin checklist) ─────────────────────────────────
+  taskIntakeReviewed        Boolean   @default(false)
+  taskScopeReady            Boolean   @default(false)
+  taskCallBooked            Boolean   @default(false)
+  taskBuildStarted          Boolean   @default(false)
+  taskDeliveryComplete      Boolean   @default(false)
+
+  // ── Premium onboarding send tracking ─────────────────────────────────────────
+  premiumOnboardingSent     Boolean   @default(false) // atomic claim — prevents duplicate sends
+  premiumOnboardingSentAt   DateTime?
+  premiumIntakeStage        String?   // intake_brand_name | intake_business_type | intake_business_stage | intake_products_services | intake_sales_channel | intake_top_problem | intake_main_goal | intake_lead_gen | intake_automation | intake_content | intake_support_method | done
+
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

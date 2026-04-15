@@ -1,5 +1,12 @@
 const { Router } = require('express')
-const { createRegistration, listRegistrations, updateRegistrationStatus, getAcademyAccess } = require('../controllers/academyController')
+const {
+  createRegistration,
+  listRegistrations,
+  updateRegistrationStatus,
+  getAcademyAccess,
+  updateImplementationDelivery,
+  updateImplementationTasks,
+} = require('../controllers/academyController')
 const { selectPackage } = require('../controllers/paystackController')
 const requireAuth = require('../middleware/requireAuth')
 
@@ -17,5 +24,9 @@ router.get('/access/:id', getAcademyAccess)
 // Protected: admin CRM access only
 router.get('/registrations', requireAuth, listRegistrations)
 router.patch('/registrations/:id/status', requireAuth, updateRegistrationStatus)
+
+// Protected: premium delivery pipeline admin controls
+router.patch('/registrations/:id/delivery', requireAuth, updateImplementationDelivery)
+router.patch('/registrations/:id/tasks', requireAuth, updateImplementationTasks)
 
 module.exports = router

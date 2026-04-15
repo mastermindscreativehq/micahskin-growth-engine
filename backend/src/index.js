@@ -6,6 +6,7 @@ const { startScheduler } = require('./services/schedulerService')
 const { startAutoTrigger } = require('./services/autoTriggerService')
 const { startOrchestrationPoller } = require('./services/orchestrationService')
 const { startActionEngine } = require('./services/actionEngineService')
+const { startAcademyOnboarding } = require('./services/academyOnboardingService')
 
 const PORT = process.env.PORT || 4000
 
@@ -31,6 +32,8 @@ async function start() {
     startOrchestrationPoller()
     // Phase 17 — action engine: executes all scheduled lead actions (diagnosis, check-in, product reco, academy offer)
     startActionEngine()
+    // Phase 19 — academy onboarding: post-payment CRM automation + onboarding delivery
+    startAcademyOnboarding()
   })
 }
 

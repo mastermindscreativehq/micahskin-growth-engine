@@ -5,6 +5,8 @@ import {
   fetchRegistrations,
   updateLeadStatus,
   updateRegistrationStatus,
+  updateImplementationDelivery,
+  updateImplementationTasks,
   sendInitialReply,
   sendFollowUp,
   importInstagramDataset,
@@ -24,6 +26,64 @@ const SOURCE_TYPES = ['bio_form', 'dm', 'comment', 'story_reply', 'manual']
 const PRIORITIES = ['high', 'medium', 'low']
 // Statuses that block CRM-triggered sends (mirrors backend STOP_STATUSES)
 const STOP_STATUSES = ['engaged', 'interested', 'closed']
+
+// ── Premium delivery pipeline constants ──────────────────────────────────────
+const IMPL_STAGES = [
+  'paid',
+  'onboarding_sent',
+  'intake_pending',
+  'intake_complete',
+  'review_pending',
+  'strategy_call_pending',
+  'strategy_call_booked',
+  'build_pending',
+  'build_in_progress',
+  'delivered',
+  'active',
+]
+
+const IMPL_STAGE_STYLE = {
+  paid:                   'bg-gray-100 text-gray-600',
+  onboarding_sent:        'bg-blue-100 text-blue-700',
+  intake_pending:         'bg-amber-100 text-amber-700',
+  intake_complete:        'bg-yellow-100 text-yellow-800',
+  review_pending:         'bg-orange-100 text-orange-700',
+  strategy_call_pending:  'bg-purple-100 text-purple-700',
+  strategy_call_booked:   'bg-violet-100 text-violet-700',
+  build_pending:          'bg-indigo-100 text-indigo-700',
+  build_in_progress:      'bg-blue-100 text-blue-800',
+  delivered:              'bg-emerald-100 text-emerald-700',
+  active:                 'bg-green-100 text-green-800',
+}
+
+const TASK_LABELS = [
+  { key: 'taskIntakeReviewed',  label: 'Intake reviewed' },
+  { key: 'taskScopeReady',      label: 'Scope prepared' },
+  { key: 'taskCallBooked',      label: 'Strategy call booked' },
+  { key: 'taskBuildStarted',    label: 'Build started' },
+  { key: 'taskDeliveryComplete', label: 'Delivery complete' },
+]
+
+const SETUP_STATUS_STYLE = {
+  not_started:  'bg-gray-100 text-gray-500',
+  in_progress:  'bg-blue-100 text-blue-700',
+  complete:     'bg-green-100 text-green-700',
+}
+
+// Readable intake question labels for CRM display
+const INTAKE_LABELS = [
+  { key: 'intakeBrandName',       label: 'Brand name' },
+  { key: 'intakeBusinessType',    label: 'Business type' },
+  { key: 'intakeBusinessStage',   label: 'Business stage' },
+  { key: 'intakeProductsServices', label: 'Products / services' },
+  { key: 'intakeSalesChannel',    label: 'Sales channel' },
+  { key: 'intakeTopProblem',      label: 'Top problem' },
+  { key: 'intakeMainGoal',        label: 'Main goal' },
+  { key: 'intakeNeedsLeadGen',    label: 'Needs lead gen', bool: true },
+  { key: 'intakeNeedsAutomation', label: 'Needs automation', bool: true },
+  { key: 'intakeNeedsContent',    label: 'Needs content help', bool: true },
+  { key: 'intakeSupportMethod',   label: 'Support preference' },
+]
 
 const STATUS_STYLE = {
   new: 'bg-gray-100 text-gray-700',
@@ -1148,6 +1208,82 @@ function LeadsTab() {
   )
 }
 
+// ── Premium helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Inline editor for delivery notes + owner fields inside the premium pipeline panel.
+ * Renders as read-only text with an Edit button; clicking Edit shows a mini form.
+ */
+function DeliveryNotesEditor({ regId, notes, owner, onSave }) {
+  const [editing, setEditing] = useState(false)
+  const [draftNotes, setDraftNotes] = useState(notes)
+  const [draftOwner, setDraftOwner] = useState(owner)
+  const [saving, setSaving] = useState(false)
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      await onSave({ deliveryNotes: draftNotes, deliveryOwner: draftOwner })
+      setEditing(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!editing) {
+    return (
+      <div className="flex items-start gap-2 text-xs">
+        <div className="flex-1 space-y-0.5">
+          {owner && <p><span className="text-gray-400">Owner:</span> <span className="font-medium text-gray-700">{owner}</span></p>}
+          {notes
+            ? <p className="text-gray-500 italic">{notes.slice(0, 200)}{notes.length > 200 ? '…' : ''}</p>
+            : <p className="text-gray-300 italic">No delivery notes yet</p>}
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); setEditing(true) }}
+          className="shrink-0 rounded border border-gray-200 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50"
+        >
+          Edit notes
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-1.5 text-xs" onClick={e => e.stopPropagation()}>
+      <input
+        type="text"
+        placeholder="Owner name…"
+        value={draftOwner}
+        onChange={e => setDraftOwner(e.target.value)}
+        className="w-full rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-amber-300"
+      />
+      <textarea
+        rows={3}
+        placeholder="Delivery notes…"
+        value={draftNotes}
+        onChange={e => setDraftNotes(e.target.value)}
+        className="w-full rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-amber-300 resize-none"
+      />
+      <div className="flex gap-2">
+        <button
+          disabled={saving}
+          onClick={handleSave}
+          className="rounded border border-green-300 bg-green-50 px-2.5 py-0.5 text-xs text-green-700 hover:bg-green-100 disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          onClick={() => setEditing(false)}
+          className="rounded border border-gray-200 px-2.5 py-0.5 text-xs text-gray-500 hover:bg-gray-50"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Academy Tab ───────────────────────────────────────────────────────────────
 
 function AcademyTab() {
@@ -1155,10 +1291,13 @@ function AcademyTab() {
   const [statusFilter, setStatusFilter] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
   const [sourceTypeFilter, setSourceTypeFilter] = useState('')
+  const [premiumFilter, setPremiumFilter] = useState(false)
   const [page, setPage] = useState(1)
   const [result, setResult] = useState({ data: [], total: 0, pages: 1 })
   const [loading, setLoading] = useState(true)
   const [updatingId, setUpdatingId] = useState(null)
+  const [expandedId, setExpandedId] = useState(null)
+  const [actioningId, setActioningId] = useState(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -1169,8 +1308,7 @@ function AcademyTab() {
   }, [search, statusFilter, sourceFilter, sourceTypeFilter, page])
 
   useEffect(() => { load() }, [load])
-
-  useEffect(() => { setPage(1) }, [search, statusFilter, sourceFilter, sourceTypeFilter])
+  useEffect(() => { setPage(1) }, [search, statusFilter, sourceFilter, sourceTypeFilter, premiumFilter])
 
   async function handleStatusChange(id, status) {
     setUpdatingId(id)
@@ -1184,8 +1322,47 @@ function AcademyTab() {
     }
   }
 
+  async function handleDeliveryUpdate(id, fields) {
+    setActioningId(id)
+    try {
+      await updateImplementationDelivery(id, fields)
+      load()
+    } catch (e) {
+      console.error('[DeliveryUpdate]', e)
+    } finally {
+      setActioningId(null)
+    }
+  }
+
+  async function handleTaskToggle(id, key, currentValue) {
+    setActioningId(`${id}-${key}`)
+    try {
+      await updateImplementationTasks(id, { [key]: !currentValue })
+      load()
+    } catch (e) {
+      console.error('[TaskToggle]', e)
+    } finally {
+      setActioningId(null)
+    }
+  }
+
+  // Apply client-side premium filter on top of server results
+  const displayRows = premiumFilter
+    ? result.data.filter(r => r.implementationClient === true)
+    : result.data
+
   return (
     <div className="space-y-4">
+      {/* Quick-view buttons */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => setPremiumFilter(v => !v)}
+          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${premiumFilter ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+        >
+          💎 Premium clients only
+        </button>
+      </div>
+
       {/* Filters */}
       <div className="flex flex-wrap gap-2">
         <input
@@ -1234,13 +1411,13 @@ function AcademyTab() {
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Email</th>
-              <th className="px-4 py-3">Level</th>
               <th className="px-4 py-3">Source</th>
               <th className="px-4 py-3">Date</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Package</th>
               <th className="px-4 py-3">Payment</th>
-              <th className="px-4 py-3">Enrollment</th>
+              <th className="px-4 py-3">Pipeline</th>
+              <th className="px-4 py-3">Onboarding</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -1248,90 +1425,355 @@ function AcademyTab() {
               <tr>
                 <td colSpan={9} className="py-8 text-center text-gray-400">Loading…</td>
               </tr>
-            ) : result.data.length === 0 ? (
+            ) : displayRows.length === 0 ? (
               <tr>
                 <td colSpan={9} className="py-8 text-center text-gray-400">No registrations found</td>
               </tr>
-            ) : result.data.map((reg) => (
-              <tr key={reg.id} className="hover:bg-gray-50 transition-colors">
-                <td className="px-4 py-3 font-medium text-gray-800">
-                  {reg.fullName}
-                  {reg.businessType && (
-                    <div className="text-xs text-gray-400">{reg.businessType}</div>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-gray-500">
-                  <div>{reg.email}</div>
-                  {reg.phone && <div className="text-xs">{reg.phone}</div>}
-                </td>
-                <td className="px-4 py-3 text-gray-600 capitalize">{reg.experienceLevel}</td>
-                <td className="px-4 py-3">
-                  <div className="text-gray-600">{reg.sourcePlatform}</div>
-                  {reg.sourceType && <div className="text-xs text-gray-400">{reg.sourceType.replace(/_/g, ' ')}</div>}
-                  {reg.handle && <div className="text-xs text-gray-400">@{reg.handle}</div>}
-                  {reg.campaign && <div className="text-xs text-gray-400">{reg.campaign}</div>}
-                </td>
-                <td className="px-4 py-3 text-gray-400 text-xs">{fmtDate(reg.createdAt)}</td>
-                <td className="px-4 py-3">
-                  <select
-                    value={reg.status}
-                    disabled={updatingId === reg.id}
-                    onChange={(e) => handleStatusChange(reg.id, e.target.value)}
-                    className="rounded border border-gray-200 bg-white px-2 py-1 text-xs outline-none focus:border-brand-400 disabled:opacity-50"
+            ) : displayRows.map((reg) => {
+              const isPremium   = reg.implementationClient === true
+              const isExpanded  = expandedId === reg.id
+              const tasksTotal  = TASK_LABELS.length
+              const tasksDone   = TASK_LABELS.filter(t => reg[t.key]).length
+              return (
+                <>
+                  <tr
+                    key={reg.id}
+                    onClick={() => setExpandedId(isExpanded ? null : reg.id)}
+                    className={`transition-colors cursor-pointer ${
+                      isPremium
+                        ? 'bg-amber-50/60 hover:bg-amber-50 border-l-4 border-l-amber-400'
+                        : 'hover:bg-gray-50'
+                    }`}
                   >
-                    {ACADEMY_STATUSES.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </td>
-                <td className="px-4 py-3">
-                  {reg.academyPackage ? (
-                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${
-                      reg.academyPackage === 'premium'
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      {reg.academyPackage}
-                      {reg.academyAmount ? ` ₦${reg.academyAmount.toLocaleString()}` : ''}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-gray-300">—</span>
+                    <td className="px-4 py-3 font-medium text-gray-800">
+                      <div className="flex items-center gap-1.5">
+                        {isPremium && <span title="Premium implementation client">💎</span>}
+                        <span>{reg.fullName}</span>
+                        {reg.telegramStarted && (
+                          <span className="text-blue-300 text-xs" title="Telegram connected">✈</span>
+                        )}
+                      </div>
+                      {reg.businessType && (
+                        <div className="text-xs text-gray-400">{reg.businessType}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500">
+                      <div>{reg.email}</div>
+                      {reg.phone && <div className="text-xs">{reg.phone}</div>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="text-gray-600">{reg.sourcePlatform}</div>
+                      {reg.sourceType && <div className="text-xs text-gray-400">{reg.sourceType.replace(/_/g, ' ')}</div>}
+                      {reg.handle && <div className="text-xs text-gray-400">@{reg.handle}</div>}
+                    </td>
+                    <td className="px-4 py-3 text-gray-400 text-xs">{fmtDate(reg.createdAt)}</td>
+                    <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                      <select
+                        value={reg.status}
+                        disabled={updatingId === reg.id}
+                        onChange={(e) => handleStatusChange(reg.id, e.target.value)}
+                        className="rounded border border-gray-200 bg-white px-2 py-1 text-xs outline-none focus:border-brand-400 disabled:opacity-50"
+                      >
+                        {ACADEMY_STATUSES.map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-4 py-3">
+                      {reg.academyPackage ? (
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold capitalize ${
+                          isPremium ? 'bg-amber-100 text-amber-800 ring-1 ring-amber-300' : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {reg.academyPackage}
+                          {reg.academyAmount ? ` ₦${reg.academyAmount.toLocaleString()}` : ''}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {reg.paymentStatus ? (
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                          reg.paymentStatus === 'paid'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-amber-100 text-amber-700'
+                        }`}>
+                          {reg.paymentStatus}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {isPremium && reg.implementationStage ? (
+                        <div>
+                          <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold capitalize ${IMPL_STAGE_STYLE[reg.implementationStage] || 'bg-gray-100 text-gray-600'}`}>
+                            {reg.implementationStage.replace(/_/g, ' ')}
+                          </span>
+                          <div className="mt-1 text-[10px] text-amber-600 font-medium">
+                            {tasksDone}/{tasksTotal} tasks
+                          </div>
+                        </div>
+                      ) : reg.academyStatus ? (
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                          reg.academyStatus === 'enrolled' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                        }`}>
+                          {reg.academyStatus.replace(/_/g, ' ')}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {reg.onboardingStatus ? (
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                          reg.onboardingStatus === 'sent'
+                            ? 'bg-purple-100 text-purple-700'
+                            : reg.onboardingStatus === 'failed'
+                            ? 'bg-red-100 text-red-600'
+                            : 'bg-amber-100 text-amber-700'
+                        }`}>
+                          {reg.onboardingStatus}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-300">—</span>
+                      )}
+                      {reg.onboardingSentAt && (
+                        <div className="text-xs text-gray-400">{fmtDateTime(reg.onboardingSentAt)}</div>
+                      )}
+                    </td>
+                  </tr>
+
+                  {/* ── Expanded detail row ──────────────────────────────── */}
+                  {isExpanded && (
+                    <tr key={`${reg.id}-detail`} className={isPremium ? 'bg-amber-50/40' : 'bg-blue-50/30'}>
+                      <td colSpan={9} className="px-4 py-4 space-y-4">
+
+                        {/* ── Premium Pipeline Panel ─────────────────────── */}
+                        {isPremium && (
+                          <div className="rounded-xl border border-amber-200 bg-white px-4 py-3 space-y-4">
+                            {/* Header */}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-bold text-amber-800 uppercase tracking-wide">💎 Implementation Pipeline</span>
+                              {reg.implementationStatus && (
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                  reg.implementationStatus === 'active'    ? 'bg-green-100 text-green-700' :
+                                  reg.implementationStatus === 'completed' ? 'bg-emerald-100 text-emerald-700' :
+                                  reg.implementationStatus === 'paused'    ? 'bg-amber-100 text-amber-700' :
+                                  'bg-gray-100 text-gray-500'
+                                }`}>
+                                  {reg.implementationStatus}
+                                </span>
+                              )}
+                              {reg.deliveryOwner && (
+                                <span className="text-xs text-gray-500">Owner: <span className="font-medium text-gray-700">{reg.deliveryOwner}</span></span>
+                              )}
+                            </div>
+
+                            {/* Stage progress bar */}
+                            <div className="space-y-1.5">
+                              <div className="flex flex-wrap gap-1">
+                                {IMPL_STAGES.map((s) => {
+                                  const idx        = IMPL_STAGES.indexOf(s)
+                                  const currentIdx = IMPL_STAGES.indexOf(reg.implementationStage)
+                                  const isDone     = idx < currentIdx
+                                  const isCurrent  = idx === currentIdx
+                                  return (
+                                    <span
+                                      key={s}
+                                      title={s.replace(/_/g, ' ')}
+                                      className={`rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
+                                        isCurrent ? (IMPL_STAGE_STYLE[s] || 'bg-gray-200 text-gray-700') + ' ring-1 ring-offset-1 ring-current' :
+                                        isDone    ? 'bg-gray-100 text-gray-400 line-through' :
+                                                    'bg-gray-50 text-gray-300'
+                                      }`}
+                                    >
+                                      {isCurrent ? '▶ ' : isDone ? '✓ ' : ''}{s.replace(/_/g, ' ')}
+                                    </span>
+                                  )
+                                })}
+                              </div>
+                            </div>
+
+                            {/* Key state row */}
+                            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs sm:grid-cols-4">
+                              {[
+                                { label: 'Intake',      value: reg.premiumIntakeStatus,  completedAt: reg.premiumIntakeCompletedAt },
+                                { label: 'Call booked', value: reg.implementationCallBooked ? 'yes' : 'no',
+                                  completedAt: reg.implementationCallBookedAt },
+                                { label: 'System setup', value: reg.systemSetupStatus?.replace(/_/g, ' ') },
+                                { label: 'Delivered',   value: reg.deliveryCompletedAt ? 'yes' : '—',
+                                  completedAt: reg.deliveryCompletedAt },
+                              ].map(({ label, value, completedAt }) => (
+                                <div key={label} className="flex gap-1.5">
+                                  <span className="shrink-0 text-gray-400 w-20">{label}:</span>
+                                  <span className={`font-semibold capitalize ${
+                                    value === 'complete' || value === 'yes' ? 'text-green-700' :
+                                    value === 'in_progress' || value === 'in progress' ? 'text-blue-700' :
+                                    value === 'no' || value === '—' ? 'text-gray-400' :
+                                    'text-amber-700'
+                                  }`}>
+                                    {value || '—'}
+                                  </span>
+                                  {completedAt && (
+                                    <span className="text-gray-400 text-[10px] self-center">{fmtDateTime(completedAt)}</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Task checklist */}
+                            <div className="border-t border-amber-100 pt-3">
+                              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide mb-2">Operational Checklist</p>
+                              <div className="flex flex-wrap gap-2">
+                                {TASK_LABELS.map(({ key, label }) => {
+                                  const done      = !!reg[key]
+                                  const isActioning = actioningId === `${reg.id}-${key}`
+                                  return (
+                                    <button
+                                      key={key}
+                                      disabled={isActioning}
+                                      onClick={(e) => { e.stopPropagation(); handleTaskToggle(reg.id, key, done) }}
+                                      className={`rounded border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+                                        done
+                                          ? 'border-green-300 bg-green-50 text-green-700 line-through'
+                                          : 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                                      }`}
+                                    >
+                                      {isActioning ? '…' : done ? `✓ ${label}` : label}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+
+                            {/* Stage advance controls */}
+                            <div className="border-t border-amber-100 pt-3 space-y-2" onClick={e => e.stopPropagation()}>
+                              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Advance Stage</p>
+                              <div className="flex flex-wrap gap-2">
+                                {[
+                                  { stage: 'review_pending',         label: 'Mark: Review pending' },
+                                  { stage: 'strategy_call_pending',  label: 'Mark: Call pending' },
+                                  { stage: 'strategy_call_booked',   label: 'Mark: Call booked',
+                                    extra: { implementationCallBooked: true } },
+                                  { stage: 'build_pending',          label: 'Mark: Build pending' },
+                                  { stage: 'build_in_progress',      label: 'Mark: Build started' },
+                                  { stage: 'delivered',              label: 'Mark: Delivered' },
+                                  { stage: 'active',                 label: 'Mark: Active' },
+                                ].map(({ stage, label, extra }) => {
+                                  const isCurrent = reg.implementationStage === stage
+                                  const isActioning_ = actioningId === reg.id
+                                  return (
+                                    <button
+                                      key={stage}
+                                      disabled={isCurrent || isActioning_}
+                                      onClick={() => handleDeliveryUpdate(reg.id, { implementationStage: stage, ...extra })}
+                                      className={`rounded border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
+                                        isCurrent
+                                          ? 'border-amber-300 bg-amber-100 text-amber-800 font-bold'
+                                          : 'border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40'
+                                      }`}
+                                    >
+                                      {isActioning_ ? '…' : label}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+
+                              {/* System setup + delivery notes */}
+                              <div className="flex flex-wrap gap-2 pt-1">
+                                {['not_started', 'in_progress', 'complete'].map(s => (
+                                  <button
+                                    key={s}
+                                    disabled={reg.systemSetupStatus === s || actioningId === reg.id}
+                                    onClick={() => handleDeliveryUpdate(reg.id, { systemSetupStatus: s })}
+                                    className={`rounded border px-2 py-0.5 text-[10px] font-medium transition-colors disabled:cursor-not-allowed capitalize ${
+                                      reg.systemSetupStatus === s
+                                        ? (SETUP_STATUS_STYLE[s] || 'bg-gray-100 text-gray-500') + ' font-bold'
+                                        : 'border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40'
+                                    }`}
+                                  >
+                                    Setup: {s.replace(/_/g, ' ')}
+                                  </button>
+                                ))}
+                              </div>
+
+                              {/* Delivery notes inline edit */}
+                              <DeliveryNotesEditor
+                                regId={reg.id}
+                                notes={reg.deliveryNotes || ''}
+                                owner={reg.deliveryOwner || ''}
+                                onSave={(fields) => handleDeliveryUpdate(reg.id, fields)}
+                              />
+                            </div>
+
+                            {/* Intake answers */}
+                            {reg.premiumIntakeStatus === 'complete' && (
+                              <div className="border-t border-amber-100 pt-3">
+                                <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide mb-2">
+                                  Intake Answers
+                                  {reg.premiumIntakeCompletedAt && (
+                                    <span className="ml-2 text-[10px] font-normal text-gray-400">{fmtDateTime(reg.premiumIntakeCompletedAt)}</span>
+                                  )}
+                                </p>
+                                <div className="grid grid-cols-1 gap-y-1 sm:grid-cols-2 text-xs">
+                                  {INTAKE_LABELS.map(({ key, label, bool }) => {
+                                    const val = reg[key]
+                                    if (val === null || val === undefined) return null
+                                    const display = bool
+                                      ? (val ? 'Yes' : 'No')
+                                      : String(val)
+                                    return (
+                                      <div key={key} className="flex gap-1.5">
+                                        <span className="shrink-0 font-medium text-gray-500 w-32">{label}:</span>
+                                        <span className={`text-gray-700 italic ${bool && val ? 'text-green-700 not-italic font-semibold' : bool && !val ? 'text-gray-400' : ''}`}>
+                                          {display.length > 120 ? display.slice(0, 120) + '…' : display}
+                                        </span>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Intake in-progress indicator */}
+                            {reg.premiumIntakeStatus === 'in_progress' && (
+                              <div className="border-t border-amber-100 pt-2">
+                                <p className="text-xs text-amber-600 italic">
+                                  Intake in progress — stage:{' '}
+                                  <span className="font-semibold">{(reg.premiumIntakeStage || '').replace(/_/g, ' ')}</span>
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* ── Basic onboarding info (non-premium) ─────────── */}
+                        {!isPremium && (
+                          <div className="text-xs text-gray-500 space-y-1">
+                            <div className="flex flex-wrap gap-4">
+                              {reg.enrollmentStatus && (
+                                <span><span className="font-medium text-gray-600">Enrollment:</span> {reg.enrollmentStatus}</span>
+                              )}
+                              {reg.onboardingPath && (
+                                <span><span className="font-medium text-gray-600">Path:</span> {reg.onboardingPath}</span>
+                              )}
+                              {reg.onboardingSentAt && (
+                                <span><span className="font-medium text-gray-600">Onboarded:</span> {fmtDateTime(reg.onboardingSentAt)}</span>
+                              )}
+                            </div>
+                            {reg.goals && (
+                              <p><span className="font-medium text-gray-600">Goals:</span> <span className="italic">{reg.goals}</span></p>
+                            )}
+                          </div>
+                        )}
+
+                      </td>
+                    </tr>
                   )}
-                  {reg.systemIncluded && (
-                    <div className="text-xs text-green-600 mt-0.5">+ system</div>
-                  )}
-                  {reg.upgradeEligible && (
-                    <div className="text-xs text-amber-600 mt-0.5">upgrade eligible</div>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {reg.paymentStatus ? (
-                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${
-                      reg.paymentStatus === 'paid'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-amber-100 text-amber-700'
-                    }`}>
-                      {reg.paymentStatus}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-gray-300">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {reg.academyStatus ? (
-                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium capitalize ${
-                      reg.academyStatus === 'enrolled'
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {reg.academyStatus.replace(/_/g, ' ')}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-gray-300">—</span>
-                  )}
-                </td>
-              </tr>
-            ))}
+                </>
+              )
+            })}
           </tbody>
         </table>
       </div>

@@ -77,4 +77,89 @@ async function getAcademyAccess(req, res) {
   }
 }
 
-module.exports = { createRegistration, listRegistrations, updateRegistrationStatus, getAcademyAccess }
+/**
+ * PATCH /api/academy/registrations/:id/delivery
+ * Admin can update delivery pipeline fields.
+ * Accepted: implementationStage, implementationStatus, systemSetupStatus,
+ *           deliveryNotes, deliveryOwner, implementationCallBooked,
+ *           implementationCallBookedAt, deliveryCompletedAt
+ */
+async function updateImplementationDelivery(req, res) {
+  try {
+    const { id } = req.params
+    const ALLOWED = [
+      'implementationStage',
+      'implementationStatus',
+      'systemSetupStatus',
+      'deliveryNotes',
+      'deliveryOwner',
+      'implementationCallBooked',
+      'implementationCallBookedAt',
+      'deliveryCompletedAt',
+    ]
+    const data = {}
+    for (const key of ALLOWED) {
+      if (key in req.body) data[key] = req.body[key]
+    }
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid fields provided' })
+    }
+    // Auto-timestamps
+    if (data.implementationStage === 'delivered' && !data.deliveryCompletedAt) {
+      data.deliveryCompletedAt = new Date()
+      console.log(`[PremiumDelivery] delivery completed — registration ${id}`)
+    }
+    if (data.implementationCallBooked === true && !data.implementationCallBookedAt) {
+      data.implementationCallBookedAt = new Date()
+      console.log(`[PremiumDelivery] strategy call booked — registration ${id}`)
+    }
+    const registration = await prisma.academyRegistration.update({
+      where: { id },
+      data,
+    })
+    return res.json({ success: true, data: registration })
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message })
+  }
+}
+
+/**
+ * PATCH /api/academy/registrations/:id/tasks
+ * Admin can toggle task flags.
+ * Accepted: taskIntakeReviewed, taskScopeReady, taskCallBooked,
+ *           taskBuildStarted, taskDeliveryComplete
+ */
+async function updateImplementationTasks(req, res) {
+  try {
+    const { id } = req.params
+    const TASK_FIELDS = [
+      'taskIntakeReviewed',
+      'taskScopeReady',
+      'taskCallBooked',
+      'taskBuildStarted',
+      'taskDeliveryComplete',
+    ]
+    const data = {}
+    for (const key of TASK_FIELDS) {
+      if (key in req.body && typeof req.body[key] === 'boolean') {
+        data[key] = req.body[key]
+      }
+    }
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid task fields provided' })
+    }
+    const registration = await prisma.academyRegistration.update({ where: { id }, data })
+    return res.json({ success: true, data: registration })
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message })
+  }
+}
+
+module.exports = {
+  createRegistration,
+  listRegistrations,
+  updateRegistrationStatus,
+  getAcademyAccess,
+  updateImplementationDelivery,
+  updateImplementationTasks,
+}
