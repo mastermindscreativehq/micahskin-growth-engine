@@ -51,7 +51,7 @@ model Lead {
   intent                  String?   // concern bucket: acne | hyperpigmentation | dry_skin | stretch_marks | body_care | sensitive_skin | general | price | routine | urgent
   engagementScore         String?   // high | medium | low — computed from reply speed, length, frequency
   telegramFlowType          String?   // routine | concern — classified once at connected stage, never changed
-  telegramStage             String?   // connected | concern_pending | duration_pending | area_pending | skin_type_pending | products_tried_pending | severity_pending | goal_pending | routine_goal_pending | products_used_pending | sensitivity_pending | budget_pending | routine_level_pending | intake_complete | awaiting_human_review
+  telegramStage             String?   // connected | intake_complete | diagnosis_sent | awaiting_checkin_reply | checkin_sent | checkin_replied | product_reco_sent | awaiting_product_reply | product_reply_received | post_diagnosis_engaged | awaiting_human_review
   telegramConcern           String?   // concern path: raw text of stated skin concern
   telegramDuration          String?   // concern path: how long they have had the issue
   telegramArea              String?   // shared: face | body | both (free text)
@@ -126,6 +126,10 @@ model Lead {
   conversionValue   Float?    // revenue amount when applicable
   conversionAt      DateTime? // when conversion was confirmed
   lastInteractionAt DateTime? // last click / signup / payment event
+
+  // ── Post-diagnosis follow-up tracking ────────────────────────────────────────
+  followUpIntent    String?   // progress_positive | no_change_yet | irritation | confused_about_routine | has_not_started | needs_product_help | wants_human_support | general_update
+  followUpIntentAt  DateTime? // when the follow-up intent was last detected
 
   utmSource      String?
   replies        Reply[]

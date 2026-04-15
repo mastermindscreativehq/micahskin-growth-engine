@@ -456,11 +456,12 @@ async function _processDiagnosisSends() {
       await prisma.lead.update({
         where: { id: lead.id },
         data:  {
-          diagnosisSentAt:    now,
-          diagnosisStatus:    'sent',
-          lastActionType:     'diagnosis',
-          lastActionAt:       now,
+          diagnosisSentAt:     now,
+          diagnosisStatus:     'sent',
+          lastActionType:      'diagnosis',
+          lastActionAt:        now,
           actionBlockedReason: null,
+          telegramStage:       'diagnosis_sent',
         },
       })
       await _logAction(lead.id, lead.telegramChatId, 'diagnosis', result)
@@ -522,6 +523,7 @@ async function _processCheckIns() {
           checkInStatus:  'sent',
           lastActionType: 'check_in',
           lastActionAt:   now,
+          telegramStage:  'awaiting_checkin_reply',
         },
       })
       await _logAction(lead.id, lead.telegramChatId, 'check_in', result)
@@ -612,6 +614,7 @@ async function _processProductRecos() {
           productRecoStatus: 'sent',
           lastActionType:    'product_reco',
           lastActionAt:      now,
+          telegramStage:     'awaiting_product_reply',
         },
       })
       await _logAction(lead.id, lead.telegramChatId, 'product_reco', result)

@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma')
 const { sendTelegramToUser, sendTelegramMessage } = require('../services/telegramService')
 const { handleTelegramMessage } = require('../services/telegramSessionService')
+const { isPostDiagnosisLead, handlePostDiagnosisReply } = require('../services/telegramFollowUpService')
 const { processPaidEnrollment } = require('../services/academyOnboardingService')
 const { handlePremiumIntakeReply } = require('../services/premiumDeliveryService')
 
@@ -57,6 +58,19 @@ async function handleWebhook(req, res) {
     })
     if (academy) {
       await handleAcademyReply({ academy, chatId, text })
+      return
+    }
+
+    // ── Post-diagnosis leads get context-aware follow-up handler ─────────────
+    // Must be checked BEFORE the intake state machine to prevent a stale or
+    // missing TelegramSession from routing diagnosed leads back into the intake
+    // question flow (e.g. asking skin type after a check-in reply).
+    const lead = await prisma.lead.findFirst({
+      where: { telegramChatId: chatId },
+    })
+    if (lead && isPostDiagnosisLead(lead)) {
+      const reply = await handlePostDiagnosisReply(lead, text)
+      if (reply) await sendTelegramToUser(chatId, reply)
       return
     }
 
