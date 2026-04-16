@@ -138,6 +138,21 @@ model Lead {
   lastConversionTriggerAt  DateTime? // when the last auto conversion was triggered
   conversionAttempts       Int       @default(0)
 
+  // ── Conversation Brain + Reply Governor (Phase 22) ─────────────────────────
+  // Conversation mode — explicit state the orchestration layer writes to
+  conversationMode      String?   // intake | diagnosis_sent | checkin_active | product_reco_active | academy_pitch_active | consult_active | payment_pending | human_manual_mode | closed
+  activeOffer           String?   // product | academy | consult — currently active offer type being pursued
+  awaitingReplyFor      String?   // what the bot last asked the user about / is waiting on
+  botMutedUntil         DateTime? // all automation suppressed until this timestamp (set after manual sends or active product/academy conversations)
+  followupSuppressed    Boolean   @default(false) // hard admin flag: suppress all automated follow-ups for this lead
+  lastBotIntent         String?   // what the bot's last outbound message was intended to do
+  lastUserIntent        String?   // 12-bucket intent from the user's last inbound message
+  lastMeaningfulBotAt   DateTime? // when the bot last sent a contextual (non-generic) message
+  lastMeaningfulUserAt  DateTime? // when the user last sent a meaningful (non-trivial) message
+  academyPitchCount     Int       @default(0) // cumulative count of academy pitches sent to this lead
+  productOfferCount     Int       @default(0) // cumulative count of product offers / product answers sent
+  consultOfferCount     Int       @default(0) // cumulative count of consult offers sent
+
   // Manual CRM action tracking
   lastManualActionType     String?   // product_offer | consult_offer | academy_offer | custom_message | resend_payment
   lastManualActionAt       DateTime?

@@ -967,6 +967,11 @@ function LeadsTab() {
                           </div>
                         )}
 
+                        {/* Conversation Brain Panel — mode, intent state, suppression visibility */}
+                        {lead.diagnosisSent && (
+                          <ConversationBrainPanel lead={lead} />
+                        )}
+
                         {/* Conversion Trigger Panel — manual controls + auto-conversion state */}
                         {(lead.telegramStarted || lead.diagnosisSent || lead.conversionStage) && (
                           <ConversionTriggerPanel lead={lead} onRefresh={load} />
@@ -1403,6 +1408,176 @@ function ConversionTriggerPanel({ lead, onRefresh }) {
           }}
           onError={(msg) => showToast('err', msg)}
         />
+      )}
+    </div>
+  )
+}
+
+// ── Conversation Brain Panel ─────────────────────────────────────────────────
+
+const CONV_MODE_STYLE = {
+  intake:               'bg-gray-100 text-gray-600',
+  diagnosis_sent:       'bg-blue-100 text-blue-700',
+  checkin_active:       'bg-cyan-100 text-cyan-700',
+  product_reco_active:  'bg-teal-100 text-teal-700',
+  academy_pitch_active: 'bg-violet-100 text-violet-700',
+  consult_active:       'bg-purple-100 text-purple-700',
+  payment_pending:      'bg-orange-100 text-orange-700',
+  human_manual_mode:    'bg-amber-100 text-amber-800',
+  closed:               'bg-red-100 text-red-600',
+}
+
+const INTENT_STYLE = {
+  greeting:               'bg-gray-100 text-gray-500',
+  routine_feedback:       'bg-green-100 text-green-700',
+  irritation_or_side_effect: 'bg-red-100 text-red-600',
+  product_question:       'bg-teal-100 text-teal-700',
+  product_buying_intent:  'bg-emerald-100 text-emerald-700',
+  academy_interest:       'bg-violet-100 text-violet-700',
+  academy_objection:      'bg-purple-100 text-purple-600',
+  consult_interest:       'bg-indigo-100 text-indigo-700',
+  payment_question:       'bg-orange-100 text-orange-700',
+  thanks_acknowledgement: 'bg-gray-100 text-gray-500',
+  stop_or_not_interested: 'bg-red-100 text-red-700',
+  unclear:                'bg-gray-100 text-gray-400',
+}
+
+/**
+ * Panel showing Conversation Brain state — mode, intent history, mute status,
+ * suppression flags, and offer count metrics.
+ * Read-only display — no actions.
+ */
+function ConversationBrainPanel({ lead }) {
+  const hasBrainData =
+    lead.conversationMode ||
+    lead.lastUserIntent   ||
+    lead.lastBotIntent    ||
+    lead.botMutedUntil    ||
+    lead.followupSuppressed ||
+    (lead.academyPitchCount > 0) ||
+    (lead.productOfferCount > 0) ||
+    (lead.consultOfferCount > 0)
+
+  if (!hasBrainData) return null
+
+  const now          = new Date()
+  const muteActive   = lead.botMutedUntil && new Date(lead.botMutedUntil) > now
+  const muteMinutes  = muteActive
+    ? Math.ceil((new Date(lead.botMutedUntil) - now) / 60000)
+    : 0
+
+  return (
+    <div className="rounded-lg border border-indigo-100 bg-indigo-50/30 px-3 py-2.5 space-y-2.5">
+
+      {/* Header row */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-semibold text-indigo-700 uppercase tracking-wide">Conversation Brain</span>
+
+        {lead.conversationMode && (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize ${CONV_MODE_STYLE[lead.conversationMode] || 'bg-gray-100 text-gray-500'}`}>
+            {lead.conversationMode.replace(/_/g, ' ')}
+          </span>
+        )}
+
+        {/* Mute indicator */}
+        {muteActive && (
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 border border-amber-200">
+            🔇 muted {muteMinutes}m remaining
+          </span>
+        )}
+        {lead.followupSuppressed && (
+          <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">
+            suppressed
+          </span>
+        )}
+      </div>
+
+      {/* State grid */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+
+        {/* Last user intent */}
+        {lead.lastUserIntent && (
+          <div className="flex items-center gap-1.5">
+            <span className="shrink-0 text-gray-400 w-24">User intent:</span>
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${INTENT_STYLE[lead.lastUserIntent] || 'bg-gray-100 text-gray-500'}`}>
+              {lead.lastUserIntent.replace(/_/g, ' ')}
+            </span>
+          </div>
+        )}
+        {lead.lastMeaningfulUserAt && (
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-24">User at:</span>
+            <span className="text-gray-600">{fmtDateTime(lead.lastMeaningfulUserAt)}</span>
+          </div>
+        )}
+
+        {/* Last bot intent */}
+        {lead.lastBotIntent && (
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-24">Bot intent:</span>
+            <span className="text-gray-700 capitalize">{lead.lastBotIntent.replace(/_/g, ' ')}</span>
+          </div>
+        )}
+        {lead.lastMeaningfulBotAt && (
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-24">Bot at:</span>
+            <span className="text-gray-600">{fmtDateTime(lead.lastMeaningfulBotAt)}</span>
+          </div>
+        )}
+
+        {/* Active offer + awaiting */}
+        {lead.activeOffer && (
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-24">Active offer:</span>
+            <span className="text-gray-700 capitalize font-medium">{lead.activeOffer}</span>
+          </div>
+        )}
+        {lead.awaitingReplyFor && (
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-24">Awaiting:</span>
+            <span className="text-gray-600 capitalize">{lead.awaitingReplyFor.replace(/_/g, ' ')}</span>
+          </div>
+        )}
+
+        {/* Mute expiry */}
+        {lead.botMutedUntil && (
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-24">Mute until:</span>
+            <span className={muteActive ? 'text-amber-700 font-medium' : 'text-gray-400 line-through'}>
+              {fmtDateTime(lead.botMutedUntil)}
+            </span>
+          </div>
+        )}
+
+        {/* Suppression reason */}
+        {lead.actionBlockedReason && (
+          <div className="col-span-2 sm:col-span-3 flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-24">Suppressed:</span>
+            <span className="text-amber-700 font-mono text-[10px]">{lead.actionBlockedReason}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Offer counter pills */}
+      {((lead.academyPitchCount > 0) || (lead.productOfferCount > 0) || (lead.consultOfferCount > 0)) && (
+        <div className="flex flex-wrap gap-1.5 border-t border-indigo-100 pt-2">
+          <span className="text-[10px] font-semibold text-indigo-500 uppercase tracking-wide self-center mr-1">Pitches sent:</span>
+          {lead.academyPitchCount > 0 && (
+            <span className="rounded bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700">
+              Academy ×{lead.academyPitchCount}
+            </span>
+          )}
+          {lead.productOfferCount > 0 && (
+            <span className="rounded bg-teal-100 px-2 py-0.5 text-[10px] font-medium text-teal-700">
+              Product ×{lead.productOfferCount}
+            </span>
+          )}
+          {lead.consultOfferCount > 0 && (
+            <span className="rounded bg-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-700">
+              Consult ×{lead.consultOfferCount}
+            </span>
+          )}
+        </div>
       )}
     </div>
   )

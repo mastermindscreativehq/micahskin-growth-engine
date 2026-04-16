@@ -1,10 +1,21 @@
 const prisma = require('../lib/prisma')
 const { sendTelegramToUser, sendTelegramMessage } = require('../services/telegramService')
 const { handleTelegramMessage } = require('../services/telegramSessionService')
-const { isPostDiagnosisLead, handlePostDiagnosisReply, classifyFollowUpIntent } = require('../services/telegramFollowUpService')
+const { isPostDiagnosisLead, classifyFollowUpIntent } = require('../services/telegramFollowUpService')
 const { processPaidEnrollment } = require('../services/academyOnboardingService')
 const { handlePremiumIntakeReply } = require('../services/premiumDeliveryService')
 const { maybeTriggerAutomaticConversion } = require('../services/conversionEngineService')
+const { handleInboundReply, classifyInboundIntent } = require('../services/conversationBrainService')
+
+// Intents where we should NOT queue an automatic conversion offer
+// (stop/thanks/greeting are terminal or noise — conversion engine shouldn't act on them)
+const NO_CONVERSION_INTENTS = new Set([
+  'stop_or_not_interested',
+  'thanks_acknowledgement',
+  'greeting',
+  'academy_objection',
+  'payment_question',
+])
 
 // ── Webhook handler ───────────────────────────────────────────────────────────
 
@@ -70,16 +81,21 @@ async function handleWebhook(req, res) {
       where: { telegramChatId: chatId },
     })
     if (lead && isPostDiagnosisLead(lead)) {
-      // Classify intent once (pure function — re-used by both handler and conversion engine)
-      const followUpIntent = classifyFollowUpIntent(text)
-
-      const reply = await handlePostDiagnosisReply(lead, text)
+      // ── Conversation Brain routes and responds ────────────────────────────
+      // Brain classifies with the richer 12-bucket taxonomy, applies governor
+      // rules, builds context-aware reply, and persists conversation state.
+      const brainIntent = classifyInboundIntent(text)
+      const reply = await handleInboundReply(lead, text)
       if (reply) await sendTelegramToUser(chatId, reply)
 
-      // Queue automatic conversion offer (non-blocking; cooldown + duplicate guards inside)
-      maybeTriggerAutomaticConversion(lead, followUpIntent).catch(err =>
-        console.error('[ConversionEngine] auto trigger error:', err.message)
-      )
+      // Queue automatic conversion offer only for actionable buying signals.
+      // Use legacy 8-bucket classifier for the conversion engine (it was built for that).
+      if (!NO_CONVERSION_INTENTS.has(brainIntent)) {
+        const conversionIntent = classifyFollowUpIntent(text)
+        maybeTriggerAutomaticConversion(lead, conversionIntent).catch(err =>
+          console.error('[ConversionEngine] auto trigger error:', err.message)
+        )
+      }
       return
     }
 

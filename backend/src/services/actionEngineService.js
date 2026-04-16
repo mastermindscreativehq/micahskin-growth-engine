@@ -27,6 +27,7 @@
 const prisma = require('../lib/prisma')
 const { sendTelegramToUser } = require('./telegramService')
 const { processQueuedConversionOffers } = require('./conversionEngineService')
+const { shouldSendAutomation } = require('./conversationBrainService')
 
 // Configurable via env var — keep in sync with diagnosisEngineService threshold
 const ACADEMY_FIT_THRESHOLD = parseInt(process.env.ACADEMY_FIT_THRESHOLD || '65', 10)
@@ -510,6 +511,22 @@ async function _processCheckIns() {
     })
     if (claimed.count === 0) continue
 
+    // ── Reply Governor ────────────────────────────────────────────────────────
+    const { allowed: ciAllowed, reason: ciReason } = shouldSendAutomation(lead, 'check_in')
+    if (!ciAllowed) {
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data: {
+          checkInStatus:       'suppressed',
+          actionBlockedReason: ciReason,
+          lastActionType:      'check_in_suppressed',
+          lastActionAt:        now,
+        },
+      })
+      console.log(`[ActionEngine] check-in suppressed (${ciReason}) → ${lead.id}`)
+      continue
+    }
+
     console.log(`[ActionEngine] evaluating lead ${lead.id} (${lead.fullName}) for check-in`)
 
     try {
@@ -520,11 +537,15 @@ async function _processCheckIns() {
       await prisma.lead.update({
         where: { id: lead.id },
         data:  {
-          checkInSentAt:  now,
-          checkInStatus:  'sent',
-          lastActionType: 'check_in',
-          lastActionAt:   now,
-          telegramStage:  'awaiting_checkin_reply',
+          checkInSentAt:       now,
+          checkInStatus:       'sent',
+          lastActionType:      'check_in',
+          lastActionAt:        now,
+          telegramStage:       'awaiting_checkin_reply',
+          // Brain state
+          conversationMode:    'checkin_active',
+          lastBotIntent:       'auto_check_in',
+          lastMeaningfulBotAt: now,
         },
       })
       await _logAction(lead.id, lead.telegramChatId, 'check_in', result)
@@ -574,6 +595,22 @@ async function _processProductRecos() {
     })
     if (claimed.count === 0) continue
 
+    // ── Reply Governor ────────────────────────────────────────────────────────
+    const { allowed: prAllowed, reason: prReason } = shouldSendAutomation(lead, 'product_reco')
+    if (!prAllowed) {
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data: {
+          productRecoStatus:   'suppressed',
+          actionBlockedReason: prReason,
+          lastActionType:      'product_reco_suppressed',
+          lastActionAt:        now,
+        },
+      })
+      console.log(`[ActionEngine] product reco suppressed (${prReason}) → ${lead.id}`)
+      continue
+    }
+
     // Manual consult branch — write block record and stop here
     const needsManualConsult =
       lead.urgencyLevel === 'high' || lead.nextBestAction === 'manual_consult'
@@ -611,11 +648,16 @@ async function _processProductRecos() {
       await prisma.lead.update({
         where: { id: lead.id },
         data:  {
-          productRecoSentAt: now,
-          productRecoStatus: 'sent',
-          lastActionType:    'product_reco',
-          lastActionAt:      now,
-          telegramStage:     'awaiting_product_reply',
+          productRecoSentAt:   now,
+          productRecoStatus:   'sent',
+          lastActionType:      'product_reco',
+          lastActionAt:        now,
+          telegramStage:       'awaiting_product_reply',
+          // Brain state
+          conversationMode:    'product_reco_active',
+          lastBotIntent:       'auto_product_reco',
+          lastMeaningfulBotAt: now,
+          productOfferCount:   { increment: 1 },
         },
       })
       await _logAction(lead.id, lead.telegramChatId, 'product_reco', result)
@@ -666,6 +708,22 @@ async function _processAcademyOffers() {
     })
     if (claimed.count === 0) continue
 
+    // ── Reply Governor ────────────────────────────────────────────────────────
+    const { allowed: aoAllowed, reason: aoReason } = shouldSendAutomation(lead, 'academy_offer')
+    if (!aoAllowed) {
+      await prisma.lead.update({
+        where: { id: lead.id },
+        data: {
+          academyOfferStatus:  'suppressed',
+          actionBlockedReason: aoReason,
+          lastActionType:      'academy_offer_suppressed',
+          lastActionAt:        now,
+        },
+      })
+      console.log(`[ActionEngine] academy offer suppressed (${aoReason}) → ${lead.id}`)
+      continue
+    }
+
     const needsManualConsult =
       lead.urgencyLevel === 'high' || lead.nextBestAction === 'manual_consult'
 
@@ -693,10 +751,15 @@ async function _processAcademyOffers() {
       await prisma.lead.update({
         where: { id: lead.id },
         data:  {
-          academyOfferSentAt: now,
-          academyOfferStatus: 'sent',
-          lastActionType:     'academy_offer',
-          lastActionAt:       now,
+          academyOfferSentAt:  now,
+          academyOfferStatus:  'sent',
+          lastActionType:      'academy_offer',
+          lastActionAt:        now,
+          // Brain state
+          conversationMode:    'academy_pitch_active',
+          lastBotIntent:       'auto_academy_offer',
+          lastMeaningfulBotAt: now,
+          academyPitchCount:   { increment: 1 },
         },
       })
       await _logAction(lead.id, lead.telegramChatId, 'academy_offer', result)

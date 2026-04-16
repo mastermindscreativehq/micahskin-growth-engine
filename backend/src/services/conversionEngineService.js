@@ -29,6 +29,7 @@
 
 const prisma = require('../lib/prisma')
 const { sendTelegramToUser } = require('./telegramService')
+const { muteBot, MANUAL_MUTE_MS } = require('./conversationBrainService')
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -540,27 +541,49 @@ async function sendManualConversionAction({ leadId, actionType, adminName = 'adm
     conversionStage:         'offer_sent',
   }
 
+  // ── Conversation Brain: conversation mode + offer counters ──────────────────
+  // Map action type → conversation mode the lead is now in
+  const modeByAction = {
+    product_offer:  'product_reco_active',
+    consult_offer:  'consult_active',
+    academy_offer:  'academy_pitch_active',
+    resend_payment: 'payment_pending',
+    custom_message: 'human_manual_mode',
+  }
+  dbUpdate.conversationMode   = modeByAction[actionType] || 'human_manual_mode'
+  dbUpdate.lastBotIntent      = `manual_${actionType}`
+  dbUpdate.lastMeaningfulBotAt = now
+
   if (actionType === 'product_offer') {
     dbUpdate.productOfferSent   = true
     dbUpdate.productOfferSentAt = now
     dbUpdate.productOfferStatus = 'sent'
     dbUpdate.conversionPath     = 'product_offer'
+    dbUpdate.productOfferCount  = { increment: 1 }
   } else if (actionType === 'consult_offer') {
     dbUpdate.consultOfferSent   = true
     dbUpdate.consultOfferSentAt = now
     dbUpdate.consultOfferStatus = 'sent'
     dbUpdate.conversionPath     = 'consult_offer'
+    dbUpdate.consultOfferCount  = { increment: 1 }
   } else if (actionType === 'academy_offer') {
     dbUpdate.academyOfferSent   = true
     dbUpdate.academyOfferSentAt = now
     dbUpdate.academyOfferStatus = 'sent'
     dbUpdate.conversionPath     = 'academy_offer'
+    dbUpdate.academyPitchCount  = { increment: 1 }
   } else if (actionType === 'resend_payment') {
     dbUpdate.paymentLinkLastSentAt = now
     dbUpdate.conversionPath        = 'academy_offer'
   }
 
   await prisma.lead.update({ where: { id: leadId }, data: dbUpdate })
+
+  // Mute automated follow-ups for 4 hours — admin has taken the wheel.
+  // Non-blocking: if this fails the send result is still returned successfully.
+  muteBot(leadId, MANUAL_MUTE_MS).catch(err =>
+    console.error(`[ConversionEngine] muteBot failed for lead=${leadId}:`, err.message)
+  )
 
   console.log(`[ConversionEngine] manual send success → ${actionType} to lead=${leadId} by=${adminName}`)
 
@@ -692,26 +715,38 @@ async function processQueuedConversionOffers() {
       if (!result.success && !result.skipped) throw new Error(JSON.stringify(result.error) || 'send failed')
 
       const now2 = new Date()
-      const offerUpdate = {
-        conversionOfferSentAt:  now2,
-        conversionOfferStatus:  'sent',
-        conversionStage:        'offer_sent',
-        conversionPath:         path,
-        lastSalesMessagePreview: msg.slice(0, 300),
-        conversionAttempts:     { increment: 1 },
+      const modeByPath = {
+        product_offer: 'product_reco_active',
+        consult_offer: 'consult_active',
+        academy_offer: 'academy_pitch_active',
       }
-      if (path === 'product_offer')  {
+      const offerUpdate = {
+        conversionOfferSentAt:   now2,
+        conversionOfferStatus:   'sent',
+        conversionStage:         'offer_sent',
+        conversionPath:          path,
+        lastSalesMessagePreview: msg.slice(0, 300),
+        conversionAttempts:      { increment: 1 },
+        // Brain state
+        conversationMode:        modeByPath[path] || 'product_reco_active',
+        lastBotIntent:           `auto_${path}`,
+        lastMeaningfulBotAt:     now2,
+      }
+      if (path === 'product_offer') {
         offerUpdate.productOfferSent   = true
         offerUpdate.productOfferSentAt = now2
         offerUpdate.productOfferStatus = 'sent'
+        offerUpdate.productOfferCount  = { increment: 1 }
       } else if (path === 'consult_offer') {
         offerUpdate.consultOfferSent   = true
         offerUpdate.consultOfferSentAt = now2
         offerUpdate.consultOfferStatus = 'sent'
+        offerUpdate.consultOfferCount  = { increment: 1 }
       } else if (path === 'academy_offer') {
         offerUpdate.academyOfferSent   = true
         offerUpdate.academyOfferSentAt = now2
         offerUpdate.academyOfferStatus = 'sent'
+        offerUpdate.academyPitchCount  = { increment: 1 }
       }
 
       await prisma.lead.update({ where: { id: lead.id }, data: offerUpdate })
