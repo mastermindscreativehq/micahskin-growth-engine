@@ -1,9 +1,10 @@
 const prisma = require('../lib/prisma')
 const { sendTelegramToUser, sendTelegramMessage } = require('../services/telegramService')
 const { handleTelegramMessage } = require('../services/telegramSessionService')
-const { isPostDiagnosisLead, handlePostDiagnosisReply } = require('../services/telegramFollowUpService')
+const { isPostDiagnosisLead, handlePostDiagnosisReply, classifyFollowUpIntent } = require('../services/telegramFollowUpService')
 const { processPaidEnrollment } = require('../services/academyOnboardingService')
 const { handlePremiumIntakeReply } = require('../services/premiumDeliveryService')
+const { maybeTriggerAutomaticConversion } = require('../services/conversionEngineService')
 
 // ── Webhook handler ───────────────────────────────────────────────────────────
 
@@ -69,8 +70,16 @@ async function handleWebhook(req, res) {
       where: { telegramChatId: chatId },
     })
     if (lead && isPostDiagnosisLead(lead)) {
+      // Classify intent once (pure function — re-used by both handler and conversion engine)
+      const followUpIntent = classifyFollowUpIntent(text)
+
       const reply = await handlePostDiagnosisReply(lead, text)
       if (reply) await sendTelegramToUser(chatId, reply)
+
+      // Queue automatic conversion offer (non-blocking; cooldown + duplicate guards inside)
+      maybeTriggerAutomaticConversion(lead, followUpIntent).catch(err =>
+        console.error('[ConversionEngine] auto trigger error:', err.message)
+      )
       return
     }
 

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//mnt/c/Users/user/micahskin-growth-engine/**)",
+      "Bash(npx prisma *)",
+      "Read(//mnt/c/Users/**)",
+      "Read(//c/Users/user//**)",
+      "Bash(wslpath \"C:\\\\\\\\Users\\\\\\\\user\\\\\\\\micahskin-growth-engine\\\\\\\\backend\")"
+    ]
+  }
+}

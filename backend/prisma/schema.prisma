@@ -131,6 +131,35 @@ model Lead {
   followUpIntent    String?   // progress_positive | no_change_yet | irritation | confused_about_routine | has_not_started | needs_product_help | wants_human_support | general_update
   followUpIntentAt  DateTime? // when the follow-up intent was last detected
 
+  // ── Conversion Trigger Layer (Phase 21) ──────────────────────────────────────
+  conversionStage          String?   // none | interested | offer_sent | payment_pending | converted | declined
+  conversionPath           String?   // product_offer | consult_offer | academy_offer | no_offer
+  lastConversionIntent     String?   // follow-up intent that triggered the last conversion action
+  lastConversionTriggerAt  DateTime? // when the last auto conversion was triggered
+  conversionAttempts       Int       @default(0)
+
+  // Manual CRM action tracking
+  lastManualActionType     String?   // product_offer | consult_offer | academy_offer | custom_message | resend_payment
+  lastManualActionAt       DateTime?
+  lastManualActionBy       String?   // admin name who triggered it
+  manualOverrideNote       String?
+
+  // Product offer state (distinct from productRecoSent — this is the explicit purchase CTA)
+  productOfferSent         Boolean   @default(false)
+  productOfferSentAt       DateTime?
+  productOfferStatus       String?   // pending | sent | skipped | failed | blocked
+
+  // Queued reply-triggered conversion offer (picked up by action engine)
+  conversionOfferSendAfter DateTime?
+  conversionOfferSent      Boolean   @default(false)
+  conversionOfferSentAt    DateTime?
+  conversionOfferStatus    String?   // pending | sent | skipped | failed | blocked
+  conversionOfferPath      String?   // product_offer | consult_offer | academy_offer
+
+  // Payment + message tracking
+  paymentLinkLastSentAt    DateTime?
+  lastSalesMessagePreview  String?
+
   utmSource      String?
   replies        Reply[]
   utmMedium      String?

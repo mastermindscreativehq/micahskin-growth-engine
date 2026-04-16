@@ -26,6 +26,7 @@
 
 const prisma = require('../lib/prisma')
 const { sendTelegramToUser } = require('./telegramService')
+const { processQueuedConversionOffers } = require('./conversionEngineService')
 
 // Configurable via env var — keep in sync with diagnosisEngineService threshold
 const ACADEMY_FIT_THRESHOLD = parseInt(process.env.ACADEMY_FIT_THRESHOLD || '65', 10)
@@ -907,6 +908,7 @@ async function runPendingLeadActions() {
     await _processAcademyOffers()
     await _processConsultOffers()
     await _processCourseOffers()
+    await processQueuedConversionOffers()
   } catch (err) {
     console.error('[ActionEngine] Unhandled error in runPendingLeadActions:', err.message)
   }

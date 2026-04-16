@@ -258,6 +258,67 @@ export async function sendFollowUp(id, num) {
   return data
 }
 
+// ── Conversion Engine — manual CRM actions ───────────────────────────────────
+
+/**
+ * Send a conversion offer immediately from the CRM.
+ * actionType: 'product_offer' | 'consult_offer' | 'academy_offer' | 'resend_payment'
+ */
+export async function sendManualConversionAction(leadId, actionType, adminName = 'admin', note = '') {
+  const res = await fetch(`${BASE_URL}/api/conversion/manual-action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ leadId, actionType, adminName, note }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
+
+/**
+ * Resend the academy payment link to a lead via Telegram.
+ */
+export async function resendConversionPaymentLink(leadId, adminName = 'admin', note = '') {
+  const res = await fetch(`${BASE_URL}/api/conversion/resend-payment-link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ leadId, adminName, note }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
+
+/**
+ * Send a custom operator-written conversion message to a lead immediately.
+ */
+export async function sendConversionCustomMessage(leadId, message, adminName = 'admin', note = '') {
+  const res = await fetch(`${BASE_URL}/api/conversion/custom-message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ leadId, message, adminName, note }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
+
+/**
+ * Fetch a context-aware message draft for the custom message modal.
+ * Returns { draft: string } pre-filled with lead diagnosis/product context.
+ */
+export async function fetchConversionContext(leadId) {
+  const res = await fetch(`${BASE_URL}/api/conversion/context/${encodeURIComponent(leadId)}`, {
+    credentials: 'include',
+  })
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}
+
 // ── Scraping / Import ─────────────────────────────────────────────────────────
 
 /**

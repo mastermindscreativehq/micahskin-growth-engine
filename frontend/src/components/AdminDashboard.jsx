@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   fetchStats,
   fetchLeads,
@@ -15,6 +15,10 @@ import {
   runInstagramComments,
   fetchCommentTargetStats,
   importInstagramCommentDataset,
+  sendManualConversionAction,
+  resendConversionPaymentLink,
+  sendConversionCustomMessage,
+  fetchConversionContext,
 } from '../api/index.js'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -963,6 +967,11 @@ function LeadsTab() {
                           </div>
                         )}
 
+                        {/* Conversion Trigger Panel — manual controls + auto-conversion state */}
+                        {(lead.telegramStarted || lead.diagnosisSent || lead.conversionStage) && (
+                          <ConversionTriggerPanel lead={lead} onRefresh={load} />
+                        )}
+
                         {/* Action Engine Status Panel */}
                         {(lead.diagnosisStatus || lead.checkInStatus || lead.productRecoStatus ||
                           lead.academyOfferStatus || lead.lastActionType || lead.actionBlockedReason ||
@@ -1204,6 +1213,296 @@ function LeadsTab() {
         total={result.total}
         onPage={setPage}
       />
+    </div>
+  )
+}
+
+// ── Conversion Trigger Panel ─────────────────────────────────────────────────
+
+const CONVERSION_STAGE_STYLE = {
+  none:            'bg-gray-100 text-gray-500',
+  interested:      'bg-blue-100 text-blue-700',
+  offer_sent:      'bg-amber-100 text-amber-700',
+  payment_pending: 'bg-orange-100 text-orange-700',
+  converted:       'bg-green-100 text-green-700',
+  declined:        'bg-red-100 text-red-500',
+}
+
+const CONVERSION_PATH_STYLE = {
+  product_offer: 'bg-teal-100 text-teal-700',
+  consult_offer: 'bg-purple-100 text-purple-700',
+  academy_offer: 'bg-violet-100 text-violet-700',
+  no_offer:      'bg-gray-100 text-gray-500',
+}
+
+/**
+ * Panel showing conversion state + manual action buttons for a lead.
+ * Accepts an onRefresh callback so the lead list reloads after each action.
+ */
+function ConversionTriggerPanel({ lead, onRefresh }) {
+  const [sending, setSending]         = useState(null)       // action key being sent
+  const [toast, setToast]             = useState(null)       // { type: 'ok'|'err', msg: string }
+  const [showCustomModal, setShowCustomModal] = useState(false)
+
+  function showToast(type, msg) {
+    setToast({ type, msg })
+    setTimeout(() => setToast(null), 4000)
+  }
+
+  async function handleAction(actionType) {
+    setSending(actionType)
+    try {
+      let result
+      if (actionType === 'resend_payment') {
+        result = await resendConversionPaymentLink(lead.id, 'admin')
+      } else {
+        result = await sendManualConversionAction(lead.id, actionType, 'admin')
+      }
+      showToast('ok', `Sent! Preview: ${result.sentPreview?.slice(0, 80) || '—'}`)
+      onRefresh()
+    } catch (err) {
+      showToast('err', err?.message || 'Send failed')
+    } finally {
+      setSending(null)
+    }
+  }
+
+  const hasConversionData =
+    lead.conversionStage ||
+    lead.conversionPath ||
+    lead.lastConversionIntent ||
+    lead.productOfferSent ||
+    lead.productOfferStatus ||
+    lead.conversionOfferSendAfter ||
+    lead.lastManualActionType
+
+  return (
+    <div className="rounded-lg border border-rose-100 bg-rose-50/30 px-3 py-2.5 space-y-2.5">
+      {/* Header */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-semibold text-rose-700 uppercase tracking-wide">Conversion Trigger</span>
+
+        {lead.conversionStage && (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize ${CONVERSION_STAGE_STYLE[lead.conversionStage] || 'bg-gray-100 text-gray-500'}`}>
+            {lead.conversionStage.replace(/_/g, ' ')}
+          </span>
+        )}
+        {lead.conversionPath && (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${CONVERSION_PATH_STYLE[lead.conversionPath] || 'bg-gray-100 text-gray-500'}`}>
+            {lead.conversionPath.replace(/_/g, ' ')}
+          </span>
+        )}
+        {lead.conversionAttempts > 0 && (
+          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
+            {lead.conversionAttempts} attempt{lead.conversionAttempts !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+
+      {/* State grid */}
+      {hasConversionData && (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+          {[
+            { label: 'Last Intent',    value: lead.lastConversionIntent?.replace(/_/g, ' ') },
+            { label: 'Triggered',      value: lead.lastConversionTriggerAt ? fmtDateTime(lead.lastConversionTriggerAt) : null },
+            { label: 'Manual Action',  value: lead.lastManualActionType?.replace(/_/g, ' ') },
+            { label: 'Manual By',      value: lead.lastManualActionBy },
+            { label: 'Manual At',      value: lead.lastManualActionAt ? fmtDateTime(lead.lastManualActionAt) : null },
+            { label: 'Queued Offer',   value: lead.conversionOfferPath ? `${lead.conversionOfferPath.replace(/_/g, ' ')} (${lead.conversionOfferStatus || 'pending'})` : null },
+            { label: 'Queued At',      value: lead.conversionOfferSendAfter ? fmtDateTime(lead.conversionOfferSendAfter) : null },
+          ].filter(f => f.value).map(({ label, value }) => (
+            <div key={label} className="flex gap-1.5">
+              <span className="shrink-0 font-medium text-gray-400 w-24">{label}:</span>
+              <span className="text-gray-700 capitalize">{value}</span>
+            </div>
+          ))}
+
+          {/* Offer send statuses */}
+          {[
+            { label: 'Product Offer', status: lead.productOfferStatus || (lead.productOfferSent ? 'sent' : null), sentAt: lead.productOfferSentAt },
+          ].filter(s => s.status).map(({ label, status, sentAt }) => {
+            const cm = { sent: 'text-green-700 bg-green-100', failed: 'text-red-600 bg-red-100', blocked: 'text-amber-700 bg-amber-100', pending: 'text-blue-700 bg-blue-100', skipped: 'text-gray-500 bg-gray-100' }
+            return (
+              <div key={label} className="flex items-center gap-1.5">
+                <span className="shrink-0 text-gray-400 w-24">{label}:</span>
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${cm[status] || 'text-gray-500 bg-gray-100'}`}>
+                  {status}{sentAt ? ' ✓' : ''}
+                </span>
+                {sentAt && <span className="text-gray-400 text-[10px]">{fmtDateTime(sentAt)}</span>}
+              </div>
+            )
+          })}
+
+          {/* Manual override note */}
+          {lead.manualOverrideNote && (
+            <div className="col-span-2 sm:col-span-3 flex gap-1.5 pt-0.5">
+              <span className="shrink-0 font-medium text-gray-400 w-24">Note:</span>
+              <span className="text-gray-600 italic">{lead.manualOverrideNote.slice(0, 120)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className={`rounded px-3 py-1.5 text-xs font-medium ${toast.type === 'ok' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+          {toast.type === 'ok' ? '✓ ' : '✗ '}{toast.msg}
+        </div>
+      )}
+
+      {/* Manual action buttons */}
+      <div className="flex flex-wrap gap-1.5" onClick={e => e.stopPropagation()}>
+        <span className="text-[10px] font-semibold text-rose-600 uppercase tracking-wide self-center">Manual Send:</span>
+
+        {[
+          { key: 'product_offer',  label: 'Product Offer',  color: 'border-teal-300 text-teal-700 hover:bg-teal-50',     sentFlag: lead.productOfferSent },
+          { key: 'consult_offer',  label: 'Consult Offer',  color: 'border-purple-300 text-purple-700 hover:bg-purple-50', sentFlag: lead.consultOfferSent },
+          { key: 'academy_offer',  label: 'Academy Offer',  color: 'border-violet-300 text-violet-700 hover:bg-violet-50', sentFlag: lead.academyOfferSent },
+          { key: 'resend_payment', label: 'Resend Payment', color: 'border-orange-300 text-orange-700 hover:bg-orange-50', sentFlag: false },
+        ].map(({ key, label, color, sentFlag }) => {
+          const isSending = sending === key
+          return (
+            <button
+              key={key}
+              disabled={isSending || !lead.telegramChatId}
+              onClick={() => handleAction(key)}
+              title={
+                !lead.telegramChatId ? 'Telegram not connected' :
+                sentFlag ? `Already sent once — click to resend` :
+                `Send ${label} now via Telegram`
+              }
+              className={`rounded border px-2 py-0.5 text-[11px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                sentFlag ? `${color} opacity-70` : color
+              }`}
+            >
+              {isSending ? '…' : sentFlag ? `↻ ${label}` : label}
+            </button>
+          )
+        })}
+
+        {/* Custom message button */}
+        <button
+          disabled={!lead.telegramChatId}
+          onClick={e => { e.stopPropagation(); setShowCustomModal(true) }}
+          title={!lead.telegramChatId ? 'Telegram not connected' : 'Write and send a custom message'}
+          className="rounded border border-gray-300 text-gray-600 px-2 py-0.5 text-[11px] font-medium hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Custom Message
+        </button>
+      </div>
+
+      {/* Custom message modal */}
+      {showCustomModal && (
+        <CustomMessageModal
+          lead={lead}
+          onClose={() => setShowCustomModal(false)}
+          onSent={(preview) => {
+            showToast('ok', `Sent! Preview: ${preview?.slice(0, 80) || '—'}`)
+            setShowCustomModal(false)
+            onRefresh()
+          }}
+          onError={(msg) => showToast('err', msg)}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Modal for composing and sending a custom conversion message.
+ * Pre-fills the textarea with a context-aware draft fetched from the backend.
+ */
+function CustomMessageModal({ lead, onClose, onSent, onError }) {
+  const [draft, setDraft]       = useState('')
+  const [loading, setLoading]   = useState(true)
+  const [sending, setSending]   = useState(false)
+  const textareaRef             = useRef(null)
+
+  useEffect(() => {
+    fetchConversionContext(lead.id)
+      .then(data => { setDraft(data.draft || ''); setLoading(false) })
+      .catch(() => {
+        // Fallback draft if fetch fails
+        setDraft(`Hi ${lead.fullName.split(' ')[0]},\n\nFollowing up on your skincare journey — let me know if you have any questions or need guidance.`)
+        setLoading(false)
+      })
+  }, [lead.id])
+
+  useEffect(() => {
+    if (!loading && textareaRef.current) textareaRef.current.focus()
+  }, [loading])
+
+  async function handleSend() {
+    if (!draft.trim()) return
+    setSending(true)
+    try {
+      const result = await sendConversionCustomMessage(lead.id, draft, 'admin')
+      onSent(result.sentPreview)
+    } catch (err) {
+      onError(err?.message || 'Send failed')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="w-full max-w-lg rounded-xl bg-white shadow-xl" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+          <div>
+            <p className="font-semibold text-gray-800 text-sm">Send Custom Message</p>
+            <p className="text-xs text-gray-400">{lead.fullName} · {lead.telegramChatId ? `Telegram ${lead.telegramChatId}` : 'No channel'}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+        </div>
+
+        {/* Context badge */}
+        {(lead.primaryConcern || lead.followUpIntent || lead.diagnosisSummary) && (
+          <div className="bg-gray-50 border-b border-gray-100 px-4 py-2 flex flex-wrap gap-2 text-xs text-gray-500">
+            {lead.primaryConcern && <span className="rounded bg-indigo-100 text-indigo-700 px-1.5 py-0.5 font-medium capitalize">{lead.primaryConcern.replace(/_/g, ' ')}</span>}
+            {lead.followUpIntent && <span className="rounded bg-amber-100 text-amber-700 px-1.5 py-0.5 font-medium capitalize">Intent: {lead.followUpIntent.replace(/_/g, ' ')}</span>}
+            {lead.urgencyLevel && <span className={`rounded px-1.5 py-0.5 font-medium capitalize ${lead.urgencyLevel === 'high' ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'}`}>Urgency: {lead.urgencyLevel}</span>}
+          </div>
+        )}
+
+        {/* Textarea */}
+        <div className="px-4 py-3">
+          {loading ? (
+            <div className="text-center text-xs text-gray-400 py-6">Loading context draft…</div>
+          ) : (
+            <textarea
+              ref={textareaRef}
+              rows={8}
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-rose-300 focus:ring-1 focus:ring-rose-100 resize-none font-mono"
+              placeholder="Write your message…"
+            />
+          )}
+          <p className="text-[10px] text-gray-400 mt-1">{draft.length} chars · Sent via Telegram</p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-between border-t border-gray-100 px-4 py-3 gap-2">
+          <button
+            onClick={onClose}
+            className="rounded border border-gray-200 px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            disabled={sending || loading || !draft.trim() || !lead.telegramChatId}
+            onClick={handleSend}
+            className="rounded bg-rose-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {sending ? 'Sending…' : 'Send Message'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
