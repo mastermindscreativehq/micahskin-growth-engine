@@ -1,5 +1,29 @@
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
 
+// ── Protected fetch helper ────────────────────────────────────────────────────
+//
+// Wraps fetch for admin-only routes that require the session cookie.
+// When the server returns 401 (session expired or cleared by a backend restart),
+// it dispatches a browser-level 'session:expired' event so App.jsx can
+// immediately show the login form — preventing the confusing "stale CRM" state
+// where the UI looks loaded but every action silently fails with Unauthorised.
+
+function _dispatchSessionExpired() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('session:expired'))
+  }
+}
+
+async function protectedFetch(url, options = {}) {
+  const res = await fetch(url, { credentials: 'include', ...options })
+  const data = await res.json()
+  if (res.status === 401) {
+    _dispatchSessionExpired()
+  }
+  if (!res.ok) throw data
+  return data
+}
+
 // ── Public form submissions ───────────────────────────────────────────────────
 
 /**
@@ -31,12 +55,12 @@ export async function submitAcademyRegistration(formData) {
 }
 
 // ── Admin auth ────────────────────────────────────────────────────────────────
-// All auth calls use credentials: 'include' so the browser sends and receives
-// the HTTP-only session cookie set by the backend.
+// Auth calls use raw fetch (not protectedFetch) — 401 here means
+// "wrong password" or "not logged in yet", handled explicitly by the caller.
 
 /**
  * Attempt admin login. Sends password to the server — never hardcode credentials here.
- * On success, the server sets an HTTP-only session cookie valid for 8 hours.
+ * On success, the server sets an HTTP-only session cookie valid for 7 days.
  */
 export async function loginAdmin(password) {
   const res = await fetch(`${BASE_URL}/api/auth/login`, {
@@ -78,8 +102,10 @@ export async function checkAdminSession() {
 }
 
 // ── CRM / Admin data ─────────────────────────────────────────────────────────
-// All CRM calls include credentials: 'include' so the session cookie is sent
-// on every request and the backend requireAuth middleware can verify it.
+// All CRM calls go through protectedFetch, which adds credentials: 'include'
+// and fires 'session:expired' if the server returns 401 (session was cleared
+// by a backend restart or redeploy). App.jsx listens for that event and
+// redirects to the login form automatically.
 
 function buildQuery(params) {
   const clean = Object.fromEntries(
@@ -90,54 +116,31 @@ function buildQuery(params) {
 }
 
 export async function fetchLeads(params = {}) {
-  const res = await fetch(`${BASE_URL}/api/leads${buildQuery(params)}`, {
-    credentials: 'include',
-  })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
+  return protectedFetch(`${BASE_URL}/api/leads${buildQuery(params)}`)
 }
 
 export async function fetchRegistrations(params = {}) {
-  const res = await fetch(`${BASE_URL}/api/academy/registrations${buildQuery(params)}`, {
-    credentials: 'include',
-  })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
+  return protectedFetch(`${BASE_URL}/api/academy/registrations${buildQuery(params)}`)
 }
 
 export async function fetchStats() {
-  const res = await fetch(`${BASE_URL}/api/stats`, {
-    credentials: 'include',
-  })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
+  return protectedFetch(`${BASE_URL}/api/stats`)
 }
 
 export async function updateLeadStatus(id, status) {
-  const res = await fetch(`${BASE_URL}/api/leads/${id}/status`, {
+  return protectedFetch(`${BASE_URL}/api/leads/${id}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ status }),
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 export async function updateRegistrationStatus(id, status) {
-  const res = await fetch(`${BASE_URL}/api/academy/registrations/${id}/status`, {
+  return protectedFetch(`${BASE_URL}/api/academy/registrations/${id}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ status }),
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 /**
@@ -146,15 +149,11 @@ export async function updateRegistrationStatus(id, status) {
  *           implementationCallBooked, deliveryCompletedAt, implementationStatus }
  */
 export async function updateImplementationDelivery(id, fields) {
-  const res = await fetch(`${BASE_URL}/api/academy/registrations/${id}/delivery`, {
+  return protectedFetch(`${BASE_URL}/api/academy/registrations/${id}/delivery`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(fields),
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 /**
@@ -163,15 +162,11 @@ export async function updateImplementationDelivery(id, fields) {
  *           taskBuildStarted, taskDeliveryComplete }
  */
 export async function updateImplementationTasks(id, fields) {
-  const res = await fetch(`${BASE_URL}/api/academy/registrations/${id}/tasks`, {
+  return protectedFetch(`${BASE_URL}/api/academy/registrations/${id}/tasks`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify(fields),
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 // ── Academy Access Gate ───────────────────────────────────────────────────────
@@ -236,26 +231,18 @@ export async function trackConversion(leadId, type, value) {
  * Execute the initial reply send for a lead via Telegram relay.
  */
 export async function sendInitialReply(id) {
-  const res = await fetch(`${BASE_URL}/api/leads/${id}/send-initial-reply`, {
+  return protectedFetch(`${BASE_URL}/api/leads/${id}/send-initial-reply`, {
     method: 'POST',
-    credentials: 'include',
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 /**
  * Execute a follow-up send (1, 2, or 3) for a lead via Telegram relay.
  */
 export async function sendFollowUp(id, num) {
-  const res = await fetch(`${BASE_URL}/api/leads/${id}/send-followup-${num}`, {
+  return protectedFetch(`${BASE_URL}/api/leads/${id}/send-followup-${num}`, {
     method: 'POST',
-    credentials: 'include',
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 // ── Conversion Engine — manual CRM actions ───────────────────────────────────
@@ -265,45 +252,33 @@ export async function sendFollowUp(id, num) {
  * actionType: 'product_offer' | 'consult_offer' | 'academy_offer' | 'resend_payment'
  */
 export async function sendManualConversionAction(leadId, actionType, adminName = 'admin', note = '') {
-  const res = await fetch(`${BASE_URL}/api/conversion/manual-action`, {
+  return protectedFetch(`${BASE_URL}/api/conversion/manual-action`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ leadId, actionType, adminName, note }),
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 /**
  * Resend the academy payment link to a lead via Telegram.
  */
 export async function resendConversionPaymentLink(leadId, adminName = 'admin', note = '') {
-  const res = await fetch(`${BASE_URL}/api/conversion/resend-payment-link`, {
+  return protectedFetch(`${BASE_URL}/api/conversion/resend-payment-link`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ leadId, adminName, note }),
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 /**
  * Send a custom operator-written conversion message to a lead immediately.
  */
 export async function sendConversionCustomMessage(leadId, message, adminName = 'admin', note = '') {
-  const res = await fetch(`${BASE_URL}/api/conversion/custom-message`, {
+  return protectedFetch(`${BASE_URL}/api/conversion/custom-message`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ leadId, message, adminName, note }),
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 /**
@@ -311,12 +286,7 @@ export async function sendConversionCustomMessage(leadId, message, adminName = '
  * Returns { draft: string } pre-filled with lead diagnosis/product context.
  */
 export async function fetchConversionContext(leadId) {
-  const res = await fetch(`${BASE_URL}/api/conversion/context/${encodeURIComponent(leadId)}`, {
-    credentials: 'include',
-  })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
+  return protectedFetch(`${BASE_URL}/api/conversion/context/${encodeURIComponent(leadId)}`)
 }
 
 // ── Scraping / Import ─────────────────────────────────────────────────────────
@@ -329,15 +299,11 @@ export async function fetchConversionContext(leadId) {
  *   droppedMissingText, droppedInvalidShape, errors }
  */
 export async function importInstagramDataset(datasetId, platform = 'instagram') {
-  const res = await fetch(`${BASE_URL}/api/scraping/apify/import-instagram`, {
+  return protectedFetch(`${BASE_URL}/api/scraping/apify/import-instagram`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ datasetId, platform }),
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 /**
@@ -358,15 +324,11 @@ export async function fetchScrapingDebugAuth() {
  *   newTargetsSaved, duplicatesSkipped, invalidSkipped }
  */
 export async function prepareInstagramComments(datasetId) {
-  const res = await fetch(`${BASE_URL}/api/scraping/apify/prepare-instagram-comments`, {
+  return protectedFetch(`${BASE_URL}/api/scraping/apify/prepare-instagram-comments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ datasetId }),
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 /**
@@ -375,15 +337,11 @@ export async function prepareInstagramComments(datasetId) {
  *   apifyRunStatus }
  */
 export async function runInstagramComments(limit = 50) {
-  const res = await fetch(`${BASE_URL}/api/scraping/apify/run-instagram-comments`, {
+  return protectedFetch(`${BASE_URL}/api/scraping/apify/run-instagram-comments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ limit }),
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }
 
 /**
@@ -391,12 +349,7 @@ export async function runInstagramComments(limit = 50) {
  * Returns: { pending, running, done, failed, total }
  */
 export async function fetchCommentTargetStats() {
-  const res = await fetch(`${BASE_URL}/api/scraping/comment-targets/stats`, {
-    credentials: 'include',
-  })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
+  return protectedFetch(`${BASE_URL}/api/scraping/comment-targets/stats`)
 }
 
 /**
@@ -404,13 +357,9 @@ export async function fetchCommentTargetStats() {
  * Returns: { rawItems, normalizedCount, skippedInvalid, inserted, duplicates }
  */
 export async function importInstagramCommentDataset(datasetId) {
-  const res = await fetch(`${BASE_URL}/api/scraping/apify/import-instagram-comments`, {
+  return protectedFetch(`${BASE_URL}/api/scraping/apify/import-instagram-comments`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ datasetId }),
   })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
 }

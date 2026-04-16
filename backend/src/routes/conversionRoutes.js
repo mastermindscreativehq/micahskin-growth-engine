@@ -1,6 +1,7 @@
 'use strict'
 
 const express    = require('express')
+const prisma     = require('../lib/prisma')
 const { trackEvent } = require('../services/conversionService')
 const {
   sendManualConversionAction,
@@ -178,7 +179,6 @@ router.post('/custom-message', requireAuth, async (req, res) => {
  */
 router.get('/context/:leadId', requireAuth, async (req, res) => {
   try {
-    const prisma = require('../lib/prisma')
     const lead = await prisma.lead.findUnique({ where: { id: req.params.leadId } })
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' })

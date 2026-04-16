@@ -130,6 +130,15 @@ function AdminView() {
       .catch(() => setAuthed(false))
   }, [])
 
+  // When any protected API call returns 401 (e.g. backend restarted and cleared
+  // the in-memory session store), automatically drop back to the login form so
+  // the user isn't stuck on a stale CRM with silent failures.
+  useEffect(() => {
+    function onSessionExpired() { setAuthed(false) }
+    window.addEventListener('session:expired', onSessionExpired)
+    return () => window.removeEventListener('session:expired', onSessionExpired)
+  }, [])
+
   async function handleLogout() {
     try {
       await logoutAdmin()
