@@ -13,10 +13,18 @@ const router = Router()
  * REQUIRED ENV VAR: ADMIN_PASSWORD — set this in backend/.env
  */
 router.post('/login', (req, res) => {
+  // DEBUG — safe to leave in place; never logs the actual password value
+  console.log('[auth/login] body keys:', Object.keys(req.body || {}))
+  console.log('[auth/login] ADMIN_PASSWORD set:', !!process.env.ADMIN_PASSWORD)
+  if (process.env.ADMIN_PASSWORD) {
+    console.log('[auth/login] ADMIN_PASSWORD length:', process.env.ADMIN_PASSWORD.length)
+  }
+
   const { password } = req.body
 
-  // REQUIRED: set ADMIN_PASSWORD in backend/.env before using this endpoint
-  const adminPassword = process.env.ADMIN_PASSWORD
+  // REQUIRED: set ADMIN_PASSWORD in backend/.env before using this endpoint.
+  // Trim guards against Railway env vars saved with accidental leading/trailing whitespace.
+  const adminPassword = (process.env.ADMIN_PASSWORD || '').trim()
 
   if (!adminPassword) {
     console.error('❌ ADMIN_PASSWORD env var is not set — admin login is disabled')
@@ -24,6 +32,7 @@ router.post('/login', (req, res) => {
   }
 
   if (!password || password !== adminPassword) {
+    console.warn('[auth/login] password mismatch — received length:', (password || '').length)
     return res.status(401).json({ success: false, message: 'Invalid password' })
   }
 

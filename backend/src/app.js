@@ -28,11 +28,13 @@ app.set('trust proxy', 1)
 
 // CORS — credentials: true is required so the browser sends the session cookie
 // on cross-origin requests from the frontend.
+// Production: set ALLOWED_ORIGINS=https://your-vercel-domain.vercel.app in Railway.
+// Local dev: set ALLOWED_ORIGINS=http://localhost:5173 in backend/.env.
+const corsOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173')
+  .split(',').map(o => o.trim()).filter(Boolean)
+
 app.use(cors({
-  origin: [
-    'https://micahskin-growth-engine.vercel.app',
-    'http://localhost:5173',
-  ],
+  origin: corsOrigins,
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   credentials: true,
 }))
@@ -51,6 +53,12 @@ app.use(express.json({
 //
 // NOTE: This uses the default in-memory store, which is fine for a single-process
 // local/small-server setup. For multi-process or Redis-backed prod, swap the store.
+// Cross-site setup: Vercel frontend (vercel.app) → Railway backend (railway.app).
+// Browsers refuse to forward SameSite=Lax cookies on cross-site fetch/XHR calls.
+// SameSite=None + Secure=true is required. Default to production-safe unless
+// explicitly in local development, so missing NODE_ENV in Railway doesn't break login.
+const isLocalDev = process.env.NODE_ENV === 'development'
+
 app.use(session({
   name: 'sid',
   // REQUIRED: set SESSION_SECRET in backend/.env
@@ -58,13 +66,10 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    httpOnly: true,            // Not accessible from JavaScript (prevents XSS theft)
-    // Cross-site setup: Vercel frontend (vercel.app) → Railway backend (railway.app).
-    // Browsers refuse to forward SameSite=Lax cookies on cross-site fetch/XHR calls.
-    // SameSite=None + Secure=true is required so the session cookie reaches the backend.
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 1000 * 60 * 60 * 24 * 7, // Session lasts 7 days
+    httpOnly: true,
+    secure: !isLocalDev,
+    sameSite: isLocalDev ? 'lax' : 'none',
+    maxAge: 1000 * 60 * 60 * 24 * 7,
   },
 }))
 
