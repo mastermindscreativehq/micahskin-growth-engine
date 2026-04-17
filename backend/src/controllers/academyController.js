@@ -1,4 +1,5 @@
 const academyService = require('../services/academyService')
+const academySyncService = require('../services/academySyncService')
 const prisma = require('../lib/prisma')
 const { buildAcademyTelegramStartLink } = require('../services/telegramService')
 
@@ -155,6 +156,28 @@ async function updateImplementationTasks(req, res) {
   }
 }
 
+/**
+ * POST /api/academy/sync
+ * Called by n8n when academy events occur (joined, lesson progress, CTA, inactive).
+ * Auth: x-sync-secret header matched against ACADEMY_SYNC_SECRET env var.
+ */
+async function syncAcademyEvent(req, res) {
+  try {
+    const { telegram_id, invite_code, event_type, phone, lesson_id } = req.body
+    const result = await academySyncService.syncAcademyEvent({
+      telegram_id,
+      invite_code,
+      event_type,
+      phone,
+      lesson_id,
+    })
+    return res.json({ success: true, data: result })
+  } catch (err) {
+    const status = err.status || 500
+    return res.status(status).json({ success: false, message: err.message })
+  }
+}
+
 module.exports = {
   createRegistration,
   listRegistrations,
@@ -162,4 +185,5 @@ module.exports = {
   getAcademyAccess,
   updateImplementationDelivery,
   updateImplementationTasks,
+  syncAcademyEvent,
 }

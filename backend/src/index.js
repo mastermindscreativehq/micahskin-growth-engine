@@ -7,6 +7,7 @@ const { startAutoTrigger } = require('./services/autoTriggerService')
 const { startOrchestrationPoller } = require('./services/orchestrationService')
 const { startActionEngine } = require('./services/actionEngineService')
 const { startAcademyOnboarding } = require('./services/academyOnboardingService')
+const { startAcademyExperience } = require('./services/academyExperienceService')
 
 const PORT = process.env.PORT || 4000
 
@@ -34,6 +35,8 @@ async function start() {
     startActionEngine()
     // Phase 19 — academy onboarding: post-payment CRM automation + onboarding delivery
     startAcademyOnboarding()
+    // Phase 24 — academy experience: lesson drip delivery, stuck-member nudges
+    startAcademyExperience()
   })
 }
 

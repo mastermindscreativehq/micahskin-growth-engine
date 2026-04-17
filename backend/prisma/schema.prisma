@@ -175,6 +175,13 @@ model Lead {
   paymentLinkLastSentAt    DateTime?
   lastSalesMessagePreview  String?
 
+  // ── Academy Access Sync (Phase 23) ──────────────────────────────────────────
+  academyAccess          Boolean   @default(false) // true once lead has been granted academy access
+  academyInviteCode      String?   // invite code used when joining the academy
+  academyJoinedAt        DateTime? // when lead first joined the academy
+  academyProgressStage   String?   // joined | lesson_started | lesson_completed | cta_clicked | inactive
+  academyEngagementScore Int?      // 0–100 post-join activity score (separate from pre-join academyFitScore)
+
   utmSource      String?
   replies        Reply[]
   utmMedium      String?
@@ -264,6 +271,16 @@ model AcademyRegistration {
   premiumOnboardingSent     Boolean   @default(false) // atomic claim — prevents duplicate sends
   premiumOnboardingSentAt   DateTime?
   premiumIntakeStage        String?   // intake_brand_name | intake_business_type | intake_business_stage | intake_products_services | intake_sales_channel | intake_top_problem | intake_main_goal | intake_lead_gen | intake_automation | intake_content | intake_support_method | done
+
+  // ── Academy Lesson Progress (Phase 24: Experience Layer) ─────────────────────
+  academyLessonStatus     String?   // active=lesson sent | lesson_unlocked=complete awaiting next | stuck=no reply 48h | graduated
+  currentLesson           Int       @default(0) // 0=not started, 1–5=active lesson number
+  lessonsCompleted        Int       @default(0) // cumulative completed count
+  lastLessonSentAt        DateTime? // when the current lesson was delivered
+  lastLessonCompletedAt   DateTime? // when the member last completed a lesson
+  nextLessonUnlockAt      DateTime? // drip timer — when next lesson becomes available
+  academyCompletionAt     DateTime? // when the final lesson was completed (graduation)
+  lessonCtaStatus         String?   // none | product_offered | consult_offered | graduate_offered
 
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

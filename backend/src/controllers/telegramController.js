@@ -6,6 +6,7 @@ const { processPaidEnrollment } = require('../services/academyOnboardingService'
 const { handlePremiumIntakeReply } = require('../services/premiumDeliveryService')
 const { maybeTriggerAutomaticConversion } = require('../services/conversionEngineService')
 const { handleInboundReply, classifyInboundIntent } = require('../services/conversationBrainService')
+const { handleAcademyMemberReply } = require('../services/academyExperienceService')
 
 // Intents where we should NOT queue an automatic conversion offer
 // (stop/thanks/greeting are terminal or noise — conversion engine shouldn't act on them)
@@ -113,22 +114,43 @@ async function handleWebhook(req, res) {
 // ── Academy reply handler ─────────────────────────────────────────────────────
 
 /**
- * Simple two-step state machine for academy registrant replies.
+ * Routes a message from an AcademyRegistration member.
  *
- *   connected    → first reply  → asked_goal
- *   asked_goal   → next reply   → goal_received
- *   anything else → no auto-response
+ * Three-tier routing — strict priority order:
+ *
+ *   Tier 1 (premium): implementationClient === true
+ *     → premium structured intake flow (handlePremiumIntakeReply)
+ *     → never touches lesson engine
+ *
+ *   Tier 2 (enrolled basic member): academyStatus === 'enrolled' | 'graduated'
+ *     → academy lesson experience (handleAcademyMemberReply)
+ *     → hard gate: must never fall through to public lead/intake flow
+ *
+ *   Tier 3 (pre-enrollment / not yet paid): everything else
+ *     → existing 2-step goal collection (connected → asked_goal → goal_received)
+ *     → waits until payment is confirmed, then Tier 2 takes over
  */
 async function handleAcademyReply({ academy, chatId, text }) {
-  // Premium implementation clients get the full structured intake flow
+  // ── Tier 1: premium implementation track ────────────────────────────────────
   if (academy.implementationClient === true) {
     await handlePremiumIntakeReply(academy, chatId, text)
     return
   }
 
-  // Basic academy — simple 2-step goal collection
+  // ── Tier 2: enrolled academy member → lesson experience ────────────────────
+  // academyStatus is set to 'enrolled' by processPaidEnrollment (payment confirmed).
+  // 'graduated' is set by academyExperienceService once all lessons are complete.
+  // Both states are hard-routed to the experience layer — no fallthrough.
+  if (academy.academyStatus === 'enrolled' || academy.academyStatus === 'graduated') {
+    await handleAcademyMemberReply(academy, chatId, text)
+    return
+  }
+
+  // ── Tier 3: pre-enrollment — 2-step goal collection ─────────────────────────
+  // Member has connected Telegram but payment is not yet confirmed.
+  // Collect their goal so the team has context when onboarding fires.
   const stage = academy.telegramStage ?? 'connected'
-  let newStage    = academy.telegramStage
+  let newStage     = academy.telegramStage
   let autoResponse = null
 
   if (stage === 'connected') {
