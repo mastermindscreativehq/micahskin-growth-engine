@@ -64,9 +64,6 @@ app.options('*', cors({
   credentials: true,
 }));
 
-// 🔥 CRITICAL: HANDLE PREFLIGHT
-app.options('*', cors());
-
 // Capture raw body for Paystack webhook signature verification
 app.use(express.json({
   verify: (req, _res, buf) => { req.rawBody = buf },
