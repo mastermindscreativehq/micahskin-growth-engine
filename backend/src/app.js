@@ -21,69 +21,62 @@ const { getWhatsAppHealth } = require('./services/whatsappService')
 const app = express()
 
 // Trust the first proxy (Railway's load balancer) so req.secure is correct.
-// Required for session cookie.secure to work in production.
 app.set('trust proxy', 1)
+
+// ── Request logger (diagnostic — remove once stable) ─────────────────────────
+app.use((req, _res, next) => {
+  console.log(`[req] ${req.method} ${req.path} origin=${req.headers.origin || '—'}`)
+  next()
+})
+
+// ── Health — must come before CORS/session so Railway probes always succeed ──
+// Railway health check hits /api/health; keep this before every other middleware.
+app.get('/api/health', (_req, res) => res.status(200).json({ ok: true }))
+app.use('/health', healthRouter)
 
 // ── Middleware ──────────────────────────────────────────────────────────────
 
-// CORS — credentials: true is required so the browser sends the session cookie
-// on cross-origin requests from the frontend.
+// CORS — if ALLOWED_ORIGINS is unset, allow all origins (open dev/staging mode).
 // Production: set ALLOWED_ORIGINS=https://your-vercel-domain.vercel.app in Railway.
 // Local dev: set ALLOWED_ORIGINS=http://localhost:5173 in backend/.env.
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(o => o.trim())
-  .filter(Boolean);
+  .filter(Boolean)
 
-app.use(cors({
+const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.log('CORS blocked:', origin);
-    return callback(new Error('Not allowed by CORS'));
+    // server-to-server / curl / Railway probes have no origin — always allow
+    if (!origin) return callback(null, true)
+    // if no whitelist is configured, allow everything
+    if (allowedOrigins.length === 0) return callback(null, true)
+    if (allowedOrigins.includes(origin)) return callback(null, true)
+    console.warn('[cors] blocked origin:', origin)
+    return callback(null, false)   // return 200 with no ACAO header (safe, not a crash)
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+}
 
-app.options('*', cors({
-  origin: allowedOrigins,
-  credentials: true,
-}));
+app.use(cors(corsOptions))
+app.options('*', cors(corsOptions))
 
 // Capture raw body for Paystack webhook signature verification
 app.use(express.json({
   verify: (req, _res, buf) => { req.rawBody = buf },
 }))
 
-// Session middleware — stores admin login state server-side and sends
-// an HTTP-only signed cookie to the browser.
-//
-// REQUIRED ENV VARS:
-//   SESSION_SECRET  — long random string to sign/verify the session cookie
-//                     (e.g. run: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-//
-// NOTE: This uses the default in-memory store, which is fine for a single-process
-// local/small-server setup. For multi-process or Redis-backed prod, swap the store.
-// Cross-site setup: Vercel frontend (vercel.app) → Railway backend (railway.app).
-// Browsers refuse to forward SameSite=Lax cookies on cross-site fetch/XHR calls.
-// SameSite=None + Secure=true is required. Default to production-safe unless
-// explicitly in local development, so missing NODE_ENV in Railway doesn't break login.
+// Session middleware
 const isLocalDev = process.env.NODE_ENV === 'development'
 
 app.use(session({
   name: 'sid',
-  // REQUIRED: set SESSION_SECRET in backend/.env
   secret: process.env.SESSION_SECRET || 'dev-fallback-secret-change-before-deploying',
   resave: false,
   saveUninitialized: false,
-  cookie: { 
+  cookie: {
     httpOnly: true,
     secure: !isLocalDev,
     sameSite: isLocalDev ? 'lax' : 'none',
@@ -92,8 +85,6 @@ app.use(session({
 }))
 
 // ── Routes ──────────────────────────────────────────────────────────────────
-
-app.use('/health', healthRouter)
 
 // Auth — public: login, logout, session check
 app.use('/api/auth', authRouter)
@@ -144,6 +135,14 @@ app.get('/api/debug/whatsapp', requireAuth, (req, res) => {
 
 app.use((req, res) => {
   res.status(404).json({ success: false, message: `Route ${req.method} ${req.path} not found` })
+})
+
+// ── Global error handler ─────────────────────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[express error]', req.method, req.path, err.message, err.stack)
+  if (res.headersSent) return
+  res.status(err.status || 500).json({ success: false, message: err.message || 'Internal server error' })
 })
 
 module.exports = app
