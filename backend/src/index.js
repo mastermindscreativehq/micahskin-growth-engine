@@ -21,9 +21,10 @@ async function start() {
     console.error('   Check DATABASE_URL in backend/.env — must use port 6543 with ?pgbouncer=true')
   }
 
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n✅ MICAHSKIN Growth Engine running on http://localhost:${PORT}`)
     console.log(`   Health check: http://localhost:${PORT}/health\n`)
+    console.log("🚨 SERVER ENTRY HIT");
 
     // Phase 6 — start follow-up alert scheduler (notifies admin of due follow-ups)
     startScheduler()
