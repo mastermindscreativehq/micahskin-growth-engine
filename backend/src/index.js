@@ -9,42 +9,61 @@ const { startActionEngine } = require('./services/actionEngineService')
 const { startAcademyOnboarding } = require('./services/academyOnboardingService')
 const { startAcademyExperience } = require('./services/academyExperienceService')
 
-console.log("🚨 ENV PORT:", process.env.PORT)
 const PORT = process.env.PORT
 
 if (!PORT) {
-  console.error("❌ PORT NOT PROVIDED BY RAILWAY")
+  console.error('❌ PORT not provided — aborting')
   process.exit(1)
 }
 
-async function start() {
-  // Verify DB connectivity on boot
-  try {
-    await prisma.$queryRaw`SELECT 1`
-    console.log('✅ Database connection OK (pooler)')
-  } catch (err) {
-    console.error('❌ Database connection FAILED:', err.message)
-    console.error('   Check DATABASE_URL in backend/.env — must use port 6543 with ?pgbouncer=true')
-  }
+// ─── Global safety net ───────────────────────────────────────────────────────
+// Prevents a single unhandled rejection from killing the process.
+// Log it and keep running — background jobs failing should never kill the HTTP server.
+process.on('unhandledRejection', (reason) => {
+  console.error('[process] Unhandled promise rejection:', reason)
+})
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n✅ MICAHSKIN Growth Engine running on http://localhost:${PORT}`)
-    console.log(`   Health check: http://localhost:${PORT}/health\n`)
-    console.log("🚨 SERVER ENTRY HIT");
+process.on('uncaughtException', (err) => {
+  console.error('[process] Uncaught exception:', err)
+  // Do NOT exit — Railway would restart and hit the same crash loop.
+  // Investigate the logged error instead.
+})
 
-    // Phase 6 — start follow-up alert scheduler (notifies admin of due follow-ups)
-    startScheduler()
-    // Phase 7 — start auto-trigger service (executes sends automatically)
-    startAutoTrigger()
-    // Phase 15 — orchestration poller: auto-triggers Stage 4 when Apify run succeeds
-    startOrchestrationPoller()
-    // Phase 17 — action engine: executes all scheduled lead actions (diagnosis, check-in, product reco, academy offer)
-    startActionEngine()
-    // Phase 19 — academy onboarding: post-payment CRM automation + onboarding delivery
-    startAcademyOnboarding()
-    // Phase 24 — academy experience: lesson drip delivery, stuck-member nudges
-    startAcademyExperience()
+// ─── Isolated service launcher ───────────────────────────────────────────────
+// Wraps each background service so a crash/throw in one never affects others
+// or the HTTP server. Uses setImmediate to yield the event loop between starts.
+function launchService(name, fn) {
+  setImmediate(async () => {
+    try {
+      await fn()
+      console.log(`[services] ✅ ${name} started`)
+    } catch (err) {
+      console.error(`[services] ❌ ${name} failed to start:`, err.message)
+    }
   })
 }
 
-start()
+// ─── Boot ────────────────────────────────────────────────────────────────────
+// CRITICAL: bind the port FIRST so Railway's health check passes immediately.
+// All other work (DB check, services) runs after the server is accepting requests.
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ MICAHSKIN Growth Engine listening on port ${PORT}`)
+
+  // DB connectivity check — informational only, does not block HTTP traffic
+  prisma.$queryRaw`SELECT 1`
+    .then(() => console.log('[db] ✅ Database connection OK'))
+    .catch((err) => console.error('[db] ❌ Database connection failed:', err.message))
+
+  // Background services — each is isolated; one failure cannot affect the others
+  launchService('schedulerService',        startScheduler)
+  launchService('autoTriggerService',      startAutoTrigger)
+  launchService('orchestrationService',    startOrchestrationPoller)
+  launchService('actionEngineService',     startActionEngine)
+  launchService('academyOnboardingService',startAcademyOnboarding)
+  launchService('academyExperienceService',startAcademyExperience)
+})
+
+server.on('error', (err) => {
+  console.error('[server] Fatal listen error:', err)
+  process.exit(1)
+})
