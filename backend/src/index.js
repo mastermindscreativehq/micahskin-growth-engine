@@ -9,12 +9,7 @@ const { startActionEngine } = require('./services/actionEngineService')
 const { startAcademyOnboarding } = require('./services/academyOnboardingService')
 const { startAcademyExperience } = require('./services/academyExperienceService')
 
-const PORT = process.env.PORT
-
-if (!PORT) {
-  console.error('❌ PORT env missing')
-  process.exit(1)
-}
+const PORT = process.env.PORT || 4000
 
 process.on('unhandledRejection', (reason) => {
   console.error('[process] Unhandled promise rejection:', reason)
