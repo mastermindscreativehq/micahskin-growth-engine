@@ -9,7 +9,13 @@ const { startActionEngine } = require('./services/actionEngineService')
 const { startAcademyOnboarding } = require('./services/academyOnboardingService')
 const { startAcademyExperience } = require('./services/academyExperienceService')
 
-const PORT = process.env.PORT || 4000
+console.log("🚨 ENV PORT:", process.env.PORT)
+const PORT = process.env.PORT
+
+if (!PORT) {
+  console.error("❌ PORT NOT PROVIDED BY RAILWAY")
+  process.exit(1)
+}
 
 async function start() {
   // Verify DB connectivity on boot
