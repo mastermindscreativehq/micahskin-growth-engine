@@ -131,6 +131,14 @@ async function handleWebhook(req, res) {
  *     → waits until payment is confirmed, then Tier 2 takes over
  */
 async function handleAcademyReply({ academy, chatId, text }) {
+  // ── Tier 0: revoked — block immediately ─────────────────────────────────────
+  if (academy.academyStatus === 'revoked') {
+    await sendTelegramToUser(chatId,
+      `Your MICAHSKIN Academy access has been revoked. Please contact support if you believe this is an error.`
+    )
+    return
+  }
+
   // ── Tier 1: premium implementation track ────────────────────────────────────
   if (academy.implementationClient === true) {
     await handlePremiumIntakeReply(academy, chatId, text)

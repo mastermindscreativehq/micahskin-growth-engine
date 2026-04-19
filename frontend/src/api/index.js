@@ -169,6 +169,19 @@ export async function updateImplementationTasks(id, fields) {
   })
 }
 
+/**
+ * Trigger a manual operator action on an academy member.
+ * action: 'resend-lesson' | 'unlock-next' | 'pause' | 'resume' |
+ *         'complete-lesson' | 'graduate' | 'revoke'
+ */
+export async function academyOperatorAction(id, action) {
+  return protectedFetch(`${BASE_URL}/api/academy/registrations/${id}/operator/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+}
+
 // ── Academy Access Gate ───────────────────────────────────────────────────────
 
 /**

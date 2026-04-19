@@ -7,6 +7,7 @@ const {
   updateImplementationDelivery,
   updateImplementationTasks,
   syncAcademyEvent,
+  academyOperatorAction,
 } = require('../controllers/academyController')
 const { selectPackage } = require('../controllers/paystackController')
 const requireAuth = require('../middleware/requireAuth')
@@ -17,6 +18,10 @@ const router = Router()
 function requireSyncSecret(req, res, next) {
   const secret = process.env.ACADEMY_SYNC_SECRET
   if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[AcademySync] ACADEMY_SYNC_SECRET not set in production — request blocked')
+      return res.status(503).json({ success: false, message: 'Sync endpoint not configured' })
+    }
     console.warn('[AcademySync] ACADEMY_SYNC_SECRET not set — skipping auth (dev only)')
     return next()
   }
@@ -43,6 +48,9 @@ router.patch('/registrations/:id/status', requireAuth, updateRegistrationStatus)
 // Protected: premium delivery pipeline admin controls
 router.patch('/registrations/:id/delivery', requireAuth, updateImplementationDelivery)
 router.patch('/registrations/:id/tasks', requireAuth, updateImplementationTasks)
+
+// Protected: operator manual overrides (resend, unlock, pause, resume, complete, graduate, revoke)
+router.post('/registrations/:id/operator/:action', requireAuth, academyOperatorAction)
 
 // n8n sync: receives academy lifecycle events and updates Lead CRM fields
 // Auth: x-sync-secret header must match ACADEMY_SYNC_SECRET env var

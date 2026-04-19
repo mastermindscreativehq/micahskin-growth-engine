@@ -1,5 +1,6 @@
 const academyService = require('../services/academyService')
 const academySyncService = require('../services/academySyncService')
+const academyOperatorService = require('../services/academyOperatorService')
 const prisma = require('../lib/prisma')
 const { buildAcademyTelegramStartLink } = require('../services/telegramService')
 
@@ -178,6 +179,40 @@ async function syncAcademyEvent(req, res) {
   }
 }
 
+/**
+ * POST /api/academy/registrations/:id/operator/:action
+ * Admin manual override actions for academy members.
+ *
+ * Actions: resend-lesson | unlock-next | pause | resume |
+ *          complete-lesson | graduate | revoke
+ */
+async function academyOperatorAction(req, res) {
+  const { id, action } = req.params
+  const VALID_ACTIONS = {
+    'resend-lesson':    academyOperatorService.resendCurrentLesson,
+    'unlock-next':      academyOperatorService.unlockNextLesson,
+    'pause':            academyOperatorService.pauseProgression,
+    'resume':           academyOperatorService.resumeProgression,
+    'complete-lesson':  academyOperatorService.markLessonComplete,
+    'graduate':         academyOperatorService.graduateMember,
+    'revoke':           academyOperatorService.revokeAccess,
+  }
+
+  const fn = VALID_ACTIONS[action]
+  if (!fn) {
+    return res.status(400).json({ success: false, message: `Unknown action: ${action}` })
+  }
+
+  try {
+    const data = await fn(id)
+    console.log(`[AcademyOperator] action=${action} reg=${id}`)
+    return res.json({ success: true, data })
+  } catch (err) {
+    const status = err.status || 500
+    return res.status(status).json({ success: false, message: err.message })
+  }
+}
+
 module.exports = {
   createRegistration,
   listRegistrations,
@@ -186,4 +221,5 @@ module.exports = {
   updateImplementationDelivery,
   updateImplementationTasks,
   syncAcademyEvent,
+  academyOperatorAction,
 }

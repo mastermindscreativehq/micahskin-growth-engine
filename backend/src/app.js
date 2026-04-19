@@ -30,14 +30,28 @@ app.set('trust proxy', 1)
 // on cross-origin requests from the frontend.
 // Production: set ALLOWED_ORIGINS=https://your-vercel-domain.vercel.app in Railway.
 // Local dev: set ALLOWED_ORIGINS=http://localhost:5173 in backend/.env.
-const corsOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173')
-  .split(',').map(o => o.trim()).filter(Boolean)
+
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
 
 app.use(cors({
-  origin: corsOrigins,
-  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.log('❌ CORS blocked:', origin);
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
-}))
+}));
+
+// 🔥 CRITICAL: HANDLE PREFLIGHT
+app.options('*', cors());
 
 // Capture raw body for Paystack webhook signature verification
 app.use(express.json({
@@ -65,7 +79,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'dev-fallback-secret-change-before-deploying',
   resave: false,
   saveUninitialized: false,
-  cookie: {
+  cookie: { 
     httpOnly: true,
     secure: !isLocalDev,
     sameSite: isLocalDev ? 'lax' : 'none',

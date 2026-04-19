@@ -19,6 +19,7 @@ import {
   resendConversionPaymentLink,
   sendConversionCustomMessage,
   fetchConversionContext,
+  academyOperatorAction,
 } from '../api/index.js'
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -1758,6 +1759,218 @@ function DeliveryNotesEditor({ regId, notes, owner, onSave }) {
   )
 }
 
+// ── Academy Operator Control Panel ───────────────────────────────────────────
+
+function AcademyOperatorPanel({ reg, actioningId, onAction }) {
+  const now = new Date()
+
+  // ── Routing decision for debug panel ────────────────────────────────────────
+  let routingDecision
+  if (reg.implementationClient) routingDecision = 'Premium onboarding (Tier 1)'
+  else if (reg.academyStatus === 'revoked') routingDecision = 'Access revoked — blocked'
+  else if (reg.academyStatus === 'enrolled' || reg.academyStatus === 'graduated') routingDecision = 'Academy lesson flow (Tier 2)'
+  else routingDecision = 'Pre-enrollment — awaiting payment (Tier 3)'
+
+  const nextLessonDue = reg.academyLessonStatus === 'lesson_unlocked' &&
+    reg.nextLessonUnlockAt &&
+    new Date(reg.nextLessonUnlockAt) <= now
+
+  const nextLessonOverdue = nextLessonDue
+    ? Math.round((now - new Date(reg.nextLessonUnlockAt)) / 60000)
+    : null
+
+  const nextLessonInMin = reg.nextLessonUnlockAt && new Date(reg.nextLessonUnlockAt) > now
+    ? Math.round((new Date(reg.nextLessonUnlockAt) - now) / 60000)
+    : null
+
+  const lastOutbound = reg.currentLesson > 0
+    ? `Lesson ${reg.currentLesson} sent`
+    : reg.onboardingStatus
+    ? `Onboarding (${reg.onboardingStatus})`
+    : '—'
+
+  // ── State inspection fields ──────────────────────────────────────────────────
+  const STATE_FIELDS = [
+    { label: 'Academy Status',    value: reg.academyStatus,         highlight: reg.academyStatus === 'revoked' ? 'red' : reg.academyStatus === 'graduated' ? 'green' : 'default' },
+    { label: 'Lesson Status',     value: reg.academyLessonStatus,   highlight: reg.academyPaused ? 'amber' : 'default' },
+    { label: 'Current Lesson',    value: reg.currentLesson > 0 ? `${reg.currentLesson} / 5` : 'not started' },
+    { label: 'Completed',         value: `${reg.lessonsCompleted || 0} / 5` },
+    { label: 'CTA Status',        value: reg.lessonCtaStatus || '—' },
+    { label: 'Paused',            value: reg.academyPaused ? 'YES' : 'no', highlight: reg.academyPaused ? 'amber' : 'default' },
+    { label: 'Last Sent',         value: reg.lastLessonSentAt ? fmtDateTime(reg.lastLessonSentAt) : '—' },
+    { label: 'Last Completed',    value: reg.lastLessonCompletedAt ? fmtDateTime(reg.lastLessonCompletedAt) : '—' },
+    { label: 'Next Unlock',       value: reg.nextLessonUnlockAt ? fmtDateTime(reg.nextLessonUnlockAt) : '—', highlight: nextLessonDue ? 'green' : 'default' },
+    { label: 'Graduated At',      value: reg.academyCompletionAt ? fmtDateTime(reg.academyCompletionAt) : '—' },
+    { label: 'Last Inbound',      value: reg.lastInboundAt ? fmtDateTime(reg.lastInboundAt) : '—' },
+  ]
+
+  const highlightClass = {
+    red:     'text-red-700 font-bold',
+    green:   'text-green-700 font-bold',
+    amber:   'text-amber-700 font-bold',
+    default: 'text-gray-700',
+  }
+
+  // ── Action buttons ───────────────────────────────────────────────────────────
+  const ACTIONS = [
+    {
+      action: 'resend-lesson',
+      label: `Resend Lesson ${reg.currentLesson || '—'}`,
+      color: 'blue',
+      disabled: !reg.currentLesson || reg.academyStatus === 'revoked',
+    },
+    {
+      action: 'unlock-next',
+      label: `Unlock Lesson ${(reg.currentLesson || 0) + 1}`,
+      color: 'indigo',
+      disabled: !reg.telegramChatId || reg.academyLessonStatus === 'graduated' || reg.academyStatus === 'revoked' || (reg.currentLesson || 0) >= 5,
+    },
+    {
+      action: 'pause',
+      label: 'Pause',
+      color: 'amber',
+      disabled: !!reg.academyPaused || reg.academyStatus === 'revoked',
+    },
+    {
+      action: 'resume',
+      label: 'Resume',
+      color: 'emerald',
+      disabled: !reg.academyPaused,
+    },
+    {
+      action: 'complete-lesson',
+      label: 'Complete Lesson',
+      color: 'teal',
+      disabled: reg.academyLessonStatus !== 'lesson_active' || reg.academyStatus === 'revoked',
+    },
+    {
+      action: 'graduate',
+      label: 'Graduate',
+      color: 'purple',
+      disabled: reg.academyLessonStatus === 'graduated' || reg.academyStatus === 'revoked',
+      confirm: 'Graduate this member immediately? This sends the graduation message.',
+    },
+    {
+      action: 'revoke',
+      label: 'Revoke Access',
+      color: 'red',
+      disabled: reg.academyStatus === 'revoked',
+      confirm: `Revoke ${reg.fullName}'s academy access? This blocks bot routing immediately.`,
+    },
+  ]
+
+  const btnColor = {
+    blue:    'border-blue-200 text-blue-700 hover:bg-blue-50',
+    indigo:  'border-indigo-200 text-indigo-700 hover:bg-indigo-50',
+    amber:   'border-amber-200 text-amber-700 hover:bg-amber-50',
+    emerald: 'border-emerald-200 text-emerald-700 hover:bg-emerald-50',
+    teal:    'border-teal-200 text-teal-700 hover:bg-teal-50',
+    purple:  'border-purple-200 text-purple-700 hover:bg-purple-50',
+    red:     'border-red-200 text-red-700 hover:bg-red-50',
+  }
+
+  return (
+    <div className="rounded-xl border border-green-200 bg-white px-4 py-3 space-y-4" onClick={e => e.stopPropagation()}>
+      {/* Header */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-bold text-green-800 uppercase tracking-wide">Academy Operator Controls</span>
+        {reg.academyPaused && (
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 uppercase tracking-wide">PAUSED</span>
+        )}
+        {reg.academyStatus === 'revoked' && (
+          <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700 uppercase tracking-wide">REVOKED</span>
+        )}
+      </div>
+
+      {/* ── State inspection grid ─────────────────────────────────────────────── */}
+      <div>
+        <p className="text-[10px] font-semibold text-green-700 uppercase tracking-wide mb-1.5">Member State</p>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-3">
+          {STATE_FIELDS.map(({ label, value, highlight = 'default' }) => (
+            <div key={label} className="flex gap-1.5">
+              <span className="shrink-0 text-gray-400 w-28">{label}:</span>
+              <span className={`capitalize ${highlightClass[highlight]}`}>
+                {value || '—'}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Action buttons ────────────────────────────────────────────────────── */}
+      <div>
+        <p className="text-[10px] font-semibold text-green-700 uppercase tracking-wide mb-1.5">Actions</p>
+        <div className="flex flex-wrap gap-2">
+          {ACTIONS.map(({ action, label, color, disabled, confirm: confirmMsg }) => {
+            const isActioning = actioningId === `${reg.id}-op-${action}`
+            return (
+              <button
+                key={action}
+                disabled={disabled || !!actioningId}
+                onClick={() => onAction(action, confirmMsg)}
+                className={`rounded border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  disabled ? 'border-gray-200 text-gray-400' : btnColor[color]
+                }`}
+              >
+                {isActioning ? '…' : label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* ── Debug panel ──────────────────────────────────────────────────────── */}
+      <div className="border-t border-green-100 pt-3">
+        <p className="text-[10px] font-semibold text-green-700 uppercase tracking-wide mb-1.5">Debug</p>
+        <div className="grid grid-cols-1 gap-y-1 text-xs sm:grid-cols-2">
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-32">Routing:</span>
+            <span className={`font-semibold ${
+              reg.academyStatus === 'revoked' ? 'text-red-700' :
+              reg.implementationClient ? 'text-amber-700' :
+              reg.academyStatus === 'enrolled' || reg.academyStatus === 'graduated' ? 'text-green-700' :
+              'text-gray-500'
+            }`}>{routingDecision}</span>
+          </div>
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-32">Academy mode:</span>
+            <span className={`font-semibold ${
+              reg.academyStatus === 'enrolled' || reg.academyStatus === 'graduated' ? 'text-green-700' : 'text-gray-400'
+            }`}>
+              {reg.academyStatus === 'enrolled' || reg.academyStatus === 'graduated' ? 'active' : 'inactive'}
+            </span>
+          </div>
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-32">Automation:</span>
+            <span className={`font-semibold ${reg.academyPaused ? 'text-amber-700' : 'text-green-700'}`}>
+              {reg.academyPaused ? 'paused' : 'running'}
+            </span>
+          </div>
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-32">Next lesson:</span>
+            <span className={`font-semibold ${nextLessonDue ? 'text-orange-600' : 'text-gray-600'}`}>
+              {nextLessonDue
+                ? `overdue by ${nextLessonOverdue}m`
+                : nextLessonInMin !== null
+                ? `in ${nextLessonInMin < 60 ? `${nextLessonInMin}m` : `${Math.round(nextLessonInMin / 60)}h`}`
+                : '—'
+              }
+            </span>
+          </div>
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-32">Last inbound:</span>
+            <span className="text-gray-600">{reg.lastInboundAt ? fmtDateTime(reg.lastInboundAt) : '—'}</span>
+          </div>
+          <div className="flex gap-1.5">
+            <span className="shrink-0 text-gray-400 w-32">Last outbound:</span>
+            <span className="text-gray-600">{lastOutbound}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Academy Tab ───────────────────────────────────────────────────────────────
 
 function AcademyTab() {
@@ -1815,6 +2028,20 @@ function AcademyTab() {
       load()
     } catch (e) {
       console.error('[TaskToggle]', e)
+    } finally {
+      setActioningId(null)
+    }
+  }
+
+  async function handleOperatorAction(id, action, confirmMsg) {
+    if (confirmMsg && !window.confirm(confirmMsg)) return
+    setActioningId(`${id}-op-${action}`)
+    try {
+      await academyOperatorAction(id, action)
+      load()
+    } catch (e) {
+      console.error('[OperatorAction]', e)
+      alert(e.message || 'Action failed')
     } finally {
       setActioningId(null)
     }
@@ -2240,6 +2467,15 @@ function AcademyTab() {
                               <p><span className="font-medium text-gray-600">Goals:</span> <span className="italic">{reg.goals}</span></p>
                             )}
                           </div>
+                        )}
+
+                        {/* ── Academy Operator Control Panel ───────────────── */}
+                        {!isPremium && (reg.academyStatus === 'enrolled' || reg.academyStatus === 'graduated' || reg.academyStatus === 'revoked') && (
+                          <AcademyOperatorPanel
+                            reg={reg}
+                            actioningId={actioningId}
+                            onAction={(action, confirmMsg) => handleOperatorAction(reg.id, action, confirmMsg)}
+                          />
                         )}
 
                       </td>
