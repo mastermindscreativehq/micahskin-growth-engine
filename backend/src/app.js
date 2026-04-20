@@ -1,10 +1,23 @@
 const express = require('express')
+const cors = require('cors')
 
 const app = express()
 
-app.get('/api/health', (req, res) => {
-  console.log('✅ HEALTH HIT')
-  res.status(200).json({ status: 'ok' })
-})
+const allowedOrigins = [
+  'https://micahskin-growth-engine.vercel.app',
+  'http://localhost:5173',
+]
 
-module.exports = app
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) return callback(null, true)
+    if (allowedOrigins.includes(origin)) return callback(null, true)
+    return callback(null, false)
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}
+
+app.use(cors(corsOptions))
+app.options('*', cors(corsOptions))
