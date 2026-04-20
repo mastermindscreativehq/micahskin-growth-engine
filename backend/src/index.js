@@ -2,6 +2,7 @@ require('dotenv').config()
 
 const app = require('./app')
 const prisma = require('./lib/prisma')
+
 const { startScheduler } = require('./services/schedulerService')
 const { startAutoTrigger } = require('./services/autoTriggerService')
 const { startOrchestrationPoller } = require('./services/orchestrationService')
@@ -9,28 +10,95 @@ const { startActionEngine } = require('./services/actionEngineService')
 const { startAcademyOnboarding } = require('./services/academyOnboardingService')
 const { startAcademyExperience } = require('./services/academyExperienceService')
 
-const PORT = process.env.PORT || 4000
+const PORT = Number(process.env.PORT) || 4000
+const HOST = '0.0.0.0'
 
-async function start() {
+let servicesStarted = false
+
+async function checkDatabaseConnection() {
   try {
     await prisma.$queryRaw`SELECT 1`
     console.log('✅ Database connection OK')
+    return true
   } catch (err) {
     console.error('❌ Database connection FAILED:', err.message)
-    console.error('   Check DATABASE_URL in backend/.env — must use port 6543 with ?pgbouncer=true')
+    console.error('   Check DATABASE_URL on Railway / backend env')
+    return false
+  }
+}
+
+function safeStartService(name, fn) {
+  try {
+    fn()
+    console.log(`✅ ${name} started`)
+  } catch (err) {
+    console.error(`❌ ${name} failed to start:`, err.message)
+  }
+}
+
+function startBackgroundServices() {
+  if (servicesStarted) {
+    console.log('⚠️ Background services already started, skipping duplicate boot')
+    return
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n✅ MICAHSKIN Growth Engine running on port ${PORT}`)
-    console.log(`   Health check: http://localhost:${PORT}/health\n`)
+  servicesStarted = true
 
-    // Each service is isolated — a crash in one does not take down the server
-    try { startScheduler() } catch (e) { console.error('[scheduler] start failed:', e.message) }
-    try { startAutoTrigger() } catch (e) { console.error('[autoTrigger] start failed:', e.message) }
-    try { startOrchestrationPoller() } catch (e) { console.error('[orchestration] start failed:', e.message) }
-    try { startActionEngine() } catch (e) { console.error('[actionEngine] start failed:', e.message) }
-    try { startAcademyOnboarding() } catch (e) { console.error('[academyOnboarding] start failed:', e.message) }
-    try { startAcademyExperience() } catch (e) { console.error('[academyExperience] start failed:', e.message) }
+  safeStartService('Follow-up scheduler', startScheduler)
+  safeStartService('Auto-trigger service', startAutoTrigger)
+  safeStartService('Orchestration poller', startOrchestrationPoller)
+  safeStartService('Action Engine', startActionEngine)
+  safeStartService('Academy Onboarding Service', startAcademyOnboarding)
+  safeStartService('Academy Experience Service', startAcademyExperience)
+}
+
+async function start() {
+  console.log('🚀 Booting MICAHSKIN Growth Engine...')
+
+  await checkDatabaseConnection()
+
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`✅ MICAHSKIN Growth Engine running on port ${PORT}`)
+    console.log(`   Health check: http://localhost:${PORT}/health`)
+    console.log(`   API health:   http://localhost:${PORT}/api/health`)
+
+    startBackgroundServices()
+  })
+
+  server.on('error', (err) => {
+    console.error('❌ Server failed to start:', err.message)
+    process.exit(1)
+  })
+
+  const shutdown = async (signal) => {
+    console.log(`\n⚠️ Received ${signal}. Shutting down gracefully...`)
+
+    server.close(async () => {
+      try {
+        await prisma.$disconnect()
+        console.log('✅ Prisma disconnected')
+      } catch (err) {
+        console.error('❌ Error during Prisma disconnect:', err.message)
+      } finally {
+        process.exit(0)
+      }
+    })
+
+    setTimeout(() => {
+      console.error('❌ Forced shutdown after timeout')
+      process.exit(1)
+    }, 10000).unref()
+  }
+
+  process.on('SIGINT', () => shutdown('SIGINT'))
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
+
+  process.on('unhandledRejection', (reason) => {
+    console.error('❌ Unhandled Promise Rejection:', reason)
+  })
+
+  process.on('uncaughtException', (err) => {
+    console.error('❌ Uncaught Exception:', err)
   })
 }
 
