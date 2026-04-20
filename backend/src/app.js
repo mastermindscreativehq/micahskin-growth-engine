@@ -14,28 +14,65 @@ const telegramRouter = require('./routes/telegram')
 const paystackRouter = require('./routes/paystack')
 const scrapingRouter = require('./routes/scraping')
 const conversionRouter = require('./routes/conversionRoutes')
-const prisma = require('./lib/prisma')
-const requireAuth = require('./middleware/requireAuth')
-const { getWhatsAppHealth } = require('./services/whatsappService')
 
 const app = express()
 
-// Trust Railway's load balancer so req.secure is correct for cookie.secure
+// Railway sits behind a proxy/load balancer.
+// This makes secure cookies work correctly behind Railway.
 app.set('trust proxy', 1)
 
-// ── CORS ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// Environment
+// ─────────────────────────────────────────────────────────────
 
-const allowedOrigins = [
-  'https://micahskin-growth-engine.vercel.app',
-  'http://localhost:5173',
-]
+const nodeEnv = process.env.NODE_ENV || 'development'
+const isProduction = nodeEnv === 'production'
+
+const sessionSecret = process.env.SESSION_SECRET
+if (!sessionSecret) {
+  throw new Error('SESSION_SECRET is required')
+}
+
+const rawAllowedOrigins = process.env.ALLOWED_ORIGINS || ''
+
+const allowedOrigins = rawAllowedOrigins
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean)
+
+// Optional local dev origins only when not in production
+if (!isProduction) {
+  const devOrigins = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+  ]
+
+  for (const origin of devOrigins) {
+    if (!allowedOrigins.includes(origin)) {
+      allowedOrigins.push(origin)
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// CORS
+// ─────────────────────────────────────────────────────────────
 
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin) return callback(null, true)
-    if (allowedOrigins.includes(origin)) return callback(null, true)
-    console.log('[CORS] blocked:', origin)
-    return callback(new Error('Not allowed by CORS'))
+    // Allow non-browser tools / server-to-server requests with no origin
+    if (!origin) {
+      return callback(null, true)
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true)
+    }
+
+    console.log('[CORS] blocked origin:', origin)
+    return callback(new Error(`Not allowed by CORS: ${origin}`))
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -45,84 +82,120 @@ const corsOptions = {
 app.use(cors(corsOptions))
 app.options('*', cors(corsOptions))
 
-// ── Body parsing ──────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// Body parsing
+// ─────────────────────────────────────────────────────────────
 
-// Raw body captured so Paystack can verify webhook signatures
+// Keep rawBody so Paystack signature verification still works
 app.use(express.json({
-  verify: (req, _res, buf) => { req.rawBody = buf },
+  verify: (req, _res, buf) => {
+    req.rawBody = buf
+  },
 }))
 
-// ── Session ───────────────────────────────────────────────────────────────────
+app.use(express.urlencoded({ extended: true }))
 
-// Vercel (vercel.app) → Railway (railway.app) is cross-site.
-// Browsers block SameSite=Lax on cross-site fetch, so we need SameSite=None + Secure.
-// Default to production-safe so a missing NODE_ENV on Railway doesn't break login.
-const isLocalDev = process.env.NODE_ENV === 'development'
+// ─────────────────────────────────────────────────────────────
+// Session
+// ─────────────────────────────────────────────────────────────
 
+// Frontend on Vercel + backend on Railway = cross-site cookie in production.
+// That means production MUST use:
+//   secure: true
+//   sameSite: 'none'
 app.use(session({
   name: 'sid',
-  secret: process.env.SESSION_SECRET || 'dev-fallback-secret-change-before-deploying',
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
+  proxy: true,
   cookie: {
     httpOnly: true,
-    secure: !isLocalDev,
-    sameSite: isLocalDev ? 'lax' : 'none',
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
     maxAge: 1000 * 60 * 60 * 24 * 7,
   },
 }))
 
-// ── Routes ────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// Health / root
+// ─────────────────────────────────────────────────────────────
+
+app.get('/', (_req, res) => {
+  res.status(200).send('MICAHSKIN Growth Engine API is running')
+})
 
 app.use('/health', healthRouter)
+
+// Optional compatibility route if anything still calls /api/health
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({
+    success: true,
+    status: 'ok',
+    environment: nodeEnv,
+  })
+})
+
+// ─────────────────────────────────────────────────────────────
+// API Routes
+// ─────────────────────────────────────────────────────────────
 
 // Auth — public: login, logout, session check
 app.use('/api/auth', authRouter)
 
-// Leads — POST public (form submission), GET+PATCH protected (see routes/leads.js)
+// Leads — POST public, GET/PATCH protected inside router
 app.use('/api/leads', leadsRouter)
 
-// Academy — POST /register public, GET+PATCH protected; POST /sync is n8n webhook
+// Academy — public register, protected reads/updates, sync webhook inside router
 app.use('/api/academy', academyRouter)
 
-// Stats — fully protected
+// Stats — protected inside router
 app.use('/api/stats', statsRouter)
 
-// Replies — POST public (webhook/manual), GET protected (admin CRM)
+// Replies
 app.use('/api/replies', repliesRouter)
 
-// Telegram bot webhook — public, receives updates from Telegram Bot API
+// Telegram webhook
 app.use('/api/telegram', telegramRouter)
 
-// Paystack — public webhook (signature-verified) for payment confirmation
+// Paystack webhook
 app.use('/api/paystack', paystackRouter)
 
-// Scraping — admin-only; Apify import + raw item browser
+// Scraping routes
 app.use('/api/scraping', scrapingRouter)
 
-// Conversion tracking — public; records clicks, signups, payments against leads
+// Conversion tracking
 app.use('/api/conversion', conversionRouter)
 
-// ── Debug (admin-only) ────────────────────────────────────────────────────────
-
-app.get('/api/debug/db', async (req, res) => {
-  try {
-    const leads = await prisma.lead.findMany({ take: 1 })
-    const registrations = await prisma.academyRegistration.findMany({ take: 1 })
-    res.json({ success: true, leads, registrations })
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message })
-  }
-})
-
-app.get('/api/debug/whatsapp', requireAuth, (req, res) => {
-  res.json({ success: true, whatsapp: getWhatsAppHealth() })
-})
-
-// ── 404 catch-all ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// 404
+// ─────────────────────────────────────────────────────────────
 
 app.use((req, res) => {
-  res.status(404).json({ success: false, message: `Route ${req.method} ${req.path} not found` })
+  res.status(404).json({
+    success: false,
+    message: `Route ${req.method} ${req.path} not found`,
+  })
+})
+
+// ─────────────────────────────────────────────────────────────
+// Error handler
+// ─────────────────────────────────────────────────────────────
+
+app.use((err, _req, res, _next) => {
+  console.error('[APP ERROR]', err)
+
+  if (err.message && err.message.startsWith('Not allowed by CORS')) {
+    return res.status(403).json({
+      success: false,
+      message: err.message,
+    })
+  }
+
+  return res.status(500).json({
+    success: false,
+    message: 'Internal server error',
+  })
 })
 
 module.exports = app
