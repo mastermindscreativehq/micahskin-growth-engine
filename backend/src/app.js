@@ -38,3 +38,4 @@ app.get('/debug-cors', (req, res) => {
   res.json({ cors: 'active' })
 })
 
+module.exports = app
