@@ -14,6 +14,7 @@ const telegramRouter = require('./routes/telegram')
 const paystackRouter = require('./routes/paystack')
 const scrapingRouter = require('./routes/scraping')
 const conversionRouter = require('./routes/conversionRoutes')
+const automationRouter = require('./routes/automation')
 
 const app = express()
 
@@ -166,6 +167,9 @@ app.use('/api/scraping', scrapingRouter)
 
 // Conversion tracking
 app.use('/api/conversion', conversionRouter)
+
+// Automation gateway — n8n webhook endpoints, protected by x-automation-secret
+app.use('/api/automation', automationRouter)
 
 // ─────────────────────────────────────────────────────────────
 // 404
