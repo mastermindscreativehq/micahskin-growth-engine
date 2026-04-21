@@ -8,6 +8,9 @@ const { maybeTriggerAutomaticConversion } = require('../services/conversionEngin
 const { handleInboundReply, classifyInboundIntent } = require('../services/conversationBrainService')
 const { handleAcademyMemberReply } = require('../services/academyExperienceService')
 
+const LEAD_BOT_TOKEN    = process.env.TELEGRAM_LEAD_BOT_TOKEN
+const ACADEMY_BOT_TOKEN = process.env.TELEGRAM_ACADEMY_BOT_TOKEN
+
 // Intents where we should NOT queue an automatic conversion offer
 // (stop/thanks/greeting are terminal or noise — conversion engine shouldn't act on them)
 const NO_CONVERSION_INTENTS = new Set([
@@ -18,20 +21,17 @@ const NO_CONVERSION_INTENTS = new Set([
   'payment_question',
 ])
 
-// ── Webhook handler ───────────────────────────────────────────────────────────
+// ── Lead webhook ──────────────────────────────────────────────────────────────
 
 /**
- * POST /api/telegram/webhook
+ * POST /api/telegram/webhook/lead
  *
- * Routes incoming Telegram updates:
+ * Receives updates only from the leads bot.
  *   /start lead_<id>    → link chatId to an existing Lead, begin intake
- *   /start academy_<id> → link chatId to an AcademyRegistration
  *   /start (no payload) → start fresh intake session
- *   any other text      → run through session state machine (or academy handler)
- *
- * Always responds 200 immediately — Telegram retries on anything else.
+ *   any other text      → run through session state machine or conversation brain
  */
-async function handleWebhook(req, res) {
+async function handleLeadWebhook(req, res) {
   res.sendStatus(200)
 
   try {
@@ -42,35 +42,19 @@ async function handleWebhook(req, res) {
 
     const chatId    = String(message.chat.id)
     const username  = message.from?.username   || null
-    const firstName = message.from?.first_name || null
     const text      = message.text.trim()
 
-    // ── /start command ────────────────────────────────────────────────────────
     if (text.startsWith('/start')) {
       const payload = text.slice('/start'.length).trim()
 
       if (payload.startsWith('lead_')) {
-        await linkLead({ leadId: payload.slice('lead_'.length), chatId, username })
-        return
-      }
-
-      if (payload.startsWith('academy_')) {
-        await linkAcademy({ registrationId: payload.slice('academy_'.length), chatId, username })
+        await linkLead({ leadId: payload.slice('lead_'.length), chatId, username, botToken: LEAD_BOT_TOKEN })
         return
       }
 
       // Plain /start — begin or restart intake
       const reply = await handleTelegramMessage(chatId, '/start')
-      if (reply) await sendTelegramToUser(chatId, reply)
-      return
-    }
-
-    // ── Academy registrants get their own handler ─────────────────────────────
-    const academy = await prisma.academyRegistration.findFirst({
-      where: { telegramChatId: chatId },
-    })
-    if (academy) {
-      await handleAcademyReply({ academy, chatId, text })
+      if (reply) await sendTelegramToUser(chatId, reply, LEAD_BOT_TOKEN)
       return
     }
 
@@ -87,7 +71,7 @@ async function handleWebhook(req, res) {
       // rules, builds context-aware reply, and persists conversation state.
       const brainIntent = classifyInboundIntent(text)
       const reply = await handleInboundReply(lead, text)
-      if (reply) await sendTelegramToUser(chatId, reply)
+      if (reply) await sendTelegramToUser(chatId, reply, LEAD_BOT_TOKEN)
 
       // Queue automatic conversion offer only for actionable buying signals.
       // Use legacy 8-bucket classifier for the conversion engine (it was built for that).
@@ -103,11 +87,56 @@ async function handleWebhook(req, res) {
     // ── All other messages → session state machine ───────────────────────────
     const reply = await handleTelegramMessage(chatId, text)
     if (reply) {
-      await sendTelegramToUser(chatId, reply)
+      await sendTelegramToUser(chatId, reply, LEAD_BOT_TOKEN)
     }
 
   } catch (err) {
-    console.error('[Telegram Webhook] Error processing update:', err.message)
+    console.error('[Lead Webhook] Error processing update:', err.message)
+  }
+}
+
+// ── Academy webhook ───────────────────────────────────────────────────────────
+
+/**
+ * POST /api/telegram/webhook/academy
+ *
+ * Receives updates only from the academy bot.
+ *   /start academy_<id> → link chatId to an AcademyRegistration
+ *   any other text      → route through academy reply handler
+ */
+async function handleAcademyWebhook(req, res) {
+  res.sendStatus(200)
+
+  try {
+    const update = req.body
+    const message = update?.message
+
+    if (!message || !message.text) return
+
+    const chatId   = String(message.chat.id)
+    const username = message.from?.username || null
+    const text     = message.text.trim()
+
+    if (text.startsWith('/start')) {
+      const payload = text.slice('/start'.length).trim()
+
+      if (payload.startsWith('academy_')) {
+        await linkAcademy({ registrationId: payload.slice('academy_'.length), chatId, username, botToken: ACADEMY_BOT_TOKEN })
+        return
+      }
+      // Unrecognised /start on academy bot — ignore silently
+      return
+    }
+
+    const academy = await prisma.academyRegistration.findFirst({
+      where: { telegramChatId: chatId },
+    })
+    if (academy) {
+      await handleAcademyReply({ academy, chatId, text, botToken: ACADEMY_BOT_TOKEN })
+    }
+
+  } catch (err) {
+    console.error('[Academy Webhook] Error processing update:', err.message)
   }
 }
 
@@ -130,11 +159,12 @@ async function handleWebhook(req, res) {
  *     → existing 2-step goal collection (connected → asked_goal → goal_received)
  *     → waits until payment is confirmed, then Tier 2 takes over
  */
-async function handleAcademyReply({ academy, chatId, text }) {
+async function handleAcademyReply({ academy, chatId, text, botToken }) {
   // ── Tier 0: revoked — block immediately ─────────────────────────────────────
   if (academy.academyStatus === 'revoked') {
     await sendTelegramToUser(chatId,
-      `Your MICAHSKIN Academy access has been revoked. Please contact support if you believe this is an error.`
+      `Your MICAHSKIN Academy access has been revoked. Please contact support if you believe this is an error.`,
+      botToken
     )
     return
   }
@@ -180,10 +210,10 @@ async function handleAcademyReply({ academy, chatId, text }) {
   })
 
   if (autoResponse) {
-    await sendTelegramToUser(chatId, autoResponse)
+    await sendTelegramToUser(chatId, autoResponse, botToken)
   }
 
-  console.log(`[Telegram Webhook] Academy reply from reg ${academy.id} — stage=${newStage}`)
+  console.log(`[Academy Webhook] Academy reply from reg ${academy.id} — stage=${newStage}`)
 }
 
 // ── Link helpers ──────────────────────────────────────────────────────────────
@@ -193,13 +223,14 @@ async function handleAcademyReply({ academy, chatId, text }) {
  * Sends a single welcome + first question so the next user reply kicks off
  * the session state machine at ASK_GOAL.
  */
-async function linkLead({ leadId, chatId, username }) {
+async function linkLead({ leadId, chatId, username, botToken }) {
   const lead = await prisma.lead.findUnique({ where: { id: leadId } })
 
   if (!lead) {
     await sendTelegramToUser(
       chatId,
-      "Sorry, we couldn\u2019t find your registration. Please contact us directly."
+      "Sorry, we couldn\u2019t find your registration. Please contact us directly.",
+      botToken
     )
     return
   }
@@ -228,7 +259,8 @@ async function linkLead({ leadId, chatId, username }) {
     chatId,
     `Hi ${firstName}! \ud83c\udf3f You\u2019re now connected to <b>MICAHSKIN</b>.\n\n` +
     `We\u2019re gathering a few details so our team can guide you properly.\n\n` +
-    `<b>What skin concern would you like help with?</b>`
+    `<b>What skin concern would you like help with?</b>`,
+    botToken
   )
 
   await sendTelegramMessage(
@@ -242,13 +274,13 @@ async function linkLead({ leadId, chatId, username }) {
     (lead.skinConcern ? `<b>Concern:</b> ${lead.skinConcern.replace(/_/g, ' ')}` : '')
   ).catch(() => {})
 
-  console.log(`[Telegram Webhook] Lead ${leadId} linked to chatId=${chatId}`)
+  console.log(`[Lead Webhook] Lead ${leadId} linked to chatId=${chatId}`)
 }
 
 /**
  * Links a Telegram chatId to an AcademyRegistration and sends a confirmation.
  */
-async function linkAcademy({ registrationId, chatId, username }) {
+async function linkAcademy({ registrationId, chatId, username, botToken }) {
   const registration = await prisma.academyRegistration.findUnique({
     where: { id: registrationId },
   })
@@ -256,7 +288,8 @@ async function linkAcademy({ registrationId, chatId, username }) {
   if (!registration) {
     await sendTelegramToUser(
       chatId,
-      "Sorry, we couldn\u2019t find your academy registration. Please contact us directly."
+      "Sorry, we couldn\u2019t find your academy registration. Please contact us directly.",
+      botToken
     )
     return
   }
@@ -289,7 +322,8 @@ async function linkAcademy({ registrationId, chatId, username }) {
       `\u2705 Masterclass modules and training content\n` +
       `\u2705 Step-by-step guidance to build your skincare brand\n` +
       `\u2705 Direct support from the MICAHSKIN team\n\n` +
-      `Stay tuned \u2014 feel free to reply with any questions \ud83c\udf93`
+      `Stay tuned \u2014 feel free to reply with any questions \ud83c\udf93`,
+      botToken
     )
   }
   // else: already onboarded (onboardingSent === true) — no message needed
@@ -306,7 +340,7 @@ async function linkAcademy({ registrationId, chatId, username }) {
     (registration.sourceType ? ` \u00b7 ${registration.sourceType}` : '')
   ).catch(() => {})
 
-  console.log(`[Telegram Webhook] Academy registration ${registrationId} linked to chatId=${chatId}`)
+  console.log(`[Academy Webhook] Academy registration ${registrationId} linked to chatId=${chatId}`)
 }
 
-module.exports = { handleWebhook }
+module.exports = { handleLeadWebhook, handleAcademyWebhook }

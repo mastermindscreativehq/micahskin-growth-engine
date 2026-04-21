@@ -17,7 +17,7 @@
  */
 
 const prisma = require('../lib/prisma')
-const { sendTelegramToUser } = require('./telegramService')
+const { sendAcademyToUser: sendTelegramToUser } = require('./telegramService')
 const { syncAcademyEvent } = require('./academySyncService')
 const { LESSONS, TOTAL_LESSONS } = require('./academyLessons')
 

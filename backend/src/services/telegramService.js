@@ -1,16 +1,18 @@
 const prisma = require('../lib/prisma')
 
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID
-const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME
+const TELEGRAM_LEAD_BOT_TOKEN     = process.env.TELEGRAM_LEAD_BOT_TOKEN
+const TELEGRAM_LEAD_BOT_USERNAME  = process.env.TELEGRAM_LEAD_BOT_USERNAME
+const TELEGRAM_ACADEMY_BOT_TOKEN  = process.env.TELEGRAM_ACADEMY_BOT_TOKEN
+const TELEGRAM_ACADEMY_BOT_USERNAME = process.env.TELEGRAM_ACADEMY_BOT_USERNAME
+const TELEGRAM_CHAT_ID            = process.env.TELEGRAM_CHAT_ID
 
 async function sendTelegramMessage(text) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+  if (!TELEGRAM_LEAD_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
     console.warn('Telegram config missing. Skipping Telegram send.')
     return { skipped: true }
   }
 
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`
+  const url = `https://api.telegram.org/bot${TELEGRAM_LEAD_BOT_TOKEN}/sendMessage`
 
   try {
     const response = await fetch(url, {
@@ -121,8 +123,8 @@ function formatAcademyTelegramMessage(registration) {
  * Format: https://t.me/<BOT_USERNAME>?start=lead_<leadId>
  */
 function buildLeadTelegramStartLink(leadId) {
-  if (!TELEGRAM_BOT_USERNAME) return null
-  return `https://t.me/${TELEGRAM_BOT_USERNAME}?start=lead_${leadId}`
+  if (!TELEGRAM_LEAD_BOT_USERNAME) return null
+  return `https://t.me/${TELEGRAM_LEAD_BOT_USERNAME}?start=lead_${leadId}`
 }
 
 /**
@@ -130,8 +132,8 @@ function buildLeadTelegramStartLink(leadId) {
  * Format: https://t.me/<BOT_USERNAME>?start=academy_<registrationId>
  */
 function buildAcademyTelegramStartLink(registrationId) {
-  if (!TELEGRAM_BOT_USERNAME) return null
-  return `https://t.me/${TELEGRAM_BOT_USERNAME}?start=academy_${registrationId}`
+  if (!TELEGRAM_ACADEMY_BOT_USERNAME) return null
+  return `https://t.me/${TELEGRAM_ACADEMY_BOT_USERNAME}?start=academy_${registrationId}`
 }
 
 // ── Direct user messaging ─────────────────────────────────────────────────────
@@ -144,13 +146,14 @@ function buildAcademyTelegramStartLink(registrationId) {
  * @param {string|number} chatId - The target Telegram chat ID
  * @param {string} text - HTML-formatted message text
  */
-async function sendTelegramToUser(chatId, text) {
-  if (!TELEGRAM_BOT_TOKEN) {
+async function sendTelegramToUser(chatId, text, token) {
+  const resolvedToken = token || TELEGRAM_LEAD_BOT_TOKEN
+  if (!resolvedToken) {
     console.warn('[Telegram] Bot token missing. Skipping user send.')
     return { skipped: true }
   }
 
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`
+  const url = `https://api.telegram.org/bot${resolvedToken}/sendMessage`
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -182,7 +185,7 @@ async function sendTelegramToLead(leadId, message, meta = {}) {
   if (!lead || !lead.telegramChatId) {
     return { skipped: true, reason: 'no_telegram' }
   }
-  const result = await sendTelegramToUser(lead.telegramChatId, message)
+  const result = await sendTelegramToUser(lead.telegramChatId, message, TELEGRAM_LEAD_BOT_TOKEN)
 
   const logStatus = result.skipped ? 'skipped' : result.success ? 'sent' : 'failed'
   prisma.messageLog.create({
@@ -217,7 +220,7 @@ async function sendTelegramToAcademy(registrationId, message, meta = {}) {
   if (!registration || !registration.telegramChatId) {
     return { skipped: true, reason: 'no_telegram' }
   }
-  const result = await sendTelegramToUser(registration.telegramChatId, message)
+  const result = await sendTelegramToUser(registration.telegramChatId, message, TELEGRAM_ACADEMY_BOT_TOKEN)
 
   const logStatus = result.skipped ? 'skipped' : result.success ? 'sent' : 'failed'
   prisma.messageLog.create({
@@ -239,6 +242,10 @@ async function sendTelegramToAcademy(registrationId, message, meta = {}) {
   return result
 }
 
+async function sendAcademyToUser(chatId, text) {
+  return sendTelegramToUser(chatId, text, TELEGRAM_ACADEMY_BOT_TOKEN)
+}
+
 module.exports = {
   sendTelegramMessage,
   sendAndLogTelegramMessage,
@@ -247,6 +254,7 @@ module.exports = {
   buildLeadTelegramStartLink,
   buildAcademyTelegramStartLink,
   sendTelegramToUser,
+  sendAcademyToUser,
   sendTelegramToLead,
   sendTelegramToAcademy,
 }

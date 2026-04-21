@@ -1,11 +1,11 @@
 const { Router } = require('express')
-const { handleWebhook } = require('../controllers/telegramController')
+const { handleLeadWebhook, handleAcademyWebhook } = require('../controllers/telegramController')
 
 const router = Router()
 
 // Public — Telegram Bot API POSTs updates here.
-// Verify the request is from Telegram by checking a secret token in the URL
-// via setWebhook?secret_token=... if you want extra security in future.
-router.post('/webhook', handleWebhook)
+// Each bot must be registered to its own path via setWebhook.
+router.post('/webhook/lead',    handleLeadWebhook)
+router.post('/webhook/academy', handleAcademyWebhook)
 
 module.exports = router

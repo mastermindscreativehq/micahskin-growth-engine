@@ -31,7 +31,7 @@
  */
 
 const prisma = require('../lib/prisma')
-const { sendTelegramToUser, sendTelegramMessage } = require('./telegramService')
+const { sendAcademyToUser: sendTelegramToUser, sendTelegramMessage } = require('./telegramService')
 
 // ── Intake stage machine ───────────────────────────────────────────────────────
 //
