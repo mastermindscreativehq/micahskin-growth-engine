@@ -79,7 +79,8 @@ function shouldSendCourseOffer(lead) {
 
 /**
  * T+1h — Personalised diagnosis message.
- * Prefers enriched diagnosisSummary + recommendedProductsText over raw JSON.
+ * Reads from lead.diagnosis / lead.routine / lead.products (clinical JSON fields).
+ * Does NOT use diagnosisSummary — that field is operator-only CRM display text.
  *
  * @param {object} lead
  * @returns {string|null}

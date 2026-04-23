@@ -15,9 +15,13 @@
 
 const prisma = require('../lib/prisma')
 const { analyzeLead } = require('./diagnosisService')
+const { sendTelegramToUser } = require('./telegramService')
 
 // Keep in sync with actionEngineService ACADEMY_FIT_THRESHOLD
 const ACADEMY_FIT_THRESHOLD = parseInt(process.env.ACADEMY_FIT_THRESHOLD || '65', 10)
+
+const LEAD_BOT_TOKEN = process.env.TELEGRAM_LEAD_BOT_TOKEN
+const WHATSAPP_LINK  = process.env.WHATSAPP_LINK || 'https://wa.me/+2348140468759'
 
 // ── Concern inference ─────────────────────────────────────────────────────────
 
@@ -502,7 +506,214 @@ async function diagnoseLead(leadId) {
     )
   }
 
+  // Auto product offer — fires for product-fit leads immediately after diagnosis.
+  // Non-fatal: errors are caught and logged so diagnoseLead() always returns the result.
+  try {
+    await maybeAutoSendProductOffer(leadId, lead, result)
+  } catch (err) {
+    console.error(`[ProductOffer] unexpected error | leadId=${leadId}:`, err.message)
+  }
+
   return result
+}
+
+// ── Auto product offer ─────────────────────────────────────────────────────────
+
+/**
+ * Builds a rich, customer-facing product offer message from fresh diagnosis data.
+ * Uses result fields (diagnosis/routine/products) — NOT the operator-only diagnosisSummary.
+ *
+ * @param {object} lead   — lead record (for name, chatId, budget)
+ * @param {object} result — fresh diagnosis result from buildDiagnosisFromLead()
+ * @returns {string}
+ */
+function buildAutoProductOfferMessage(lead, result) {
+  const firstName = (lead.fullName || 'there').split(' ')[0]
+
+  const diag    = result.diagnosis || {}
+  const routine = result.routine   || {}
+
+  const assessmentText = diag.text || null
+  const notes   = Array.isArray(diag.notes)      ? diag.notes      : []
+  const morning = Array.isArray(routine.morning) ? routine.morning : []
+  const night   = Array.isArray(routine.night)   ? routine.night   : []
+
+  const lines = []
+
+  lines.push(`Hi ${firstName} 🌿`)
+  lines.push('')
+  lines.push("Based on what you shared, here's your personalised skin recommendation.")
+
+  if (assessmentText) {
+    lines.push('')
+    lines.push('<b>Assessment:</b>')
+    lines.push(assessmentText)
+  }
+
+  if (morning.length > 0) {
+    lines.push('')
+    lines.push('<b>Morning routine:</b>')
+    morning.forEach((step, i) => lines.push(`${i + 1}. ${step}`))
+  }
+
+  if (night.length > 0) {
+    lines.push('')
+    lines.push('<b>Night routine:</b>')
+    night.forEach((step, i) => lines.push(`${i + 1}. ${step}`))
+  }
+
+  // Products — prefer enriched recommendedProductsText over raw JSON array
+  if (result.recommendedProductsText) {
+    lines.push('')
+    lines.push('<b>Recommended products:</b>')
+    lines.push(result.recommendedProductsText)
+  } else {
+    const recs = result.products?.recommendations || []
+    if (recs.length > 0) {
+      lines.push('')
+      lines.push('<b>Recommended products:</b>')
+      recs.forEach(p => lines.push(`• ${p}`))
+    }
+  }
+
+  if (notes.length > 0) {
+    lines.push('')
+    lines.push('<b>Important notes:</b>')
+    notes.forEach(n => lines.push(`• ${n}`))
+  }
+
+  lines.push('')
+  lines.push(
+    "If you'd like, I can also help you choose the best version of this routine " +
+    'based on your budget and product availability.'
+  )
+  lines.push('')
+  lines.push('Reply:')
+  lines.push('- <b>PRODUCT</b> for the recommended products')
+  lines.push('- <b>CONSULT</b> for private guidance')
+  lines.push('- <b>ACADEMY</b> if you want to learn how to build your own skincare brand')
+  lines.push('')
+  lines.push(`Or message us directly:\n👉 ${WHATSAPP_LINK}`)
+
+  return lines.join('\n')
+}
+
+/**
+ * Fires immediately after diagnosis is saved.
+ * Sends the product offer message when conversionIntent=product or
+ * nextBestAction=recommend_product, then marks productOfferSent to prevent duplicates.
+ *
+ * @param {string} leadId
+ * @param {object} lead   — original lead object (pre-save, used for chatId + name)
+ * @param {object} result — fresh diagnosis result
+ */
+async function maybeAutoSendProductOffer(leadId, lead, result) {
+  // Gate 1: product-fit check
+  const isProductFit =
+    result.conversionIntent === 'product' ||
+    result.nextBestAction   === 'recommend_product'
+
+  if (!isProductFit) {
+    console.log(
+      `[DiagnosisEngine] auto product decision | leadId=${leadId} ` +
+      `nextBestAction=${result.nextBestAction} conversionIntent=${result.conversionIntent} → skip (not product-fit)`
+    )
+    return
+  }
+
+  // Gate 2: needs Telegram channel
+  if (!lead.telegramChatId) {
+    console.log(`[ProductOffer] skipped | leadId=${leadId} reason=no_telegram_chat_id`)
+    return
+  }
+
+  // Gate 3: high urgency / manual consult leads go to consult, not product push
+  if (result.urgencyLevel === 'high' || result.nextBestAction === 'manual_consult') {
+    console.log(
+      `[ProductOffer] skipped | leadId=${leadId} ` +
+      `reason=manual_consult_required urgencyLevel=${result.urgencyLevel}`
+    )
+    return
+  }
+
+  // Gate 4: dedup — re-read from DB because lead object predates the save
+  const freshLead = await prisma.lead.findUnique({
+    where:  { id: leadId },
+    select: { productOfferSent: true, status: true },
+  })
+  if (!freshLead) return
+  if (freshLead.productOfferSent) {
+    console.log(`[ProductOffer] skipped | leadId=${leadId} reason=already_sent`)
+    return
+  }
+  if (freshLead.status === 'closed') {
+    console.log(`[ProductOffer] skipped | leadId=${leadId} reason=lead_closed`)
+    return
+  }
+
+  console.log(
+    `[DiagnosisEngine] auto product decision | leadId=${leadId} ` +
+    `nextBestAction=${result.nextBestAction} conversionIntent=${result.conversionIntent} → sending product offer`
+  )
+
+  console.log(`[ProductOffer] building message | leadId=${leadId}`)
+  const msg   = buildAutoProductOfferMessage(lead, result)
+  const botId = LEAD_BOT_TOKEN ? LEAD_BOT_TOKEN.split(':')[0] : 'missing'
+
+  console.log(
+    `[ProductOffer] sending | leadId=${leadId} chatId=${lead.telegramChatId} botId=${botId}`
+  )
+  const sendResult = await sendTelegramToUser(lead.telegramChatId, msg, LEAD_BOT_TOKEN)
+  const now = new Date()
+
+  if (sendResult?.success) {
+    await prisma.lead.update({
+      where: { id: leadId },
+      data: {
+        productOfferSent:        true,
+        productOfferSentAt:      now,
+        productOfferStatus:      'sent',
+        productOfferCount:       { increment: 1 },
+        conversionPath:          'product_offer',
+        conversionStage:         'offer_sent',
+        conversationMode:        'product_reco_active',
+        lastBotIntent:           'auto_product_offer',
+        lastMeaningfulBotAt:     now,
+        lastConversionIntent:    result.conversionIntent || 'product',
+        lastConversionTriggerAt: now,
+      },
+    })
+    await prisma.messageLog.create({
+      data: {
+        type:            'lead',
+        recordId:        leadId,
+        channel:         'telegram',
+        status:          'sent',
+        auto:            true,
+        triggerReason:   'auto_product_offer_post_diagnosis',
+        recipient:       String(lead.telegramChatId),
+        deliveryChannel: 'telegram',
+        fallbackUsed:    false,
+      },
+    }).catch(e =>
+      console.error(`[ProductOffer] MessageLog write failed | leadId=${leadId}:`, e.message)
+    )
+    console.log(
+      `[ProductOffer] sent | leadId=${leadId} messageId=${sendResult.data?.result?.message_id}`
+    )
+  } else if (sendResult?.skipped) {
+    console.warn(`[ProductOffer] skipped | leadId=${leadId} reason=bot_token_missing`)
+  } else {
+    console.error(
+      `[ProductOffer] failed | leadId=${leadId} error=${JSON.stringify(sendResult?.error)}`
+    )
+    await prisma.lead.update({
+      where: { id: leadId },
+      data:  { productOfferStatus: 'failed' },
+    }).catch(e =>
+      console.error(`[ProductOffer] status update failed | leadId=${leadId}:`, e.message)
+    )
+  }
 }
 
 module.exports = { diagnoseLead, buildDiagnosisFromLead, saveDiagnosisResult }
