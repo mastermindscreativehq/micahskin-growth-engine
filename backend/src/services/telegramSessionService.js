@@ -64,8 +64,10 @@ function deriveSkinConcern(goalText) {
 async function handleTelegramMessage(userId, text) {
   const session = await getOrCreateSession(userId)
 
-  // 🔇 SILENT MODE — completed intake, bot does not respond
+  console.log(`[Intake] userId=${userId} stage=${session.stage} completed=${session.completed} text="${text.slice(0, 60)}"`)
+
   if (session.completed) {
+    console.log(`[Intake] session completed — silent | userId=${userId}`)
     return null
   }
 
@@ -84,6 +86,7 @@ async function handleTelegramMessage(userId, text) {
         stage: 'ASK_SKIN_TYPE',
         data: { goal: text },
       })
+      console.log(`[Intake] ASK_GOAL answered | userId=${userId} goal="${text.slice(0, 40)}"`)
       return 'How would you describe your skin type? (oily, dry, combination, sensitive)'
 
     case 'ASK_SKIN_TYPE':
@@ -91,6 +94,7 @@ async function handleTelegramMessage(userId, text) {
         stage: 'ASK_PRODUCTS',
         data: { skinType: text },
       })
+      console.log(`[Intake] ASK_SKIN_TYPE answered | userId=${userId} skinType="${text.slice(0, 30)}"`)
       return 'What products are you currently using?'
 
     case 'ASK_PRODUCTS':
@@ -98,6 +102,7 @@ async function handleTelegramMessage(userId, text) {
         stage: 'ASK_SENSITIVITY',
         data: { products: text },
       })
+      console.log(`[Intake] ASK_PRODUCTS answered | userId=${userId}`)
       return 'Does your skin react easily to products? (yes/no)'
 
     case 'ASK_SENSITIVITY':
@@ -105,6 +110,7 @@ async function handleTelegramMessage(userId, text) {
         stage: 'ASK_BUDGET',
         data: { sensitivity: text },
       })
+      console.log(`[Intake] ASK_SENSITIVITY answered | userId=${userId}`)
       return 'Are you looking for a budget, mid-range, or premium routine?'
 
     case 'ASK_BUDGET':
@@ -112,6 +118,7 @@ async function handleTelegramMessage(userId, text) {
         stage: 'ASK_ROUTINE_LEVEL',
         data: { budget: text },
       })
+      console.log(`[Intake] ASK_BUDGET answered | userId=${userId}`)
       return 'Do you want a simple, balanced, or complete routine?'
 
     case 'ASK_ROUTINE_LEVEL': {
@@ -129,14 +136,15 @@ async function handleTelegramMessage(userId, text) {
 
       const skinConcern = deriveSkinConcern(collectedData.goal)
 
-      // Update existing linked Lead, or create a new CRM entry
+      // Use most-recently-created lead for this chatId — matches ordering in webhook handler
       const existingLead = await prisma.lead.findFirst({
         where: { telegramChatId: userId },
+        orderBy: { createdAt: 'desc' },
       })
 
       const now = new Date()
-      const diagnosisSendAfter   = new Date(now.getTime() + 1  * 60 * 60 * 1000)   // +1h
-      const checkInSendAfter     = new Date(now.getTime() + 24 * 60 * 60 * 1000)   // +24h
+      const diagnosisSendAfter   = new Date(now.getTime() + 1  * 60 * 60 * 1000)     // +1h
+      const checkInSendAfter     = new Date(now.getTime() + 24 * 60 * 60 * 1000)     // +24h
       const productRecoSendAfter = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000) // +3 days
 
       let leadId
@@ -145,19 +153,20 @@ async function handleTelegramMessage(userId, text) {
         await prisma.lead.update({
           where: { id: existingLead.id },
           data: {
-            telegramStage: 'intake_complete',
-            telegramLastMessage: text,
+            telegramStage:       'intake_complete',
+            telegramFlowType:    'routine',
+            telegramLastMessage:   text,
             telegramLastMessageAt: now,
             skinConcern: skinConcern !== 'general' ? skinConcern : existingLead.skinConcern,
             status: ['new', 'contacted', 'engaged'].includes(existingLead.status)
               ? 'interested'
               : existingLead.status,
-            telegramRoutineGoal: collectedData.goal || null,
-            telegramSkinType: collectedData.skinType || null,
-            telegramProductsUsed: collectedData.products || null,
-            telegramSensitivity: collectedData.sensitivity || null,
-            telegramBudget: collectedData.budget || null,
-            telegramRoutineLevel: collectedData.routine || null,
+            telegramRoutineGoal:  collectedData.goal        || null,
+            telegramSkinType:     collectedData.skinType    || null,
+            telegramProductsUsed: collectedData.products    || null,
+            telegramSensitivity:  collectedData.sensitivity || null,
+            telegramBudget:       collectedData.budget      || null,
+            telegramRoutineLevel: collectedData.routine     || null,
             // Set follow-up timing only if not already scheduled
             ...(existingLead.diagnosisSendAfter ? {} : {
               diagnosisSendAfter,
@@ -170,21 +179,22 @@ async function handleTelegramMessage(userId, text) {
       } else {
         const newLead = await prisma.lead.create({
           data: {
-            fullName: userId,
-            sourcePlatform: 'Telegram',
+            fullName:          userId,
+            sourcePlatform:    'Telegram',
             skinConcern,
-            message: `Telegram intake: ${collectedData.goal || 'not specified'}`,
-            telegramChatId: userId,
-            telegramStarted: true,
+            message:           `Telegram intake: ${collectedData.goal || 'not specified'}`,
+            telegramChatId:    userId,
+            telegramStarted:   true,
             telegramConnectedAt: now,
-            telegramStage: 'intake_complete',
-            status: 'interested',
-            telegramRoutineGoal: collectedData.goal || null,
-            telegramSkinType: collectedData.skinType || null,
-            telegramProductsUsed: collectedData.products || null,
-            telegramSensitivity: collectedData.sensitivity || null,
-            telegramBudget: collectedData.budget || null,
-            telegramRoutineLevel: collectedData.routine || null,
+            telegramStage:     'intake_complete',
+            telegramFlowType:  'routine',
+            status:            'interested',
+            telegramRoutineGoal:  collectedData.goal        || null,
+            telegramSkinType:     collectedData.skinType    || null,
+            telegramProductsUsed: collectedData.products    || null,
+            telegramSensitivity:  collectedData.sensitivity || null,
+            telegramBudget:       collectedData.budget      || null,
+            telegramRoutineLevel: collectedData.routine     || null,
             diagnosisSendAfter,
             checkInSendAfter,
             productRecoSendAfter,
@@ -193,12 +203,16 @@ async function handleTelegramMessage(userId, text) {
         leadId = newLead.id
       }
 
-      console.log(`[TelegramSession] userId=${userId} — intake complete | concern=${skinConcern} | lead=${leadId}`)
+      console.log(
+        `[Intake] COMPLETE | userId=${userId} leadId=${leadId} ` +
+        `concern=${skinConcern} skinType=${collectedData.skinType || 'none'} ` +
+        `budget=${collectedData.budget || 'none'} diagnosisSendAfter=${diagnosisSendAfter.toISOString()}`
+      )
 
       // Run diagnosis asynchronously — do not block the bot response
       setImmediate(() => {
         diagnoseLead(leadId).catch((err) =>
-          console.error(`[TelegramSession] Diagnosis failed for lead ${leadId}:`, err.message)
+          console.error(`[Intake] diagnosis trigger failed for lead ${leadId}:`, err.message)
         )
       })
 

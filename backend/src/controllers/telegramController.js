@@ -44,11 +44,15 @@ async function handleLeadWebhook(req, res) {
     const username  = message.from?.username   || null
     const text      = message.text.trim()
 
+    console.log(`[LeadWebhook] incoming | chatId=${chatId} username=${username || 'none'} text="${text.slice(0, 80)}"`)
+
     if (text.startsWith('/start')) {
       const payload = text.slice('/start'.length).trim()
 
       if (payload.startsWith('lead_')) {
-        await linkLead({ leadId: payload.slice('lead_'.length), chatId, username, botToken: LEAD_BOT_TOKEN })
+        const leadId = payload.slice('lead_'.length)
+        console.log(`[LeadWebhook] deep-link connect | leadId=${leadId} chatId=${chatId}`)
+        await linkLead({ leadId, chatId, username, botToken: LEAD_BOT_TOKEN })
         return
       }
 
@@ -62,19 +66,43 @@ async function handleLeadWebhook(req, res) {
     // Must be checked BEFORE the intake state machine to prevent a stale or
     // missing TelegramSession from routing diagnosed leads back into the intake
     // question flow (e.g. asking skin type after a check-in reply).
+    // Use orderBy createdAt desc so the most-recently-created lead takes priority
+    // when a user has multiple records with the same chatId.
     const lead = await prisma.lead.findFirst({
       where: { telegramChatId: chatId },
+      orderBy: { createdAt: 'desc' },
     })
+
+    console.log(
+      `[LeadWebhook] lead lookup | chatId=${chatId} ` +
+      `found=${!!lead} leadId=${lead?.id || 'none'} ` +
+      `stage=${lead?.telegramStage || 'none'} diagnosisSent=${lead?.diagnosisSent || false}`
+    )
+
+    // Always track the latest inbound message on the lead record.
+    // This powers the "Last message" line in the CRM during intake
+    // (otherwise admin shows "No reply yet" for the entire 6-question flow).
+    if (lead) {
+      prisma.lead.update({
+        where: { id: lead.id },
+        data: {
+          telegramLastMessage:   text,
+          telegramLastMessageAt: new Date(),
+        },
+      }).catch(err => console.error('[LeadWebhook] message tracking failed:', err.message))
+    }
+
     if (lead && isPostDiagnosisLead(lead)) {
       // ── Conversation Brain routes and responds ────────────────────────────
-      // Brain classifies with the richer 12-bucket taxonomy, applies governor
-      // rules, builds context-aware reply, and persists conversation state.
       const brainIntent = classifyInboundIntent(text)
+      console.log(`[LeadWebhook] post-diagnosis route | leadId=${lead.id} intent=${brainIntent}`)
       const reply = await handleInboundReply(lead, text)
-      if (reply) await sendTelegramToUser(chatId, reply, LEAD_BOT_TOKEN)
+      if (reply) {
+        const sendResult = await sendTelegramToUser(chatId, reply, LEAD_BOT_TOKEN)
+        console.log(`[LeadWebhook] brain reply | leadId=${lead.id} success=${sendResult.success} skipped=${sendResult.skipped}`)
+      }
 
       // Queue automatic conversion offer only for actionable buying signals.
-      // Use legacy 8-bucket classifier for the conversion engine (it was built for that).
       if (!NO_CONVERSION_INTENTS.has(brainIntent)) {
         const conversionIntent = classifyFollowUpIntent(text)
         maybeTriggerAutomaticConversion(lead, conversionIntent).catch(err =>
@@ -85,13 +113,21 @@ async function handleLeadWebhook(req, res) {
     }
 
     // ── All other messages → session state machine ───────────────────────────
+    console.log(`[LeadWebhook] intake route | chatId=${chatId} leadId=${lead?.id || 'anonymous'}`)
     const reply = await handleTelegramMessage(chatId, text)
     if (reply) {
-      await sendTelegramToUser(chatId, reply, LEAD_BOT_TOKEN)
+      const sendResult = await sendTelegramToUser(chatId, reply, LEAD_BOT_TOKEN)
+      console.log(
+        `[LeadWebhook] intake reply sent | chatId=${chatId} ` +
+        `success=${sendResult.success} skipped=${sendResult.skipped || false} ` +
+        `error=${sendResult.error ? JSON.stringify(sendResult.error) : 'none'}`
+      )
+    } else {
+      console.log(`[LeadWebhook] intake returned null | chatId=${chatId} (session completed or unknown stage)`)
     }
 
   } catch (err) {
-    console.error('[Lead Webhook] Error processing update:', err.message)
+    console.error('[Lead Webhook] Error processing update:', err.message, err.stack)
   }
 }
 
@@ -274,7 +310,7 @@ async function linkLead({ leadId, chatId, username, botToken }) {
     (lead.skinConcern ? `<b>Concern:</b> ${lead.skinConcern.replace(/_/g, ' ')}` : '')
   ).catch(() => {})
 
-  console.log(`[Lead Webhook] Lead ${leadId} linked to chatId=${chatId}`)
+  console.log(`[LeadWebhook] Lead ${leadId} linked | chatId=${chatId} username=${username || 'none'}`)
 }
 
 /**

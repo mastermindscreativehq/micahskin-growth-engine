@@ -29,6 +29,8 @@ const { sendTelegramToUser } = require('./telegramService')
 const { processQueuedConversionOffers } = require('./conversionEngineService')
 const { shouldSendAutomation } = require('./conversationBrainService')
 
+const LEAD_BOT_TOKEN = process.env.TELEGRAM_LEAD_BOT_TOKEN
+
 // Configurable via env var — keep in sync with diagnosisEngineService threshold
 const ACADEMY_FIT_THRESHOLD = parseInt(process.env.ACADEMY_FIT_THRESHOLD || '65', 10)
 
@@ -452,7 +454,8 @@ async function _processDiagnosisSends() {
         continue
       }
 
-      const result = await sendTelegramToUser(lead.telegramChatId, msg)
+      console.log(`[ActionEngine] sending diagnosis → lead=${lead.id} chatId=${lead.telegramChatId}`)
+      const result = await sendTelegramToUser(lead.telegramChatId, msg, LEAD_BOT_TOKEN)
       if (!result.success && !result.skipped) throw new Error(JSON.stringify(result.error) || 'telegram send failed')
 
       await prisma.lead.update({
@@ -531,7 +534,7 @@ async function _processCheckIns() {
 
     try {
       const msg    = buildCheckInMessage(lead)
-      const result = await sendTelegramToUser(lead.telegramChatId, msg)
+      const result = await sendTelegramToUser(lead.telegramChatId, msg, LEAD_BOT_TOKEN)
       if (!result.success && !result.skipped) throw new Error(JSON.stringify(result.error) || 'telegram send failed')
 
       await prisma.lead.update({
@@ -642,7 +645,7 @@ async function _processProductRecos() {
         continue
       }
 
-      const result = await sendTelegramToUser(lead.telegramChatId, msg)
+      const result = await sendTelegramToUser(lead.telegramChatId, msg, LEAD_BOT_TOKEN)
       if (!result.success && !result.skipped) throw new Error(JSON.stringify(result.error) || 'telegram send failed')
 
       await prisma.lead.update({
@@ -745,7 +748,7 @@ async function _processAcademyOffers() {
 
     try {
       const msg    = buildAcademyOfferMessage(lead)
-      const result = await sendTelegramToUser(lead.telegramChatId, msg)
+      const result = await sendTelegramToUser(lead.telegramChatId, msg, LEAD_BOT_TOKEN)
       if (!result.success && !result.skipped) throw new Error(JSON.stringify(result.error) || 'telegram send failed')
 
       await prisma.lead.update({
@@ -831,7 +834,7 @@ async function _processConsultOffers() {
 
     try {
       const msg    = buildConsultMessage(lead)
-      const result = await sendTelegramToUser(lead.telegramChatId, msg)
+      const result = await sendTelegramToUser(lead.telegramChatId, msg, LEAD_BOT_TOKEN)
       if (!result.success && !result.skipped) throw new Error(JSON.stringify(result.error) || 'telegram send failed')
 
       await prisma.lead.update({
@@ -925,7 +928,7 @@ async function _processCourseOffers() {
 
     try {
       const msg    = buildCourseMessage(lead)
-      const result = await sendTelegramToUser(lead.telegramChatId, msg)
+      const result = await sendTelegramToUser(lead.telegramChatId, msg, LEAD_BOT_TOKEN)
       if (!result.success && !result.skipped) throw new Error(JSON.stringify(result.error) || 'telegram send failed')
 
       await prisma.lead.update({

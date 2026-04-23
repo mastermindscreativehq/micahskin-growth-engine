@@ -8,7 +8,11 @@ const TELEGRAM_CHAT_ID            = process.env.TELEGRAM_CHAT_ID
 
 async function sendTelegramMessage(text) {
   if (!TELEGRAM_LEAD_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.warn('Telegram config missing. Skipping Telegram send.')
+    const missing = [
+      !TELEGRAM_LEAD_BOT_TOKEN && 'TELEGRAM_LEAD_BOT_TOKEN',
+      !TELEGRAM_CHAT_ID        && 'TELEGRAM_CHAT_ID',
+    ].filter(Boolean).join(', ')
+    console.warn(`[Telegram] Admin notify skipped — missing env vars: ${missing}`)
     return { skipped: true }
   }
 
@@ -149,9 +153,13 @@ function buildAcademyTelegramStartLink(registrationId) {
 async function sendTelegramToUser(chatId, text, token) {
   const resolvedToken = token || TELEGRAM_LEAD_BOT_TOKEN
   if (!resolvedToken) {
-    console.warn('[Telegram] Bot token missing. Skipping user send.')
+    console.warn('[Telegram] sendTelegramToUser: bot token missing — skipping send to chatId=' + chatId)
     return { skipped: true }
   }
+
+  // Log the numeric bot ID only (never the secret portion after the colon)
+  const botId = resolvedToken.split(':')[0]
+  console.log(`[Telegram] sendTelegramToUser | chatId=${chatId} botId=${botId} textLen=${text.length}`)
 
   const url = `https://api.telegram.org/bot${resolvedToken}/sendMessage`
   try {
@@ -162,12 +170,13 @@ async function sendTelegramToUser(chatId, text, token) {
     })
     const data = await response.json()
     if (!response.ok) {
-      console.error('[Telegram] sendTelegramToUser error:', data)
+      console.error(`[Telegram] sendTelegramToUser FAILED | chatId=${chatId} botId=${botId} status=${response.status}`, JSON.stringify(data))
       return { success: false, error: data }
     }
+    console.log(`[Telegram] sendTelegramToUser OK | chatId=${chatId} botId=${botId} messageId=${data.result?.message_id}`)
     return { success: true, data }
   } catch (error) {
-    console.error('[Telegram] sendTelegramToUser failed:', error.message)
+    console.error(`[Telegram] sendTelegramToUser ERROR | chatId=${chatId} botId=${botId}:`, error.message)
     return { success: false, error: error.message }
   }
 }
