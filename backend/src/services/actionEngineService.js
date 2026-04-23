@@ -85,58 +85,60 @@ function shouldSendCourseOffer(lead) {
  * @returns {string|null}
  */
 function buildDiagnosisMessage(lead) {
-  const firstName = lead.fullName.split(' ')[0]
+  const firstName = lead.fullName ? lead.fullName.split(' ')[0] : 'there'
 
-  // Enriched path: use diagnosis engine summary + product text
-  if (lead.diagnosisSummary) {
-    const concern = lead.primaryConcern
-      ? `your ${lead.primaryConcern.replace(/_/g, ' ')}`
-      : 'your skin concern'
+  const diag    = lead.diagnosis || {}
+  const routine = lead.routine   || {}
+  const prods   = lead.products  || {}
 
-    const routineSection = lead.recommendedProductsText
-      ? `\n\n<b>Recommended routine:</b>\n${lead.recommendedProductsText}`
-      : ''
+  const assessmentText = diag.text || null
+  const notes    = Array.isArray(diag.notes)              ? diag.notes              : []
+  const morning  = Array.isArray(routine.morning)         ? routine.morning         : []
+  const night    = Array.isArray(routine.night)           ? routine.night           : []
+  const products = Array.isArray(prods.recommendations)   ? prods.recommendations   : []
 
-    const urgencyNote = lead.urgencyLevel === 'high'
-      ? '\n\n⚠️ <b>Your concern shows some severity.</b> Follow this closely and reply if anything worsens.'
-      : ''
+  if (!assessmentText && morning.length === 0 && night.length === 0) return null
 
-    return (
-      `Hi ${firstName} 🌿\n\n` +
-      `We've reviewed everything you shared about ${concern}.\n\n` +
-      `<b>Here's what we found:</b>\n${lead.diagnosisSummary}` +
-      routineSection +
-      urgencyNote +
-      `\n\nStay consistent for 2–3 weeks. Reply anytime if you need to adjust.`
-    )
+  const lines = []
+
+  lines.push(`Hi ${firstName},`)
+  lines.push('')
+  lines.push('We reviewed everything you shared about your skin, and here is the routine we put together for you.')
+
+  if (assessmentText) {
+    lines.push('')
+    lines.push('<b>Assessment:</b>')
+    lines.push(assessmentText)
   }
 
-  // Clinical fallback: use diagnosis + routine JSON (set by diagnosisService)
-  const diag    = lead.diagnosis
-  const routine = lead.routine
-  if (!diag || !routine) return null
+  if (morning.length > 0) {
+    lines.push('')
+    lines.push('<b>Morning routine:</b>')
+    morning.forEach((step, i) => lines.push(`${i + 1}. ${step}`))
+  }
 
-  const diagText     = diag.text || ''
-  const notes        = Array.isArray(diag.notes)    ? diag.notes    : []
-  const morning      = Array.isArray(routine.morning) ? routine.morning : []
-  const night        = Array.isArray(routine.night)   ? routine.night   : []
-  const morningLines = morning.map((s, i) => `${i + 1}. ${s}`).join('\n')
-  const nightLines   = night.map((s, i)   => `${i + 1}. ${s}`).join('\n')
-  const notesBlock   = notes.length > 0
-    ? `\n\n<b>Important notes for your skin:</b>\n` + notes.map(n => `• ${n}`).join('\n')
-    : ''
+  if (night.length > 0) {
+    lines.push('')
+    lines.push('<b>Night routine:</b>')
+    night.forEach((step, i) => lines.push(`${i + 1}. ${step}`))
+  }
 
-  return (
-    `Hi ${firstName} 🌿\n\n` +
-    `Based on everything you shared, here is what is happening with your skin:\n\n` +
-    `<b>${diagText}</b>\n\n` +
-    `<b>Your personalised routine:</b>\n\n` +
-    `<b>Morning</b>\n${morningLines}\n\n` +
-    `<b>Night</b>\n${nightLines}` +
-    notesBlock +
-    `\n\nFollow this consistently for 2–3 weeks and monitor your skin's response. ` +
-    `Reply here if you have any questions.`
-  )
+  if (products.length > 0) {
+    lines.push('')
+    lines.push('<b>Recommended products:</b>')
+    products.forEach(p => lines.push(`- ${p}`))
+  }
+
+  if (notes.length > 0) {
+    lines.push('')
+    lines.push('<b>Important notes:</b>')
+    notes.forEach(n => lines.push(`- ${n}`))
+  }
+
+  lines.push('')
+  lines.push('Stay consistent for 2–3 weeks and monitor how your skin responds. Reply anytime if you want us to adjust the routine for you.')
+
+  return lines.join('\n')
 }
 
 /**
@@ -454,6 +456,13 @@ async function _processDiagnosisSends() {
         continue
       }
 
+      console.log(
+        `[ActionEngine] diagnosis payload | lead=${lead.id} | chars=${msg.length} | ` +
+        `sections=assessment:${!!lead.diagnosis?.text},morning:${Array.isArray(lead.routine?.morning)&&lead.routine.morning.length>0},` +
+        `night:${Array.isArray(lead.routine?.night)&&lead.routine.night.length>0},` +
+        `products:${Array.isArray(lead.products?.recommendations)&&lead.products.recommendations.length>0},` +
+        `notes:${Array.isArray(lead.diagnosis?.notes)&&lead.diagnosis.notes.length>0}`
+      )
       console.log(`[ActionEngine] sending diagnosis → lead=${lead.id} chatId=${lead.telegramChatId}`)
       const result = await sendTelegramToUser(lead.telegramChatId, msg, LEAD_BOT_TOKEN)
       if (!result.success && !result.skipped) throw new Error(JSON.stringify(result.error) || 'telegram send failed')
