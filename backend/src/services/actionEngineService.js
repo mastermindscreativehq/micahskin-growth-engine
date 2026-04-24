@@ -137,7 +137,11 @@ function buildDiagnosisMessage(lead) {
   }
 
   lines.push('')
-  lines.push('Stay consistent for 2–3 weeks and monitor how your skin responds. Reply anytime if you want us to adjust the routine for you.')
+  lines.push('Stay consistent for 2–3 weeks and monitor how your skin responds.')
+  lines.push('')
+  lines.push('Reply <b>PRODUCT</b> if you want us to recommend the full product set for this routine.')
+  lines.push('Reply <b>CONSULT</b> if you want private guidance.')
+  lines.push('Reply <b>ACADEMY</b> if you want to learn skincare brand building.')
 
   return lines.join('\n')
 }
@@ -422,14 +426,24 @@ async function _logAction(leadId, chatId, actionType, sendResult) {
 async function _processDiagnosisSends() {
   const now = new Date()
 
+  // Support both new leads (diagnosisStatus='pending') and old leads (null) for backward compat.
+  // diagnosisSent:false is the atomic dedup guard; diagnosisStatus narrows to unsent ones.
   const leads = await prisma.lead.findMany({
     where: {
       diagnosedAt:        { not: null },
       diagnosisSendAfter: { lte: now },
       diagnosisSent:      false,
       telegramChatId:     { not: null },
+      OR: [
+        { diagnosisStatus: 'pending' },
+        { diagnosisStatus: null },
+      ],
     },
   })
+
+  if (leads.length > 0) {
+    console.log(`[Diagnosis] ${leads.length} lead(s) pending — checking dueAt`)
+  }
 
   for (const lead of leads) {
     if (lead.status === 'closed') {
@@ -480,7 +494,7 @@ async function _processDiagnosisSends() {
         },
       })
       await _logAction(lead.id, lead.telegramChatId, 'diagnosis', result)
-      console.log(`[ActionEngine] diagnosis sent → ${lead.fullName} (${lead.id})`)
+      console.log(`[Diagnosis] sent | lead=${lead.fullName} (${lead.id})`)
 
     } catch (err) {
       console.error(`[ActionEngine] diagnosis FAILED for ${lead.id}:`, err.message)

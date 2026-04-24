@@ -584,12 +584,14 @@ model FulfillmentOrder {
   leadId               String
   quoteId              String?
   paymentTransactionId String             @unique
-  status               String             @default("pending_fulfillment")
+  status               String             @default("awaiting_address")
   totalAmount          Float
   customerName         String
   customerEmail        String?
   customerPhone        String?
   deliveryAddress      String?
+  deliveryCity         String?
+  deliveryNotes        String?
   notes                String?
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt

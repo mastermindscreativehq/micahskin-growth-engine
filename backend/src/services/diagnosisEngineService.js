@@ -506,13 +506,10 @@ async function diagnoseLead(leadId) {
     )
   }
 
-  // Auto product offer — fires for product-fit leads immediately after diagnosis.
-  // Non-fatal: errors are caught and logged so diagnoseLead() always returns the result.
-  try {
-    await maybeAutoSendProductOffer(leadId, lead, result)
-  } catch (err) {
-    console.error(`[ProductOffer] unexpected error | leadId=${leadId}:`, err.message)
-  }
+  console.log(
+    `[ProductQuote] skipped until user requests PRODUCT | ` +
+    `leadId=${leadId} nextBestAction=${result.nextBestAction}`
+  )
 
   return result
 }

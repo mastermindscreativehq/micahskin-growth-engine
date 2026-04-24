@@ -1,5 +1,9 @@
+'use strict'
+
 const prisma = require('../lib/prisma')
 const { diagnoseLead } = require('./diagnosisEngineService')
+
+const DIAGNOSIS_DELAY_MINUTES = parseInt(process.env.DIAGNOSIS_DELAY_MINUTES || '10', 10)
 
 // ── Session helpers ───────────────────────────────────────────────────────────
 
@@ -143,7 +147,7 @@ async function handleTelegramMessage(userId, text) {
       })
 
       const now = new Date()
-      const diagnosisSendAfter   = new Date(now.getTime() + 1  * 60 * 60 * 1000)     // +1h
+      const diagnosisSendAfter   = new Date(now.getTime() + DIAGNOSIS_DELAY_MINUTES * 60 * 1000)
       const checkInSendAfter     = new Date(now.getTime() + 24 * 60 * 60 * 1000)     // +24h
       const productRecoSendAfter = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000) // +3 days
 
@@ -167,6 +171,7 @@ async function handleTelegramMessage(userId, text) {
             telegramSensitivity:  collectedData.sensitivity || null,
             telegramBudget:       collectedData.budget      || null,
             telegramRoutineLevel: collectedData.routine     || null,
+            diagnosisStatus:     'pending',
             // Set follow-up timing only if not already scheduled
             ...(existingLead.diagnosisSendAfter ? {} : {
               diagnosisSendAfter,
@@ -195,6 +200,7 @@ async function handleTelegramMessage(userId, text) {
             telegramSensitivity:  collectedData.sensitivity || null,
             telegramBudget:       collectedData.budget      || null,
             telegramRoutineLevel: collectedData.routine     || null,
+            diagnosisStatus:     'pending',
             diagnosisSendAfter,
             checkInSendAfter,
             productRecoSendAfter,
@@ -204,19 +210,22 @@ async function handleTelegramMessage(userId, text) {
       }
 
       console.log(
-        `[Intake] COMPLETE | userId=${userId} leadId=${leadId} ` +
+        `[Intake] completed, diagnosis scheduled | ` +
+        `userId=${userId} leadId=${leadId} ` +
         `concern=${skinConcern} skinType=${collectedData.skinType || 'none'} ` +
-        `budget=${collectedData.budget || 'none'} diagnosisSendAfter=${diagnosisSendAfter.toISOString()}`
+        `budget=${collectedData.budget || 'none'} ` +
+        `dueAt=${diagnosisSendAfter.toISOString()} (${DIAGNOSIS_DELAY_MINUTES}min delay)`
       )
 
-      // Run diagnosis asynchronously — do not block the bot response
+      // Build diagnosis data asynchronously — enriches the lead so the Action Engine
+      // has content to send when diagnosisSendAfter arrives. Does NOT send anything.
       setImmediate(() => {
         diagnoseLead(leadId).catch((err) =>
-          console.error(`[Intake] diagnosis trigger failed for lead ${leadId}:`, err.message)
+          console.error(`[Intake] diagnosis build failed for lead ${leadId}:`, err.message)
         )
       })
 
-      return "Perfect \u2014 we\u2019ve received your details. We\u2019ll prepare a routine for you shortly \ud83c\udf3f"
+      return "Perfect — we've received your details. Our skincare team will review your profile and prepare your diagnosis shortly 🌿"
     }
 
     default:

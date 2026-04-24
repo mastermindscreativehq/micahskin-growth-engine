@@ -7,6 +7,7 @@ const { handlePremiumIntakeReply } = require('../services/premiumDeliveryService
 const { maybeTriggerAutomaticConversion } = require('../services/conversionEngineService')
 const { handleInboundReply, classifyInboundIntent } = require('../services/conversationBrainService')
 const { handleAcademyMemberReply } = require('../services/academyExperienceService')
+const { generateQuoteForLead } = require('../services/productQuoteService')
 
 const LEAD_BOT_TOKEN    = process.env.TELEGRAM_LEAD_BOT_TOKEN
 const ACADEMY_BOT_TOKEN = process.env.TELEGRAM_ACADEMY_BOT_TOKEN
@@ -92,7 +93,20 @@ async function handleLeadWebhook(req, res) {
       }).catch(err => console.error('[LeadWebhook] message tracking failed:', err.message))
     }
 
+    // ── Delivery address collection (highest priority after /start) ──────────
+    // Fires when lead has just paid and we're waiting for their shipping details.
+    if (lead && lead.telegramStage === 'awaiting_delivery_address') {
+      await handleDeliveryAddressReply(lead, text, chatId)
+      return
+    }
+
     if (lead && isPostDiagnosisLead(lead)) {
+      // ── PRODUCT keyword — create draft quote, do NOT auto-send ────────────
+      if (text.trim().toUpperCase() === 'PRODUCT') {
+        await handleProductRequest(lead, chatId)
+        return
+      }
+
       // ── Conversation Brain routes and responds ────────────────────────────
       const brainIntent = classifyInboundIntent(text)
       console.log(`[LeadWebhook] post-diagnosis route | leadId=${lead.id} intent=${brainIntent}`)
@@ -377,6 +391,119 @@ async function linkAcademy({ registrationId, chatId, username, botToken }) {
   ).catch(() => {})
 
   console.log(`[Academy Webhook] Academy registration ${registrationId} linked to chatId=${chatId}`)
+}
+
+// ── Delivery address collection ───────────────────────────────────────────────
+
+/**
+ * Receives the lead's delivery details after payment confirmation.
+ * Finds the most recent FulfillmentOrder awaiting an address, saves it,
+ * and marks the order ready for packing.
+ */
+async function handleDeliveryAddressReply(lead, text, chatId) {
+  console.log(`[Fulfillment] receiving address | leadId=${lead.id}`)
+
+  const order = await prisma.fulfillmentOrder.findFirst({
+    where: { leadId: lead.id, status: 'awaiting_address' },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  if (!order) {
+    console.warn(`[Fulfillment] no awaiting_address order found | leadId=${lead.id}`)
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { telegramStage: 'diagnosis_sent' },
+    })
+    return
+  }
+
+  const now = new Date()
+
+  await prisma.fulfillmentOrder.update({
+    where: { id: order.id },
+    data: {
+      deliveryAddress: text,
+      status:          'pending_packing',
+      customerPhone:   order.customerPhone || lead.phone || null,
+    },
+  })
+
+  await prisma.lead.update({
+    where: { id: lead.id },
+    data: { telegramStage: 'diagnosis_sent' },
+  })
+
+  console.log(`[Fulfillment] address saved | orderId=${order.id} leadId=${lead.id}`)
+
+  await sendTelegramToUser(
+    chatId,
+    'Thank you! Your delivery details have been saved.\n\n' +
+    'Our team will process your order and reach out once it is ready to ship. 🌿',
+    LEAD_BOT_TOKEN
+  ).catch(e => console.error('[Fulfillment] address confirmation send failed:', e.message))
+
+  // Admin alert
+  await sendTelegramMessage(
+    `📦 <b>Delivery address received</b>\n\n` +
+    `<b>Name:</b> ${lead.fullName}\n` +
+    `<b>Order:</b> ...${order.id.slice(-8)}\n` +
+    `<b>Details:</b>\n${text.slice(0, 400)}`
+  ).catch(() => {})
+}
+
+// ── PRODUCT intent handler ────────────────────────────────────────────────────
+
+/**
+ * When a lead replies PRODUCT after receiving their diagnosis, create a draft
+ * ProductQuote for admin review. Do NOT send the quote or payment link to the lead.
+ */
+async function handleProductRequest(lead, chatId) {
+  console.log(`[ProductQuote] PRODUCT intent | leadId=${lead.id}`)
+
+  try {
+    const quote = await generateQuoteForLead(lead.id)
+
+    if (!quote) {
+      console.warn(`[ProductQuote] quote generation returned null | leadId=${lead.id}`)
+      await sendTelegramToUser(
+        chatId,
+        "Our team is putting together your personalised product set. We'll send the recommendation shortly 🌿",
+        LEAD_BOT_TOKEN
+      ).catch(() => {})
+      return
+    }
+
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { quoteStatus: 'draft' },
+    })
+
+    console.log(`[ProductQuote] draft created after PRODUCT intent | leadId=${lead.id} quoteId=${quote.id}`)
+
+    // Acknowledge the lead — do NOT send the quote yet
+    await sendTelegramToUser(
+      chatId,
+      "Great — our team is reviewing your profile and putting together the best product set for your skin. We'll send the full recommendation shortly 🌿",
+      LEAD_BOT_TOKEN
+    ).catch(e => console.error('[ProductQuote] lead ack failed:', e.message))
+
+    // Notify admin to review and manually send the quote
+    await sendTelegramMessage(
+      `⚡ <b>Lead requested products (PRODUCT)</b>\n\n` +
+      `<b>Name:</b> ${lead.fullName}\n` +
+      `<b>Concern:</b> ${(lead.primaryConcern || lead.skinConcern || '—').replace(/_/g, ' ')}\n` +
+      `<b>Quote ID:</b> ...${quote.id.slice(-8)}\n\n` +
+      `Quote draft is ready for review. Edit prices and send from the CRM.`
+    ).catch(() => {})
+
+  } catch (err) {
+    console.error(`[ProductQuote] draft creation failed | leadId=${lead.id}:`, err.message)
+    await sendTelegramToUser(
+      chatId,
+      "Our team is putting together your personalised product set. We'll send the recommendation shortly 🌿",
+      LEAD_BOT_TOKEN
+    ).catch(() => {})
+  }
 }
 
 module.exports = { handleLeadWebhook, handleAcademyWebhook }

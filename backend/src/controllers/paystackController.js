@@ -223,22 +223,37 @@ async function handleProductQuotePayment(event) {
       },
     })
 
+    const hasAddress = !!(lead.deliveryAddress || lead.phone)
+    const fulfillmentStatus = hasAddress ? 'pending_packing' : 'awaiting_address'
+
     const order = await tx.fulfillmentOrder.create({
       data: {
         leadId,
         quoteId,
         paymentTransactionId: paymentTx.id,
-        status:        'pending_fulfillment',
-        totalAmount:   amountNgn,
-        customerName:  lead.fullName || customer?.first_name || 'Unknown',
-        customerEmail: lead.email    || customer?.email      || null,
-        customerPhone: lead.phone    || null,
-        notes:         `Paystack ref: ${reference}`,
+        status:         fulfillmentStatus,
+        totalAmount:    amountNgn,
+        customerName:   lead.fullName || customer?.first_name || 'Unknown',
+        customerEmail:  lead.email    || customer?.email      || null,
+        customerPhone:  lead.phone    || null,
+        deliveryAddress: lead.deliveryAddress || null,
+        notes:          `Paystack ref: ${reference}`,
       },
     })
 
+    // Flag lead to collect delivery address via Telegram if we don't have it
+    if (!hasAddress && lead.telegramChatId) {
+      await tx.lead.update({
+        where: { id: leadId },
+        data: { telegramStage: 'awaiting_delivery_address' },
+      })
+    }
+
     console.log(`[PaystackWebhook] paid quote=${quoteId} txId=${paymentTx.id}`)
-    console.log(`[Fulfillment] created order=${order.id}`)
+    console.log(`[Fulfillment] created order=${order.id} status=${fulfillmentStatus}`)
+    if (fulfillmentStatus === 'awaiting_address') {
+      console.log(`[Fulfillment] awaiting address | leadId=${leadId}`)
+    }
   })
 
   await prisma.messageLog.create({
@@ -274,20 +289,41 @@ async function handleProductQuotePayment(event) {
 
   // Lead confirmation via Telegram
   if (lead.telegramChatId) {
-    const leadMsg = [
-      'Payment confirmed ✅',
-      '',
-      "We've received your payment for your skincare package.",
-      'Our team is preparing your order now.',
-      '',
-      'We will reach out shortly to confirm your delivery details.',
-      '',
-      'Thank you for trusting MICAHSKIN! 🌿',
-    ].join('\n')
+    const hasAddress = !!(lead.deliveryAddress || lead.phone)
+
+    let leadMsg
+    if (hasAddress) {
+      leadMsg = [
+        'Payment confirmed ✅',
+        '',
+        "We've received your payment for your skincare package.",
+        'Our team is preparing your order now.',
+        '',
+        'We will reach out shortly once your order is ready.',
+        '',
+        'Thank you for trusting MICAHSKIN! 🌿',
+      ].join('\n')
+    } else {
+      leadMsg = [
+        'Payment confirmed ✅',
+        '',
+        "We've received your payment for your skincare package.",
+        '',
+        'To complete your order, please send us your delivery details:',
+        '',
+        '1. Full name',
+        '2. Phone number',
+        '3. Delivery address',
+        '4. City / State',
+        '5. Any delivery notes (or reply NONE)',
+        '',
+        'Please send all details in one message so we can process your order quickly 🌿',
+      ].join('\n')
+    }
 
     await sendTelegramToUser(lead.telegramChatId, leadMsg, LEAD_BOT_TOKEN)
       .catch(e => console.error('[Telegram] lead confirmation failed:', e.message))
-    console.log(`[Telegram] payment confirmation sent | leadId=${leadId}`)
+    console.log(`[Telegram] payment confirmation sent | leadId=${leadId} awaitingAddress=${!hasAddress}`)
   }
 }
 
