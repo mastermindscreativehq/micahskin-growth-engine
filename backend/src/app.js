@@ -15,6 +15,7 @@ const paystackRouter = require('./routes/paystack')
 const scrapingRouter = require('./routes/scraping')
 const conversionRouter = require('./routes/conversionRoutes')
 const automationRouter = require('./routes/automation')
+const productsRouter   = require('./routes/products')
 
 const app = express()
 
@@ -170,6 +171,9 @@ app.use('/api/conversion', conversionRouter)
 
 // Automation gateway — n8n webhook endpoints, protected by x-automation-secret
 app.use('/api/automation', automationRouter)
+
+// Product catalog, ingestion, matching, quotes
+app.use('/api/products', productsRouter)
 
 // ─────────────────────────────────────────────────────────────
 // 404

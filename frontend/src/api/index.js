@@ -376,3 +376,85 @@ export async function importInstagramCommentDataset(datasetId) {
     body: JSON.stringify({ datasetId }),
   })
 }
+
+// ── Product Catalog ───────────────────────────────────────────────────────────
+
+export async function fetchProducts(params = {}) {
+  return protectedFetch(`${BASE_URL}/api/products${buildQuery(params)}`)
+}
+
+export async function createProduct(data) {
+  return protectedFetch(`${BASE_URL}/api/products`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function updateProduct(id, data) {
+  return protectedFetch(`${BASE_URL}/api/products/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function deactivateProduct(id) {
+  return protectedFetch(`${BASE_URL}/api/products/${id}`, { method: 'DELETE' })
+}
+
+export async function ingestManualProducts(products) {
+  return protectedFetch(`${BASE_URL}/api/products/ingest/manual`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ products }),
+  })
+}
+
+export async function fetchIngestionLogs() {
+  return protectedFetch(`${BASE_URL}/api/products/ingestion/logs`)
+}
+
+export async function matchProductsForLead(leadId) {
+  return protectedFetch(`${BASE_URL}/api/products/match/${leadId}`)
+}
+
+export async function generateProductQuote(leadId) {
+  return protectedFetch(`${BASE_URL}/api/products/quotes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ leadId }),
+  })
+}
+
+export async function fetchQuotesForLead(leadId) {
+  return protectedFetch(`${BASE_URL}/api/products/quotes/lead/${leadId}`)
+}
+
+export async function updateQuoteItem(quoteId, itemId, fields) {
+  return protectedFetch(`${BASE_URL}/api/products/quotes/${quoteId}/items/${itemId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  })
+}
+
+export async function reviewQuote(quoteId, action) {
+  return protectedFetch(`${BASE_URL}/api/products/quotes/${quoteId}/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  })
+}
+
+export async function getLeadQuote(leadId) {
+  return protectedFetch(`${BASE_URL}/api/products/leads/${leadId}/quote`)
+}
+
+export async function sendDiagnosisAndQuote(leadId, quoteId) {
+  return protectedFetch(`${BASE_URL}/api/products/leads/${leadId}/send-quote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quoteId: quoteId || undefined }),
+  })
+}

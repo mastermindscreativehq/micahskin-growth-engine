@@ -154,14 +154,111 @@ model Lead {
   academyPitchCount        Int       @default(0)
   productOfferCount        Int       @default(0)
   consultOfferCount        Int       @default(0)
+  quoteStatus              String?
+  productQuoteSentAt       DateTime?
   academyAccess            Boolean   @default(false)
   academyInviteCode        String?
   academyJoinedAt          DateTime?
   academyProgressStage     String?
   academyEngagementScore   Int?
   replies                  Reply[]
+  quotes                   ProductQuote[]
 
   @@map("leads")
+}
+
+model SkincareProduct {
+  id                  String    @id @default(cuid())
+  productName         String
+  normalizedName      String
+  brand               String
+  normalizedBrand     String
+  category            String
+  subcategory         String?
+  concernsSupported   String[]
+  skinTypesSupported  String[]
+  sensitivityFriendly Boolean   @default(false)
+  routineStep         String
+  description         String?
+  keyIngredients      String[]
+  contraindications   String[]
+  price               Float?
+  currency            String    @default("NGN")
+  priceBand           String?
+  purchaseUrl         String?
+  imageUrl            String?
+  sourceStore         String    @default("manual")
+  sourceType          String    @default("manual")
+  country             String    @default("NG")
+  market              String    @default("nigeria")
+  availabilityStatus  String    @default("available")
+  stockStatus         String    @default("in_stock")
+  confidenceScore     Float?    @default(1.0)
+  lastCheckedAt       DateTime?
+  isActive            Boolean   @default(true)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([normalizedName, normalizedBrand, sourceStore])
+  @@index([category])
+  @@index([priceBand])
+  @@index([isActive])
+  @@map("skincare_products")
+}
+
+model ProductIngestionLog {
+  id            String    @id @default(cuid())
+  source        String
+  sourceStore   String?
+  productsFound Int       @default(0)
+  inserted      Int       @default(0)
+  updated       Int       @default(0)
+  skipped       Int       @default(0)
+  duplicates    Int       @default(0)
+  failed        Int       @default(0)
+  status        String    @default("running")
+  error         String?
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  metadata      Json?
+
+  @@map("product_ingestion_logs")
+}
+
+model ProductQuote {
+  id          String             @id @default(cuid())
+  leadId      String
+  status      String             @default("pending_review")
+  totalAmount Float              @default(0)
+  currency    String             @default("NGN")
+  notes       String?
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  sentAt      DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  lead        Lead               @relation(fields: [leadId], references: [id])
+  items       ProductQuoteItem[]
+
+  @@index([leadId])
+  @@index([status])
+  @@map("product_quotes")
+}
+
+model ProductQuoteItem {
+  id          String       @id @default(cuid())
+  quoteId     String
+  productId   String?
+  productName String
+  routineStep String?
+  quantity    Int          @default(1)
+  unitPrice   Float
+  editedPrice Float?
+  subtotal    Float
+  notes       String?
+  quote       ProductQuote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@map("product_quote_items")
 }
 
 model AcademyRegistration {

@@ -20,7 +20,14 @@ import {
   sendConversionCustomMessage,
   fetchConversionContext,
   academyOperatorAction,
+  fetchProducts,
+  createProduct,
+  updateProduct,
+  deactivateProduct,
+  ingestManualProducts,
+  fetchIngestionLogs,
 } from '../api/index.js'
+import ProductQuotePanel from './ProductQuotePanel.jsx'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -976,6 +983,11 @@ function LeadsTab() {
                         {/* Conversion Trigger Panel — manual controls + auto-conversion state */}
                         {(lead.telegramStarted || lead.diagnosisSent || lead.conversionStage) && (
                           <ConversionTriggerPanel lead={lead} onRefresh={load} />
+                        )}
+
+                        {/* Product Intelligence Panel — matched products, quote builder */}
+                        {lead.primaryConcern && (
+                          <ProductQuotePanel lead={lead} />
                         )}
 
                         {/* Action Engine Status Panel */}
@@ -3030,13 +3042,413 @@ function ScrapingTab() {
   )
 }
 
+// ── Products Tab ──────────────────────────────────────────────────────────────
+
+const CATEGORY_OPTIONS = [
+  '', 'cleanser', 'toner', 'serum', 'moisturizer', 'sunscreen',
+  'spot_treatment', 'oil', 'exfoliant', 'mask', 'body', 'other',
+]
+const CONCERN_OPTIONS = [
+  '', 'acne', 'hyperpigmentation', 'dry_skin', 'oily_skin',
+  'sensitivity', 'stretch_marks', 'body_care', 'routine_building',
+]
+const PRICE_BAND_OPTIONS = ['', 'budget', 'mid-range', 'premium']
+
+const BLANK_PRODUCT = {
+  productName: '', brand: '', category: '', subcategory: '',
+  concernsSupported: '', skinTypesSupported: '',
+  sensitivityFriendly: false, routineStep: '',
+  description: '', keyIngredients: '', contraindications: '',
+  price: '', currency: 'NGN', purchaseUrl: '', imageUrl: '',
+  sourceStore: 'manual', country: 'NG', market: 'nigeria',
+  availabilityStatus: 'available', stockStatus: 'in_stock',
+}
+
+function ProductFormModal({ onClose, onSaved }) {
+  const [form,    setForm]    = useState(BLANK_PRODUCT)
+  const [saving,  setSaving]  = useState(false)
+  const [err,     setErr]     = useState(null)
+
+  function set(key, val) { setForm(f => ({ ...f, [key]: val })) }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (!form.productName.trim() || !form.brand.trim() || !form.category) {
+      setErr('Product name, brand, and category are required')
+      return
+    }
+    setSaving(true)
+    setErr(null)
+    try {
+      const payload = {
+        ...form,
+        price:              form.price ? Number(form.price) : null,
+        concernsSupported:  form.concernsSupported.split(',').map(s => s.trim()).filter(Boolean),
+        skinTypesSupported: form.skinTypesSupported.split(',').map(s => s.trim()).filter(Boolean),
+        keyIngredients:     form.keyIngredients.split(',').map(s => s.trim()).filter(Boolean),
+        contraindications:  form.contraindications.split(',').map(s => s.trim()).filter(Boolean),
+      }
+      await createProduct(payload)
+      onSaved()
+      onClose()
+    } catch (e) {
+      setErr(e?.message || 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const field = (label, key, type = 'text', opts) => (
+    <div key={key}>
+      <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">{label}</label>
+      {opts ? (
+        <select
+          value={form[key]}
+          onChange={e => set(key, e.target.value)}
+          className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-teal-300"
+        >
+          {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      ) : (
+        <input
+          type={type}
+          value={form[key]}
+          onChange={e => set(key, type === 'checkbox' ? e.target.checked : e.target.value)}
+          className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-teal-300"
+        />
+      )}
+    </div>
+  )
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl overflow-y-auto max-h-[90vh]" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+          <p className="font-semibold text-gray-800 text-sm">Add Product to Catalog</p>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg">×</button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="px-4 py-3 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            {field('Product Name *', 'productName')}
+            {field('Brand *', 'brand')}
+            {field('Category *', 'category', 'text', CATEGORY_OPTIONS.slice(1).map(c => ({ value: c, label: c || '— select —' })))}
+            {field('Sub-category', 'subcategory')}
+            {field('Price (₦)', 'price', 'number')}
+            {field('Currency', 'currency')}
+            {field('Routine Step', 'routineStep', 'text', [
+              { value: '', label: '— auto from category —' },
+              ...CATEGORY_OPTIONS.slice(1).map(c => ({ value: c, label: c })),
+            ])}
+            {field('Source Store', 'sourceStore')}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Concerns (comma-separated)</label>
+              <input value={form.concernsSupported} onChange={e => set('concernsSupported', e.target.value)} placeholder="acne, hyperpigmentation…" className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-teal-300" />
+              <p className="text-[10px] text-gray-400 mt-0.5">Options: acne, hyperpigmentation, dry_skin, oily_skin, sensitivity, stretch_marks, body_care</p>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Skin Types (comma-separated)</label>
+              <input value={form.skinTypesSupported} onChange={e => set('skinTypesSupported', e.target.value)} placeholder="oily, dry, all…" className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-teal-300" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Key Ingredients (comma-separated)</label>
+              <input value={form.keyIngredients} onChange={e => set('keyIngredients', e.target.value)} placeholder="niacinamide, salicylic acid…" className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-teal-300" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Contraindications (comma-separated)</label>
+              <input value={form.contraindications} onChange={e => set('contraindications', e.target.value)} placeholder="avoid with retinol…" className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-teal-300" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {field('Purchase URL', 'purchaseUrl')}
+            {field('Image URL', 'imageUrl')}
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Description</label>
+            <textarea rows={2} value={form.description} onChange={e => set('description', e.target.value)} className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-teal-300 resize-none" />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="sf" checked={form.sensitivityFriendly} onChange={e => set('sensitivityFriendly', e.target.checked)} className="rounded border-gray-300" />
+            <label htmlFor="sf" className="text-xs text-gray-600">Sensitivity-friendly</label>
+          </div>
+
+          {err && <p className="text-xs text-red-500">{err}</p>}
+
+          <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-3">
+            <button type="button" onClick={onClose} className="rounded border border-gray-200 px-4 py-1.5 text-xs text-gray-500 hover:bg-gray-50">Cancel</button>
+            <button type="submit" disabled={saving} className="rounded bg-teal-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50">
+              {saving ? 'Saving…' : 'Add Product'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function ProductsTab() {
+  const [products, setProducts] = useState([])
+  const [logs,     setLogs]     = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [search,   setSearch]   = useState('')
+  const [catFilter, setCatFilter] = useState('')
+  const [concernFilter, setConcernFilter] = useState('')
+  const [priceBandFilter, setPriceBandFilter] = useState('')
+  const [page,     setPage]     = useState(1)
+  const [total,    setTotal]    = useState(0)
+  const [showForm, setShowForm] = useState(false)
+  const [showLogs, setShowLogs] = useState(false)
+  const [toast,    setToast]    = useState(null)
+  const [deactivating, setDeactivating] = useState(null)
+  const LIMIT = 20
+
+  function showToast(msg, ok = true) {
+    setToast({ msg, ok })
+    setTimeout(() => setToast(null), 3500)
+  }
+
+  const load = useCallback(() => {
+    setLoading(true)
+    fetchProducts({ search, category: catFilter, concern: concernFilter, priceBand: priceBandFilter, page, limit: LIMIT })
+      .then(res => { setProducts(res.data || []); setTotal(res.total || 0) })
+      .catch(e => showToast(e?.message || 'Failed to load products', false))
+      .finally(() => setLoading(false))
+  }, [search, catFilter, concernFilter, priceBandFilter, page])
+
+  useEffect(() => { load() }, [load])
+  useEffect(() => { setPage(1) }, [search, catFilter, concernFilter, priceBandFilter])
+
+  async function handleDeactivate(id, name) {
+    if (!window.confirm(`Deactivate "${name}"? It will no longer appear in matches.`)) return
+    setDeactivating(id)
+    try {
+      await deactivateProduct(id)
+      showToast(`${name} deactivated`)
+      load()
+    } catch (e) {
+      showToast(e?.message || 'Deactivate failed', false)
+    } finally {
+      setDeactivating(null)
+    }
+  }
+
+  async function loadLogs() {
+    try {
+      const res = await fetchIngestionLogs()
+      setLogs(res.data || [])
+      setShowLogs(true)
+    } catch (e) {
+      showToast(e?.message || 'Failed to load logs', false)
+    }
+  }
+
+  const pages = Math.max(1, Math.ceil(total / LIMIT))
+
+  return (
+    <div className="space-y-4">
+      {/* Header actions */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="font-semibold text-gray-800">Product Catalog</h2>
+          <p className="text-xs text-gray-400">{total} product{total !== 1 ? 's' : ''} in catalog</p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={loadLogs}
+            className="rounded border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+          >
+            Ingestion Logs
+          </button>
+          <button
+            onClick={() => setShowForm(true)}
+            className="rounded bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700"
+          >
+            + Add Product
+          </button>
+        </div>
+      </div>
+
+      {toast && (
+        <div className={`rounded-lg border px-3 py-2 text-xs font-medium ${toast.ok ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-600'}`}>
+          {toast.msg}
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-2">
+        <input
+          type="text"
+          placeholder="Search products…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-400 flex-1 min-w-[200px]"
+        />
+        <select value={catFilter} onChange={e => setCatFilter(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-400">
+          <option value="">All categories</option>
+          {CATEGORY_OPTIONS.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={concernFilter} onChange={e => setConcernFilter(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-400">
+          <option value="">All concerns</option>
+          {CONCERN_OPTIONS.slice(1).map(c => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}
+        </select>
+        <select value={priceBandFilter} onChange={e => setPriceBandFilter(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-400">
+          {PRICE_BAND_OPTIONS.map(p => <option key={p} value={p}>{p || 'All price bands'}</option>)}
+        </select>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+              <th className="px-4 py-3">Product</th>
+              <th className="px-4 py-3">Brand</th>
+              <th className="px-4 py-3">Category</th>
+              <th className="px-4 py-3">Concerns</th>
+              <th className="px-4 py-3">Price</th>
+              <th className="px-4 py-3">Band</th>
+              <th className="px-4 py-3">Stock</th>
+              <th className="px-4 py-3"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && (
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-xs text-gray-400">Loading…</td></tr>
+            )}
+            {!loading && products.length === 0 && (
+              <tr>
+                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">
+                  No products yet — click "+ Add Product" to add your first.
+                </td>
+              </tr>
+            )}
+            {!loading && products.map(p => (
+              <tr key={p.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
+                <td className="px-4 py-2.5">
+                  <p className="font-medium text-gray-800 text-xs">{p.productName}</p>
+                  {p.sensitivityFriendly && (
+                    <span className="text-[10px] text-green-600">✓ sensitivity-safe</span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 text-xs text-gray-600">{p.brand}</td>
+                <td className="px-4 py-2.5">
+                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600 capitalize">{p.category}</span>
+                </td>
+                <td className="px-4 py-2.5">
+                  <div className="flex flex-wrap gap-1">
+                    {(p.concernsSupported || []).slice(0, 3).map(c => (
+                      <span key={c} className="rounded bg-teal-50 border border-teal-100 px-1 py-0.5 text-[10px] text-teal-700 capitalize">
+                        {c.replace(/_/g, ' ')}
+                      </span>
+                    ))}
+                    {(p.concernsSupported || []).length > 3 && (
+                      <span className="text-[10px] text-gray-400">+{p.concernsSupported.length - 3}</span>
+                    )}
+                  </div>
+                </td>
+                <td className="px-4 py-2.5 text-xs font-medium text-gray-700">
+                  {p.price ? `₦${p.price.toLocaleString('en-NG')}` : <span className="text-amber-500">no price</span>}
+                </td>
+                <td className="px-4 py-2.5">
+                  {p.priceBand && (
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${
+                      p.priceBand === 'budget' ? 'bg-green-100 text-green-700' :
+                      p.priceBand === 'mid-range' ? 'bg-blue-100 text-blue-700' :
+                      'bg-purple-100 text-purple-700'
+                    }`}>{p.priceBand}</span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5">
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] capitalize ${
+                    p.stockStatus === 'in_stock' ? 'bg-green-50 text-green-700' :
+                    p.stockStatus === 'out_of_stock' ? 'bg-red-50 text-red-600' :
+                    'bg-gray-100 text-gray-500'
+                  }`}>{(p.stockStatus || '').replace(/_/g, ' ')}</span>
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  <button
+                    disabled={deactivating === p.id}
+                    onClick={() => handleDeactivate(p.id, p.productName)}
+                    className="text-[10px] text-red-500 hover:underline disabled:opacity-40"
+                  >
+                    {deactivating === p.id ? '…' : 'Remove'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination */}
+      {pages > 1 && (
+        <div className="flex items-center justify-between text-xs text-gray-500">
+          <span>{total} total</span>
+          <div className="flex gap-1">
+            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="rounded border border-gray-200 px-2 py-1 disabled:opacity-40 hover:bg-gray-50">←</button>
+            <span className="px-2 py-1">Page {page} of {pages}</span>
+            <button disabled={page >= pages} onClick={() => setPage(p => p + 1)} className="rounded border border-gray-200 px-2 py-1 disabled:opacity-40 hover:bg-gray-50">→</button>
+          </div>
+        </div>
+      )}
+
+      {/* Ingestion logs modal */}
+      {showLogs && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowLogs(false)}>
+          <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+              <p className="font-semibold text-gray-800 text-sm">Ingestion Logs</p>
+              <button onClick={() => setShowLogs(false)} className="text-gray-400 hover:text-gray-600 text-lg">×</button>
+            </div>
+            <div className="p-4 space-y-2">
+              {logs.length === 0 && <p className="text-sm text-gray-400">No ingestion logs yet.</p>}
+              {logs.map(log => (
+                <div key={log.id} className="rounded-lg border border-gray-100 px-3 py-2 text-xs">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-semibold text-gray-700">{log.source}</span>
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${log.status === 'complete' ? 'bg-green-100 text-green-700' : log.status === 'failed' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-700'}`}>{log.status}</span>
+                    <span className="text-gray-400 ml-auto">{new Date(log.startedAt).toLocaleString('en-GB')}</span>
+                  </div>
+                  <div className="flex gap-4 text-gray-500">
+                    <span>Found: <b>{log.productsFound}</b></span>
+                    <span className="text-green-600">Inserted: <b>{log.inserted}</b></span>
+                    <span className="text-blue-600">Updated: <b>{log.updated}</b></span>
+                    <span>Skipped: <b>{log.skipped}</b></span>
+                    {log.failed > 0 && <span className="text-red-600">Failed: <b>{log.failed}</b></span>}
+                  </div>
+                  {log.error && <p className="text-red-500 mt-1 text-[10px]">{log.error}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add product modal */}
+      {showForm && (
+        <ProductFormModal onClose={() => setShowForm(false)} onSaved={() => { load(); showToast('Product added') }} />
+      )}
+    </div>
+  )
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'leads',    label: 'Leads' },
-  { id: 'academy',  label: 'Academy' },
-  { id: 'scraping', label: 'Scraping' },
+  { id: 'overview',  label: 'Overview' },
+  { id: 'leads',     label: 'Leads' },
+  { id: 'academy',   label: 'Academy' },
+  { id: 'scraping',  label: 'Scraping' },
+  { id: 'products',  label: 'Products' },
 ]
 
 export default function AdminDashboard({ onBack, onLogout }) {
@@ -3089,10 +3501,11 @@ export default function AdminDashboard({ onBack, onLogout }) {
 
       {/* Content */}
       <main className="mx-auto max-w-6xl px-3 sm:px-4 py-5 sm:py-8">
-        {activeTab === 'overview' && <OverviewTab />}
-        {activeTab === 'leads'    && <LeadsTab />}
-        {activeTab === 'academy'  && <AcademyTab />}
-        {activeTab === 'scraping' && <ScrapingTab />}
+        {activeTab === 'overview'  && <OverviewTab />}
+        {activeTab === 'leads'     && <LeadsTab />}
+        {activeTab === 'academy'   && <AcademyTab />}
+        {activeTab === 'scraping'  && <ScrapingTab />}
+        {activeTab === 'products'  && <ProductsTab />}
       </main>
     </div>
   )
