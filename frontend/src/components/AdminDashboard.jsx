@@ -28,6 +28,7 @@ import {
   fetchIngestionLogs,
 } from '../api/index.js'
 import ProductQuotePanel from './ProductQuotePanel.jsx'
+import FulfillmentPanel from './FulfillmentPanel.jsx'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -988,6 +989,11 @@ function LeadsTab() {
                         {/* Product Intelligence Panel — matched products, quote builder */}
                         {lead.primaryConcern && (
                           <ProductQuotePanel lead={lead} />
+                        )}
+
+                        {/* Fulfillment Panel — order packing/delivery for paid product quotes */}
+                        {(lead.paymentStatus === 'paid' || lead.quoteStatus === 'paid') && (
+                          <FulfillmentPanel lead={lead} />
                         )}
 
                         {/* Action Engine Status Panel */}

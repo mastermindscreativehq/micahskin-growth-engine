@@ -156,6 +156,9 @@ model Lead {
   consultOfferCount        Int       @default(0)
   quoteStatus              String?
   productQuoteSentAt       DateTime?
+  paymentStatus            String?
+  paidAt                   DateTime?
+  lastPaidAmount           Float?
   academyAccess            Boolean   @default(false)
   academyInviteCode        String?
   academyJoinedAt          DateTime?
@@ -163,6 +166,8 @@ model Lead {
   academyEngagementScore   Int?
   replies                  Reply[]
   quotes                   ProductQuote[]
+  paymentTransactions      PaymentTransaction[]
+  fulfillmentOrders        FulfillmentOrder[]
 
   @@map("leads")
 }
@@ -226,19 +231,25 @@ model ProductIngestionLog {
 }
 
 model ProductQuote {
-  id          String             @id @default(cuid())
-  leadId      String
-  status      String             @default("pending_review")
-  totalAmount Float              @default(0)
-  currency    String             @default("NGN")
-  notes       String?
-  reviewedBy  String?
-  reviewedAt  DateTime?
-  sentAt      DateTime?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  lead        Lead               @relation(fields: [leadId], references: [id])
-  items       ProductQuoteItem[]
+  id                String             @id @default(cuid())
+  leadId            String
+  status            String             @default("pending_review")
+  totalAmount       Float              @default(0)
+  currency          String             @default("NGN")
+  notes             String?
+  reviewedBy        String?
+  reviewedAt        DateTime?
+  sentAt            DateTime?
+  paymentStatus     String             @default("pending")
+  paidAt            DateTime?
+  paymentReference  String?
+  fulfillmentStatus String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  lead              Lead               @relation(fields: [leadId], references: [id])
+  items             ProductQuoteItem[]
+  paymentTransactions PaymentTransaction[]
+  fulfillmentOrders   FulfillmentOrder[]
 
   @@index([leadId])
   @@index([status])
@@ -544,6 +555,51 @@ model academy_invites {
   @@index([invite_code], map: "idx_academy_invites_code")
   @@index([expires_at], map: "idx_academy_invites_expires_at")
   @@index([source], map: "idx_academy_invites_source")
+}
+
+model PaymentTransaction {
+  id                String            @id @default(cuid())
+  leadId            String
+  quoteId           String?
+  paystackReference String            @unique
+  amount            Float
+  currency          String            @default("NGN")
+  status            String            @default("success")
+  channel           String?
+  paidAt            DateTime?
+  rawPayload        Json?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  lead              Lead              @relation(fields: [leadId], references: [id])
+  quote             ProductQuote?     @relation(fields: [quoteId], references: [id])
+  fulfillmentOrder  FulfillmentOrder?
+
+  @@index([leadId])
+  @@index([quoteId])
+  @@map("payment_transactions")
+}
+
+model FulfillmentOrder {
+  id                   String             @id @default(cuid())
+  leadId               String
+  quoteId              String?
+  paymentTransactionId String             @unique
+  status               String             @default("pending_fulfillment")
+  totalAmount          Float
+  customerName         String
+  customerEmail        String?
+  customerPhone        String?
+  deliveryAddress      String?
+  notes                String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  lead                 Lead               @relation(fields: [leadId], references: [id])
+  quote                ProductQuote?      @relation(fields: [quoteId], references: [id])
+  paymentTransaction   PaymentTransaction @relation(fields: [paymentTransactionId], references: [id])
+
+  @@index([leadId])
+  @@index([status])
+  @@map("fulfillment_orders")
 }
 
 /// Quiz session state — tracks per-user quiz progress in the n8n academy bot.

@@ -15,7 +15,9 @@ const paystackRouter = require('./routes/paystack')
 const scrapingRouter = require('./routes/scraping')
 const conversionRouter = require('./routes/conversionRoutes')
 const automationRouter = require('./routes/automation')
-const productsRouter   = require('./routes/products')
+const productsRouter     = require('./routes/products')
+const paymentsRouter     = require('./routes/payments')
+const fulfillmentRouter  = require('./routes/fulfillment')
 
 const app = express()
 
@@ -174,6 +176,12 @@ app.use('/api/automation', automationRouter)
 
 // Product catalog, ingestion, matching, quotes
 app.use('/api/products', productsRouter)
+
+// Payment transactions
+app.use('/api/payments', paymentsRouter)
+
+// Fulfillment orders
+app.use('/api/fulfillment', fulfillmentRouter)
 
 // ─────────────────────────────────────────────────────────────
 // 404

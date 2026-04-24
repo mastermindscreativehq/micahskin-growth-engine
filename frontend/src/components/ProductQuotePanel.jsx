@@ -29,6 +29,19 @@ const QUOTE_STATUS_STYLE = {
   cancelled:      'bg-gray-100 text-gray-500',
 }
 
+const PAYMENT_STATUS_STYLE = {
+  pending:  'bg-gray-100 text-gray-500',
+  paid:     'bg-green-100 text-green-700',
+  failed:   'bg-red-100 text-red-600',
+}
+
+const FULFILLMENT_STATUS_STYLE = {
+  pending_fulfillment: 'bg-amber-100 text-amber-700',
+  packed:              'bg-blue-100 text-blue-700',
+  delivered:           'bg-green-100 text-green-700',
+  cancelled:           'bg-gray-100 text-gray-500',
+}
+
 // ── Match preview ─────────────────────────────────────────────────────────────
 
 function MatchPreview({ match }) {
@@ -274,9 +287,25 @@ function QuoteCard({ quote, onRefresh, leadId, lead }) {
         <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize ${statusStyle}`}>
           {quote.status.replace(/_/g, ' ')}
         </span>
+        {quote.paymentStatus && (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize ${PAYMENT_STATUS_STYLE[quote.paymentStatus] || 'bg-gray-100 text-gray-500'}`}>
+            payment: {quote.paymentStatus}
+          </span>
+        )}
+        {quote.fulfillmentStatus && (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${FULFILLMENT_STATUS_STYLE[quote.fulfillmentStatus] || 'bg-gray-100 text-gray-500'}`}>
+            {quote.fulfillmentStatus.replace(/_/g, ' ')}
+          </span>
+        )}
         <span className="text-gray-400 text-[10px]">created {fmtDate(quote.createdAt)}</span>
-        {quote.sentAt && (
+        {quote.paidAt && (
+          <span className="text-green-600 text-[10px] font-semibold">paid {fmtDate(quote.paidAt)}</span>
+        )}
+        {quote.sentAt && !quote.paidAt && (
           <span className="text-green-600 text-[10px] font-medium">sent {fmtDate(quote.sentAt)}</span>
+        )}
+        {quote.paymentReference && (
+          <span className="text-gray-400 text-[10px] font-mono">ref: {quote.paymentReference.slice(-10)}</span>
         )}
         {quote.reviewedBy && (
           <span className="text-gray-400 text-[10px]">· reviewed by {quote.reviewedBy}</span>

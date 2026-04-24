@@ -458,3 +458,23 @@ export async function sendDiagnosisAndQuote(leadId, quoteId) {
     body: JSON.stringify({ quoteId: quoteId || undefined }),
   })
 }
+
+// ── Payments ──────────────────────────────────────────────────────────────────
+
+export async function fetchPaymentTransactions(params = {}) {
+  return protectedFetch(`${BASE_URL}/api/payments/transactions${buildQuery(params)}`)
+}
+
+// ── Fulfillment ───────────────────────────────────────────────────────────────
+
+export async function fetchFulfillmentOrders(params = {}) {
+  return protectedFetch(`${BASE_URL}/api/fulfillment/orders${buildQuery(params)}`)
+}
+
+export async function updateFulfillmentOrderStatus(orderId, status) {
+  return protectedFetch(`${BASE_URL}/api/fulfillment/orders/${encodeURIComponent(orderId)}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
+}
