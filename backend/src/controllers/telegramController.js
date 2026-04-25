@@ -7,8 +7,16 @@ const { handlePremiumIntakeReply } = require('../services/premiumDeliveryService
 const { maybeTriggerAutomaticConversion } = require('../services/conversionEngineService')
 const { handleInboundReply, classifyInboundIntent } = require('../services/conversationBrainService')
 const { handleAcademyMemberReply } = require('../services/academyExperienceService')
-const { generateQuoteForLead } = require('../services/productQuoteService')
+const { generateQuoteForLead, sendDiagnosisAndQuote } = require('../services/productQuoteService')
 const { handleIncomingPhoto } = require('../services/skinImageService')
+
+// Telegram stages where we are collecting delivery details before sending the product quote
+const DELIVERY_COLLECTION_STAGES = new Set([
+  'collecting_delivery_name',
+  'collecting_delivery_phone',
+  'collecting_delivery_city',
+  'collecting_delivery_address',
+])
 
 const LEAD_BOT_TOKEN    = process.env.TELEGRAM_LEAD_BOT_TOKEN
 const ACADEMY_BOT_TOKEN = process.env.TELEGRAM_ACADEMY_BOT_TOKEN
@@ -121,7 +129,13 @@ async function handleLeadWebhook(req, res) {
     }
 
     if (lead && isPostDiagnosisLead(lead)) {
-      // ── PRODUCT keyword — create draft quote, do NOT auto-send ────────────
+      // ── Delivery detail collection (step-by-step pre-payment intake) ──────
+      if (DELIVERY_COLLECTION_STAGES.has(lead.telegramStage)) {
+        await handleDeliveryCollection(lead, text, chatId)
+        return
+      }
+
+      // ── PRODUCT keyword — begin delivery detail collection ────────────────
       if (text.trim().toUpperCase() === 'PRODUCT') {
         await handleProductRequest(lead, chatId)
         return
@@ -474,55 +488,154 @@ async function handleDeliveryAddressReply(lead, text, chatId) {
 // ── PRODUCT intent handler ────────────────────────────────────────────────────
 
 /**
- * When a lead replies PRODUCT after receiving their diagnosis, create a draft
- * ProductQuote for admin review. Do NOT send the quote or payment link to the lead.
+ * Entry point when a lead replies PRODUCT after receiving their diagnosis.
+ * Starts the 4-step delivery detail collection flow instead of immediately
+ * creating and sending the quote — humanises the experience and collects
+ * shipping info before payment.
  */
 async function handleProductRequest(lead, chatId) {
-  console.log(`[ProductQuote] PRODUCT intent | leadId=${lead.id}`)
+  console.log(`[ProductQuote] PRODUCT intent → starting delivery collection | leadId=${lead.id}`)
 
-  try {
-    const quote = await generateQuoteForLead(lead.id)
+  await prisma.lead.update({
+    where: { id: lead.id },
+    data: {
+      telegramStage:    'collecting_delivery_name',
+      conversationMode: 'product_reco_active',
+      lastUserIntent:   'product_buying_intent',
+    },
+  })
 
-    if (!quote) {
-      console.warn(`[ProductQuote] quote generation returned null | leadId=${lead.id}`)
-      await sendTelegramToUser(
-        chatId,
-        "Our team is putting together your personalised product set. We'll send the recommendation shortly 🌿",
-        LEAD_BOT_TOKEN
-      ).catch(() => {})
-      return
-    }
+  await sendTelegramToUser(
+    chatId,
+    'Let me prepare your routine and confirm your delivery details first.\n\n' +
+    'What is your full name for delivery?',
+    LEAD_BOT_TOKEN
+  ).catch(e => console.error('[ProductQuote] delivery prompt failed:', e.message))
+}
 
+// ── Delivery detail collection (4-step pre-payment flow) ─────────────────────
+
+/**
+ * Handles the step-by-step delivery detail collection triggered by PRODUCT.
+ * Stages: collecting_delivery_name → phone → city → address
+ * After address is saved, auto-generates and sends the product quote + Paystack link.
+ */
+async function handleDeliveryCollection(lead, text, chatId) {
+  const stage = lead.telegramStage
+  const now   = new Date()
+
+  if (stage === 'collecting_delivery_name') {
     await prisma.lead.update({
       where: { id: lead.id },
-      data: { quoteStatus: 'draft' },
+      data: {
+        deliveryName:          text.trim(),
+        telegramStage:         'collecting_delivery_phone',
+        telegramLastMessage:   text,
+        telegramLastMessageAt: now,
+      },
+    })
+    await sendTelegramToUser(
+      chatId,
+      'Your phone number? (e.g. +234 801 234 5678)',
+      LEAD_BOT_TOKEN
+    ).catch(() => {})
+    return
+  }
+
+  if (stage === 'collecting_delivery_phone') {
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        deliveryPhone:         text.trim(),
+        telegramStage:         'collecting_delivery_city',
+        telegramLastMessage:   text,
+        telegramLastMessageAt: now,
+      },
+    })
+    await sendTelegramToUser(chatId, 'Which city are you in?', LEAD_BOT_TOKEN).catch(() => {})
+    return
+  }
+
+  if (stage === 'collecting_delivery_city') {
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        deliveryCity:          text.trim(),
+        telegramStage:         'collecting_delivery_address',
+        telegramLastMessage:   text,
+        telegramLastMessageAt: now,
+      },
+    })
+    await sendTelegramToUser(
+      chatId,
+      'Your full delivery address? (street, area, any landmark)',
+      LEAD_BOT_TOKEN
+    ).catch(() => {})
+    return
+  }
+
+  if (stage === 'collecting_delivery_address') {
+    // Save final field and return to normal post-diagnosis stage
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        deliveryAddress:       text.trim(),
+        telegramStage:         'diagnosis_sent',
+        telegramLastMessage:   text,
+        telegramLastMessageAt: now,
+      },
     })
 
-    console.log(`[ProductQuote] draft created after PRODUCT intent | leadId=${lead.id} quoteId=${quote.id}`)
+    console.log(`[ProductQuote] delivery details complete | leadId=${lead.id}`)
 
-    // Acknowledge the lead — do NOT send the quote yet
+    // Confirm to lead immediately so they know something is happening
     await sendTelegramToUser(
       chatId,
-      "Great — our team is reviewing your profile and putting together the best product set for your skin. We'll send the full recommendation shortly 🌿",
+      '✅ Delivery details confirmed.\n\n' +
+      "We're preparing your product set and payment details now. You'll receive them in a moment.",
       LEAD_BOT_TOKEN
-    ).catch(e => console.error('[ProductQuote] lead ack failed:', e.message))
+    ).catch(e => console.error('[ProductQuote] delivery confirmation send failed:', e.message))
 
-    // Notify admin to review and manually send the quote
-    await sendTelegramMessage(
-      `⚡ <b>Lead requested products (PRODUCT)</b>\n\n` +
-      `<b>Name:</b> ${lead.fullName}\n` +
-      `<b>Concern:</b> ${(lead.primaryConcern || lead.skinConcern || '—').replace(/_/g, ' ')}\n` +
-      `<b>Quote ID:</b> ...${quote.id.slice(-8)}\n\n` +
-      `Quote draft is ready for review. Edit prices and send from the CRM.`
-    ).catch(() => {})
+    // Re-fetch lead so deliveryAddress is populated for Paystack link generation
+    const freshLead = await prisma.lead.findUnique({ where: { id: lead.id } })
 
-  } catch (err) {
-    console.error(`[ProductQuote] draft creation failed | leadId=${lead.id}:`, err.message)
-    await sendTelegramToUser(
-      chatId,
-      "Our team is putting together your personalised product set. We'll send the recommendation shortly 🌿",
-      LEAD_BOT_TOKEN
-    ).catch(() => {})
+    try {
+      const quote = await generateQuoteForLead(freshLead.id)
+      if (!quote) throw new Error('generateQuoteForLead returned null')
+
+      await sendDiagnosisAndQuote(freshLead.id, quote.id)
+
+      console.log(`[ProductQuote] auto-sent | leadId=${freshLead.id} quoteId=${quote.id}`)
+
+      await sendTelegramMessage(
+        `✅ <b>Product quote auto-sent to lead</b>\n\n` +
+        `<b>Name:</b> ${freshLead.fullName}\n` +
+        `<b>Concern:</b> ${(freshLead.primaryConcern || freshLead.skinConcern || '—').replace(/_/g, ' ')}\n` +
+        `<b>City:</b> ${freshLead.deliveryCity || '—'}\n` +
+        `<b>Address:</b> ${(freshLead.deliveryAddress || '—').slice(0, 120)}\n` +
+        `<b>Quote ID:</b> ...${quote.id.slice(-8)}\n` +
+        `<b>Total:</b> ₦${(quote.totalAmount || 0).toLocaleString('en-NG')}`
+      ).catch(() => {})
+
+    } catch (err) {
+      console.error(`[ProductQuote] auto-send failed | leadId=${freshLead.id}:`, err.message)
+
+      // Fallback: flag for admin to send manually from CRM
+      await sendTelegramMessage(
+        `⚡ <b>Delivery collected — manual quote send needed</b>\n\n` +
+        `<b>Name:</b> ${freshLead.fullName}\n` +
+        `<b>City:</b> ${freshLead.deliveryCity || '—'}\n` +
+        `<b>Address:</b> ${(freshLead.deliveryAddress || '—').slice(0, 120)}\n` +
+        `<b>Error:</b> ${err.message}\n\n` +
+        `Please generate and send the quote from the CRM.`
+      ).catch(() => {})
+
+      await sendTelegramToUser(
+        chatId,
+        "Thank you! Our team will send your personalised product details shortly 🌿",
+        LEAD_BOT_TOKEN
+      ).catch(() => {})
+    }
   }
 }
 

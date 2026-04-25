@@ -223,7 +223,13 @@ async function handleProductQuotePayment(event) {
       },
     })
 
-    const hasAddress = !!(lead.deliveryAddress || lead.phone)
+    // Use pre-collected delivery fields when available (set during the PRODUCT flow)
+    const resolvedAddress = lead.deliveryAddress || null
+    const resolvedCity    = lead.deliveryCity    || null
+    const resolvedName    = lead.deliveryName    || lead.fullName || customer?.first_name || 'Unknown'
+    const resolvedPhone   = lead.deliveryPhone   || lead.phone   || null
+
+    const hasAddress = !!(resolvedAddress)
     const fulfillmentStatus = hasAddress ? 'pending_packing' : 'awaiting_address'
 
     const order = await tx.fulfillmentOrder.create({
@@ -231,13 +237,14 @@ async function handleProductQuotePayment(event) {
         leadId,
         quoteId,
         paymentTransactionId: paymentTx.id,
-        status:         fulfillmentStatus,
-        totalAmount:    amountNgn,
-        customerName:   lead.fullName || customer?.first_name || 'Unknown',
-        customerEmail:  lead.email    || customer?.email      || null,
-        customerPhone:  lead.phone    || null,
-        deliveryAddress: lead.deliveryAddress || null,
-        notes:          `Paystack ref: ${reference}`,
+        status:          fulfillmentStatus,
+        totalAmount:     amountNgn,
+        customerName:    resolvedName,
+        customerEmail:   lead.email || customer?.email || null,
+        customerPhone:   resolvedPhone,
+        deliveryAddress: resolvedAddress,
+        deliveryCity:    resolvedCity,
+        notes:           `Paystack ref: ${reference}`,
       },
     })
 

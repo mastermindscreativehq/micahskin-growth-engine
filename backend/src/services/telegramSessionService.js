@@ -264,7 +264,12 @@ async function handleTelegramMessage(userId, text) {
           })
         }
 
-        return 'Thank you. Our skincare team will review your details and prepare your skin assessment shortly 🌿'
+        return (
+          'Thank you for sharing your details.\n\n' +
+          'Our skincare specialist is reviewing your skin condition carefully.\n' +
+          'We take this step seriously to avoid recommending the wrong treatment.\n\n' +
+          "You'll receive your personalized diagnosis shortly."
+        )
       }
 
       // Any non-SKIP text during image stage — remind them what to do

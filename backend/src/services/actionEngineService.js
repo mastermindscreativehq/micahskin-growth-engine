@@ -77,9 +77,23 @@ function shouldSendCourseOffer(lead) {
 
 // ── Message builders ──────────────────────────────────────────────────────────
 
+// Maps primaryConcern → plain-language cause description used in the diagnosis message
+const LIKELY_CAUSE_MAP = {
+  acne:             'excess oil production and blocked pores',
+  hyperpigmentation:'sun exposure and post-inflammatory discolouration',
+  dry_skin:         'insufficient moisture retention and a weakened skin barrier',
+  oily_skin:        'overactive sebaceous glands and hormonal activity',
+  sensitivity:      'a disrupted skin barrier and repeated exposure to irritants',
+  stretch_marks:    'rapid skin changes and reduced collagen elasticity',
+  body_care:        'neglected skin care and environmental damage to the skin surface',
+  routine_building: 'the absence of a consistent, targeted routine',
+  eczema:           'chronic skin barrier dysfunction and inflammatory responses',
+  unknown:          'internal and external skin stressors',
+}
+
 /**
- * T+1h — Personalised diagnosis message.
- * Reads from lead.diagnosis / lead.routine / lead.products (clinical JSON fields).
+ * T+1h — Personalised diagnosis message (human-style).
+ * Reads from lead.diagnosis / lead.routine (clinical JSON fields).
  * Does NOT use diagnosisSummary — that field is operator-only CRM display text.
  *
  * @param {object} lead
@@ -90,67 +104,85 @@ function buildDiagnosisMessage(lead) {
 
   const diag    = lead.diagnosis || {}
   const routine = lead.routine   || {}
-  const prods   = lead.products  || {}
 
   const assessmentText = diag.text || null
-  const notes    = Array.isArray(diag.notes)              ? diag.notes              : []
-  const morning  = Array.isArray(routine.morning)         ? routine.morning         : []
-  const night    = Array.isArray(routine.night)           ? routine.night           : []
-  const products = Array.isArray(prods.recommendations)   ? prods.recommendations   : []
+  const notes   = Array.isArray(diag.notes)      ? diag.notes      : []
+  const morning = Array.isArray(routine.morning) ? routine.morning : []
+  const night   = Array.isArray(routine.night)   ? routine.night   : []
 
   if (!assessmentText && morning.length === 0 && night.length === 0) return null
+
+  const hasPhotos   = lead.imageUploadStatus === 'uploaded' && (lead.imageUploadCount || 0) > 0
+  const likelyCause = LIKELY_CAUSE_MAP[lead.primaryConcern] || LIKELY_CAUSE_MAP.unknown
+
+  // Build up to 3 bullet observations from clinical data
+  const observations = []
+  if (assessmentText) observations.push(assessmentText)
+  for (const note of notes) {
+    if (observations.length >= 3) break
+    if (note && note !== assessmentText) observations.push(note)
+  }
+  if (observations.length < 2 && lead.telegramSkinType) {
+    const st = lead.telegramSkinType
+    observations.push(
+      `${st.charAt(0).toUpperCase() + st.slice(1)} skin type detected — your routine must account for this specifically.`
+    )
+  }
+  if (observations.length < 3 && lead.primaryConcern && lead.primaryConcern !== 'unknown') {
+    observations.push(
+      `Primary concern is ${lead.primaryConcern.replace(/_/g, ' ')} — this requires a targeted, consistent approach.`
+    )
+  }
 
   const lines = []
 
   lines.push(`Hi ${firstName},`)
   lines.push('')
 
-  if (lead.imageUploadStatus === 'uploaded' && (lead.imageUploadCount || 0) > 0) {
-    lines.push('Based on the details you shared and the photos you uploaded, here is the assessment and routine we put together for you.')
+  if (hasPhotos) {
+    lines.push(`Based on what you shared and the photos you uploaded, here's what we're seeing:`)
   } else {
-    lines.push('We reviewed everything you shared about your skin, and here is the routine we put together for you.')
+    lines.push(`Based on what you shared, here's what we're seeing:`)
   }
 
-  if (assessmentText) {
-    lines.push('')
-    lines.push('<b>Assessment:</b>')
-    if (lead.imageUploadStatus === 'uploaded') {
-      lines.push('Visible signs suggest: ' + assessmentText)
-    } else {
-      lines.push(assessmentText)
-    }
-  }
+  lines.push('')
+  observations.slice(0, 3).forEach(obs => lines.push(`• ${obs}`))
+
+  lines.push('')
+  lines.push(`<b>What this means:</b>`)
+  lines.push(
+    `Your skin is currently reacting to ${likelyCause} and needs proper correction, not random products.`
+  )
+
+  lines.push('')
+  lines.push(`<b>Recommended approach:</b>`)
+  lines.push(`We'll focus on:`)
+  lines.push(`1. Repair`)
+  lines.push(`2. Treatment`)
+  lines.push(`3. Protection`)
 
   if (morning.length > 0) {
     lines.push('')
-    lines.push('<b>Morning routine:</b>')
+    lines.push(`<b>Morning routine:</b>`)
     morning.forEach((step, i) => lines.push(`${i + 1}. ${step}`))
   }
 
   if (night.length > 0) {
     lines.push('')
-    lines.push('<b>Night routine:</b>')
+    lines.push(`<b>Night routine:</b>`)
     night.forEach((step, i) => lines.push(`${i + 1}. ${step}`))
   }
 
-  if (products.length > 0) {
-    lines.push('')
-    lines.push('<b>Recommended products:</b>')
-    products.forEach(p => lines.push(`- ${p}`))
-  }
-
-  if (notes.length > 0) {
-    lines.push('')
-    lines.push('<b>Important notes:</b>')
-    notes.forEach(n => lines.push(`- ${n}`))
-  }
+  lines.push('')
+  lines.push(`We'll guide you step by step to fix this properly.`)
+  lines.push('')
+  lines.push(`If you have any questions about your skin, feel free to ask before choosing a product.`)
 
   lines.push('')
-  lines.push('Stay consistent for 2–3 weeks and monitor how your skin responds.')
-  lines.push('')
-  lines.push('Reply <b>PRODUCT</b> if you want us to recommend the full product set for this routine.')
-  lines.push('Reply <b>CONSULT</b> if you want private guidance.')
-  lines.push('Reply <b>ACADEMY</b> if you want to learn skincare brand building.')
+  lines.push(`Reply:`)
+  lines.push(`<b>PRODUCT</b> – to get your full routine and product quote`)
+  lines.push(`<b>CONSULT</b> – for 1-on-1 guidance`)
+  lines.push(`<b>ACADEMY</b> – to learn skincare deeply`)
 
   return lines.join('\n')
 }

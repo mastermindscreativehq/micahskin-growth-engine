@@ -167,6 +167,10 @@ model Lead {
   imageUploadStatus        String?               // pending | uploaded | skipped
   imageUploadCount         Int                   @default(0)
   imageReviewStatus        String?               // pending | reviewed | not_required
+  deliveryName             String?
+  deliveryPhone            String?
+  deliveryCity             String?
+  deliveryAddress          String?
   replies                  Reply[]
   quotes                   ProductQuote[]
   paymentTransactions      PaymentTransaction[]
