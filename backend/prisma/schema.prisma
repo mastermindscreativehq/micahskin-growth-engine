@@ -164,12 +164,32 @@ model Lead {
   academyJoinedAt          DateTime?
   academyProgressStage     String?
   academyEngagementScore   Int?
+  imageUploadStatus        String?               // pending | uploaded | skipped
+  imageUploadCount         Int                   @default(0)
+  imageReviewStatus        String?               // pending | reviewed | not_required
   replies                  Reply[]
   quotes                   ProductQuote[]
   paymentTransactions      PaymentTransaction[]
   fulfillmentOrders        FulfillmentOrder[]
+  skinImages               LeadSkinImage[]
 
   @@map("leads")
+}
+
+model LeadSkinImage {
+  id                   String   @id @default(cuid())
+  leadId               String
+  telegramFileId       String
+  telegramFileUniqueId String
+  fileUrl              String?
+  mimeType             String?
+  uploadedAt           DateTime @default(now())
+  status               String   @default("uploaded")  // uploaded | reviewed | rejected
+  notes                String?
+  lead                 Lead     @relation(fields: [leadId], references: [id])
+
+  @@index([leadId])
+  @@map("lead_skin_images")
 }
 
 model SkincareProduct {

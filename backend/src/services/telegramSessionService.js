@@ -126,21 +126,21 @@ async function handleTelegramMessage(userId, text) {
       return 'Do you want a simple, balanced, or complete routine?'
 
     case 'ASK_ROUTINE_LEVEL': {
-      // Capture last answer before marking complete
+      // Capture last answer before advancing to image upload stage
       const collectedData = {
         ...(session.data && typeof session.data === 'object' ? session.data : {}),
         routine: text,
       }
 
+      // Advance to ASK_IMAGE — do NOT mark completed yet
       await updateSession(session, {
-        stage: 'DONE',
-        completed: true,
+        stage: 'ASK_IMAGE',
+        completed: false,
         data: { routine: text },
       })
 
       const skinConcern = deriveSkinConcern(collectedData.goal)
 
-      // Use most-recently-created lead for this chatId — matches ordering in webhook handler
       const existingLead = await prisma.lead.findFirst({
         where: { telegramChatId: userId },
         orderBy: { createdAt: 'desc' },
@@ -148,8 +148,8 @@ async function handleTelegramMessage(userId, text) {
 
       const now = new Date()
       const diagnosisSendAfter   = new Date(now.getTime() + DIAGNOSIS_DELAY_MINUTES * 60 * 1000)
-      const checkInSendAfter     = new Date(now.getTime() + 24 * 60 * 60 * 1000)     // +24h
-      const productRecoSendAfter = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000) // +3 days
+      const checkInSendAfter     = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+      const productRecoSendAfter = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000)
 
       let leadId
 
@@ -157,9 +157,9 @@ async function handleTelegramMessage(userId, text) {
         await prisma.lead.update({
           where: { id: existingLead.id },
           data: {
-            telegramStage:       'intake_complete',
-            telegramFlowType:    'routine',
-            telegramLastMessage:   text,
+            telegramStage:        'awaiting_images',
+            telegramFlowType:     'routine',
+            telegramLastMessage:  text,
             telegramLastMessageAt: now,
             skinConcern: skinConcern !== 'general' ? skinConcern : existingLead.skinConcern,
             status: ['new', 'contacted', 'engaged'].includes(existingLead.status)
@@ -171,8 +171,9 @@ async function handleTelegramMessage(userId, text) {
             telegramSensitivity:  collectedData.sensitivity || null,
             telegramBudget:       collectedData.budget      || null,
             telegramRoutineLevel: collectedData.routine     || null,
-            diagnosisStatus:     'pending',
-            // Set follow-up timing only if not already scheduled
+            diagnosisStatus:      'pending',
+            imageUploadStatus:    'pending',
+            imageUploadCount:     0,
             ...(existingLead.diagnosisSendAfter ? {} : {
               diagnosisSendAfter,
               checkInSendAfter,
@@ -184,23 +185,25 @@ async function handleTelegramMessage(userId, text) {
       } else {
         const newLead = await prisma.lead.create({
           data: {
-            fullName:          userId,
-            sourcePlatform:    'Telegram',
+            fullName:            userId,
+            sourcePlatform:      'Telegram',
             skinConcern,
-            message:           `Telegram intake: ${collectedData.goal || 'not specified'}`,
-            telegramChatId:    userId,
-            telegramStarted:   true,
+            message:             `Telegram intake: ${collectedData.goal || 'not specified'}`,
+            telegramChatId:      userId,
+            telegramStarted:     true,
             telegramConnectedAt: now,
-            telegramStage:     'intake_complete',
-            telegramFlowType:  'routine',
-            status:            'interested',
+            telegramStage:       'awaiting_images',
+            telegramFlowType:    'routine',
+            status:              'interested',
             telegramRoutineGoal:  collectedData.goal        || null,
             telegramSkinType:     collectedData.skinType    || null,
             telegramProductsUsed: collectedData.products    || null,
             telegramSensitivity:  collectedData.sensitivity || null,
             telegramBudget:       collectedData.budget      || null,
             telegramRoutineLevel: collectedData.routine     || null,
-            diagnosisStatus:     'pending',
+            diagnosisStatus:      'pending',
+            imageUploadStatus:    'pending',
+            imageUploadCount:     0,
             diagnosisSendAfter,
             checkInSendAfter,
             productRecoSendAfter,
@@ -210,22 +213,62 @@ async function handleTelegramMessage(userId, text) {
       }
 
       console.log(
-        `[Intake] completed, diagnosis scheduled | ` +
+        `[Intake] questions complete, awaiting images | ` +
         `userId=${userId} leadId=${leadId} ` +
         `concern=${skinConcern} skinType=${collectedData.skinType || 'none'} ` +
         `budget=${collectedData.budget || 'none'} ` +
-        `dueAt=${diagnosisSendAfter.toISOString()} (${DIAGNOSIS_DELAY_MINUTES}min delay)`
+        `diagnosisDueAt=${diagnosisSendAfter.toISOString()} (${DIAGNOSIS_DELAY_MINUTES}min delay)`
       )
 
-      // Build diagnosis data asynchronously — enriches the lead so the Action Engine
-      // has content to send when diagnosisSendAfter arrives. Does NOT send anything.
-      setImmediate(() => {
-        diagnoseLead(leadId).catch((err) =>
-          console.error(`[Intake] diagnosis build failed for lead ${leadId}:`, err.message)
-        )
-      })
+      return (
+        'Optional: You can upload up to 5 clear skin photos so our skincare team can better understand your concern.\n\n' +
+        'Send the photos now, or type <b>SKIP</b> to continue without photos.'
+      )
+    }
 
-      return "Perfect — we've received your details. Our skincare team will review your profile and prepare your diagnosis shortly 🌿"
+    case 'ASK_IMAGE': {
+      // Only text messages reach here — photo uploads are handled in the controller.
+      // Accept SKIP to complete the image stage without photos.
+      if (text.trim().toUpperCase() === 'SKIP') {
+        await updateSession(session, { stage: 'DONE', completed: true, data: {} })
+
+        // Find the lead to determine current image state
+        const lead = await prisma.lead.findFirst({
+          where: { telegramChatId: userId },
+          orderBy: { createdAt: 'desc' },
+        })
+
+        if (lead) {
+          const hasPhotos = (lead.imageUploadStatus === 'uploaded') && (lead.imageUploadCount || 0) > 0
+
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: {
+              telegramStage:     'intake_complete',
+              telegramLastMessage:   text,
+              telegramLastMessageAt: new Date(),
+              // If photos were already uploaded before SKIP, keep 'uploaded'; otherwise mark skipped
+              imageUploadStatus:  hasPhotos ? 'uploaded' : 'skipped',
+              imageReviewStatus:  hasPhotos ? 'pending'  : 'not_required',
+            },
+          })
+
+          console.log(`[ImageUpload] skipped | leadId=${lead.id} photosBeforeSkip=${lead.imageUploadCount || 0}`)
+          console.log(`[Diagnosis] waiting_for_image_review | leadId=${lead.id}`)
+
+          // Build diagnosis data now — Action Engine sends it after the delay
+          setImmediate(() => {
+            diagnoseLead(lead.id).catch(err =>
+              console.error(`[Intake] diagnosis build failed for lead ${lead.id}:`, err.message)
+            )
+          })
+        }
+
+        return 'Thank you. Our skincare team will review your details and prepare your skin assessment shortly 🌿'
+      }
+
+      // Any non-SKIP text during image stage — remind them what to do
+      return 'Please send your skin photos, or type <b>SKIP</b> to continue without photos.'
     }
 
     default:

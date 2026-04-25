@@ -8,6 +8,7 @@ const { maybeTriggerAutomaticConversion } = require('../services/conversionEngin
 const { handleInboundReply, classifyInboundIntent } = require('../services/conversationBrainService')
 const { handleAcademyMemberReply } = require('../services/academyExperienceService')
 const { generateQuoteForLead } = require('../services/productQuoteService')
+const { handleIncomingPhoto } = require('../services/skinImageService')
 
 const LEAD_BOT_TOKEN    = process.env.TELEGRAM_LEAD_BOT_TOKEN
 const ACADEMY_BOT_TOKEN = process.env.TELEGRAM_ACADEMY_BOT_TOKEN
@@ -39,11 +40,30 @@ async function handleLeadWebhook(req, res) {
     const update = req.body
     const message = update?.message
 
-    if (!message || !message.text) return
+    if (!message) return
 
-    const chatId    = String(message.chat.id)
-    const username  = message.from?.username   || null
-    const text      = message.text.trim()
+    const chatId   = String(message.chat.id)
+    const username = message.from?.username || null
+
+    // ── Photo messages — only accepted during the awaiting_images stage ────────
+    if (message.photo) {
+      console.log(`[LeadWebhook] photo message | chatId=${chatId}`)
+      const photoLead = await prisma.lead.findFirst({
+        where: { telegramChatId: chatId },
+        orderBy: { createdAt: 'desc' },
+      })
+
+      if (photoLead && photoLead.telegramStage === 'awaiting_images') {
+        await handleIncomingPhoto(message, photoLead, chatId)
+      } else {
+        console.log(`[LeadWebhook] photo ignored — stage=${photoLead?.telegramStage || 'none'} | chatId=${chatId}`)
+      }
+      return
+    }
+
+    if (!message.text) return
+
+    const text = message.text.trim()
 
     console.log(`[LeadWebhook] incoming | chatId=${chatId} username=${username || 'none'} text="${text.slice(0, 80)}"`)
 

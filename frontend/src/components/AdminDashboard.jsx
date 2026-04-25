@@ -29,6 +29,7 @@ import {
 } from '../api/index.js'
 import ProductQuotePanel from './ProductQuotePanel.jsx'
 import FulfillmentPanel from './FulfillmentPanel.jsx'
+import SkinImagesPanel from './SkinImagesPanel.jsx'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -724,6 +725,16 @@ function LeadsTab() {
                           </div>
                         ) : (
                           <div className="text-xs text-gray-400 italic">Telegram not connected</div>
+                        )}
+
+                        {/* Skin Images Panel — shown whenever image upload phase was entered */}
+                        {(lead.imageUploadStatus || lead.imageUploadCount > 0) && (
+                          <SkinImagesPanel
+                            leadId={lead.id}
+                            imageUploadStatus={lead.imageUploadStatus}
+                            imageUploadCount={lead.imageUploadCount}
+                            imageReviewStatus={lead.imageReviewStatus}
+                          />
                         )}
 
                         {/* Diagnosis Panel */}

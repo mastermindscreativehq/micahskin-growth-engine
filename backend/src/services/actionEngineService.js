@@ -104,12 +104,21 @@ function buildDiagnosisMessage(lead) {
 
   lines.push(`Hi ${firstName},`)
   lines.push('')
-  lines.push('We reviewed everything you shared about your skin, and here is the routine we put together for you.')
+
+  if (lead.imageUploadStatus === 'uploaded' && (lead.imageUploadCount || 0) > 0) {
+    lines.push('Based on the details you shared and the photos you uploaded, here is the assessment and routine we put together for you.')
+  } else {
+    lines.push('We reviewed everything you shared about your skin, and here is the routine we put together for you.')
+  }
 
   if (assessmentText) {
     lines.push('')
     lines.push('<b>Assessment:</b>')
-    lines.push(assessmentText)
+    if (lead.imageUploadStatus === 'uploaded') {
+      lines.push('Visible signs suggest: ' + assessmentText)
+    } else {
+      lines.push(assessmentText)
+    }
   }
 
   if (morning.length > 0) {
@@ -428,6 +437,8 @@ async function _processDiagnosisSends() {
 
   // Support both new leads (diagnosisStatus='pending') and old leads (null) for backward compat.
   // diagnosisSent:false is the atomic dedup guard; diagnosisStatus narrows to unsent ones.
+  // Gate: imageUploadStatus='pending' means the lead is still in the awaiting_images stage —
+  //       do not send diagnosis until they upload photos or type SKIP (null = pre-image-feature lead).
   const leads = await prisma.lead.findMany({
     where: {
       diagnosedAt:        { not: null },
@@ -438,6 +449,7 @@ async function _processDiagnosisSends() {
         { diagnosisStatus: 'pending' },
         { diagnosisStatus: null },
       ],
+      NOT: { imageUploadStatus: 'pending' },
     },
   })
 
@@ -478,6 +490,7 @@ async function _processDiagnosisSends() {
         `products:${Array.isArray(lead.products?.recommendations)&&lead.products.recommendations.length>0},` +
         `notes:${Array.isArray(lead.diagnosis?.notes)&&lead.diagnosis.notes.length>0}`
       )
+      console.log(`[Diagnosis] sent | leadId=${lead.id} imageStatus=${lead.imageUploadStatus || 'none'} imageCount=${lead.imageUploadCount || 0}`)
       console.log(`[ActionEngine] sending diagnosis → lead=${lead.id} chatId=${lead.telegramChatId}`)
       const result = await sendTelegramToUser(lead.telegramChatId, msg, LEAD_BOT_TOKEN)
       if (!result.success && !result.skipped) throw new Error(JSON.stringify(result.error) || 'telegram send failed')

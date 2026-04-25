@@ -478,3 +478,21 @@ export async function updateFulfillmentOrderStatus(orderId, status) {
     body: JSON.stringify({ status }),
   })
 }
+
+// ── Skin Images ───────────────────────────────────────────────────────────────
+
+export async function fetchSkinImages(leadId) {
+  return protectedFetch(`${BASE_URL}/api/leads/${encodeURIComponent(leadId)}/skin-images`)
+}
+
+export async function updateSkinImage(leadId, imageId, payload) {
+  return protectedFetch(
+    `${BASE_URL}/api/leads/${encodeURIComponent(leadId)}/skin-images/${encodeURIComponent(imageId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }
+  )
+}
+}
