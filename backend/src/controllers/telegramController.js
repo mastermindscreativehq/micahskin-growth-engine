@@ -7,7 +7,7 @@ const { handlePremiumIntakeReply } = require('../services/premiumDeliveryService
 const { maybeTriggerAutomaticConversion } = require('../services/conversionEngineService')
 const { handleInboundReply, classifyInboundIntent } = require('../services/conversationBrainService')
 const { handleAcademyMemberReply } = require('../services/academyExperienceService')
-const { generateQuoteForLead, sendDiagnosisAndQuote } = require('../services/productQuoteService')
+const { generateQuoteForLead } = require('../services/productQuoteService')
 const { handleIncomingPhoto } = require('../services/skinImageService')
 
 // Telegram stages where we are collecting delivery details before sending the product quote
@@ -588,52 +588,47 @@ async function handleDeliveryCollection(lead, text, chatId) {
 
     console.log(`[ProductQuote] delivery details complete | leadId=${lead.id}`)
 
-    // Confirm to lead immediately so they know something is happening
+    // Tell the lead their details are received and quote is being prepared by the team.
+    // We do NOT auto-generate a Paystack link or send a quote here.
     await sendTelegramToUser(
       chatId,
-      '✅ Delivery details confirmed.\n\n' +
-      "We're preparing your product set and payment details now. You'll receive them in a moment.",
+      '✅ Delivery details received.\n\n' +
+      'Our skincare team is preparing your product quote.\n' +
+      "We'll send the final product list and payment link after review.",
       LEAD_BOT_TOKEN
     ).catch(e => console.error('[ProductQuote] delivery confirmation send failed:', e.message))
 
-    // Re-fetch lead so deliveryAddress is populated for Paystack link generation
+    // Re-fetch lead so deliveryAddress is populated for quote draft generation
     const freshLead = await prisma.lead.findUnique({ where: { id: lead.id } })
 
     try {
       const quote = await generateQuoteForLead(freshLead.id)
       if (!quote) throw new Error('generateQuoteForLead returned null')
 
-      await sendDiagnosisAndQuote(freshLead.id, quote.id)
-
-      console.log(`[ProductQuote] auto-sent | leadId=${freshLead.id} quoteId=${quote.id}`)
+      // Draft created — admin must review and send from CRM. Never auto-send.
+      console.log(`[ProductQuote] draft_created awaiting_admin_review | leadId=${freshLead.id} quoteId=${quote.id}`)
 
       await sendTelegramMessage(
-        `✅ <b>Product quote auto-sent to lead</b>\n\n` +
+        `📋 <b>Product quote ready for review</b>\n\n` +
         `<b>Name:</b> ${freshLead.fullName}\n` +
         `<b>Concern:</b> ${(freshLead.primaryConcern || freshLead.skinConcern || '—').replace(/_/g, ' ')}\n` +
         `<b>City:</b> ${freshLead.deliveryCity || '—'}\n` +
         `<b>Address:</b> ${(freshLead.deliveryAddress || '—').slice(0, 120)}\n` +
         `<b>Quote ID:</b> ...${quote.id.slice(-8)}\n` +
-        `<b>Total:</b> ₦${(quote.totalAmount || 0).toLocaleString('en-NG')}`
+        `<b>Draft Total:</b> ₦${(quote.totalAmount || 0).toLocaleString('en-NG')}\n\n` +
+        `⚠️ Review prices in CRM before sending.`
       ).catch(() => {})
 
     } catch (err) {
-      console.error(`[ProductQuote] auto-send failed | leadId=${freshLead.id}:`, err.message)
+      console.error(`[ProductQuote] draft generation failed | leadId=${freshLead.id}:`, err.message)
 
-      // Fallback: flag for admin to send manually from CRM
       await sendTelegramMessage(
-        `⚡ <b>Delivery collected — manual quote send needed</b>\n\n` +
+        `⚡ <b>Delivery collected — quote generation failed</b>\n\n` +
         `<b>Name:</b> ${freshLead.fullName}\n` +
         `<b>City:</b> ${freshLead.deliveryCity || '—'}\n` +
         `<b>Address:</b> ${(freshLead.deliveryAddress || '—').slice(0, 120)}\n` +
         `<b>Error:</b> ${err.message}\n\n` +
-        `Please generate and send the quote from the CRM.`
-      ).catch(() => {})
-
-      await sendTelegramToUser(
-        chatId,
-        "Thank you! Our team will send your personalised product details shortly 🌿",
-        LEAD_BOT_TOKEN
+        `Please generate and send the quote manually from the CRM.`
       ).catch(() => {})
     }
   }

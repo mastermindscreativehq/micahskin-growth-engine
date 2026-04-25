@@ -200,13 +200,28 @@ async function sendQuote(req, res) {
     const { leadId } = req.params
     const { quoteId } = req.body   // optional — defaults to latest active quote
 
-    const result = await sendDiagnosisAndQuote(leadId, quoteId || null)
+    // Enforce admin-approval gate before sending
+    const targetQuoteId = quoteId || null
+    if (targetQuoteId) {
+      const q = await prisma.productQuote.findUnique({ where: { id: targetQuoteId } })
+      if (q && q.status === 'pending_review') {
+        console.log(`[ProductQuote] blocked_auto_send_requires_admin_review | leadId=${leadId} quoteId=${targetQuoteId}`)
+        return res.status(403).json({
+          success: false,
+          message: 'Quote must be approved by admin before sending — please review prices in CRM first',
+        })
+      }
+    }
+
+    const result = await sendDiagnosisAndQuote(leadId, targetQuoteId)
 
     res.json({ success: true, data: result })
   } catch (err) {
     console.error('[Products] sendQuote:', err.message)
-    const status = err.message.includes('already sent') || err.message.includes('No active quote') ? 400 : 500
-    res.status(status).json({ success: false, message: err.message })
+    const is4xx = err.message.includes('already sent') ||
+                  err.message.includes('No active quote') ||
+                  err.message.includes('must be approved')
+    res.status(is4xx ? 400 : 500).json({ success: false, message: err.message })
   }
 }
 

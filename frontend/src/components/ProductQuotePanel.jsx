@@ -117,11 +117,12 @@ function ProductRow({ p }) {
 // ── Editable quote item row ───────────────────────────────────────────────────
 
 function QuoteItemRow({ quoteId, item, onSaved, readOnly }) {
-  const [editing,  setEditing]  = useState(false)
-  const [price,    setPrice]    = useState('')
-  const [qty,      setQty]      = useState(item.quantity)
-  const [saving,   setSaving]   = useState(false)
-  const [localErr, setLocalErr] = useState(null)
+  const [editing,        setEditing]        = useState(false)
+  const [price,          setPrice]          = useState('')
+  const [qty,            setQty]            = useState(item.quantity)
+  const [saving,         setSaving]         = useState(false)
+  const [localErr,       setLocalErr]       = useState(null)
+  const [catalogUpdated, setCatalogUpdated] = useState(false)
 
   const effectivePrice = item.editedPrice != null ? item.editedPrice : item.unitPrice
   const subtotal = effectivePrice * item.quantity
@@ -130,6 +131,7 @@ function QuoteItemRow({ quoteId, item, onSaved, readOnly }) {
     setPrice(String(item.editedPrice != null ? item.editedPrice : item.unitPrice))
     setQty(item.quantity)
     setEditing(true)
+    setCatalogUpdated(false)
   }
 
   async function handleSave() {
@@ -140,8 +142,12 @@ function QuoteItemRow({ quoteId, item, onSaved, readOnly }) {
     if (isNaN(q) || q < 1) { setLocalErr('Invalid qty');   return }
     setSaving(true)
     try {
-      await updateQuoteItem(quoteId, item.id, { editedPrice: p, quantity: q })
+      const res = await updateQuoteItem(quoteId, item.id, { editedPrice: p, quantity: q })
       setEditing(false)
+      if (item.productId) {
+        setCatalogUpdated(true)
+        setTimeout(() => setCatalogUpdated(false), 5000)
+      }
       onSaved()
     } catch (err) {
       setLocalErr(err?.message || 'Save failed')
@@ -213,12 +219,17 @@ function QuoteItemRow({ quoteId, item, onSaved, readOnly }) {
               {localErr && <span className="text-[10px] text-red-500">{localErr}</span>}
             </div>
           ) : (
-            <button
-              onClick={startEdit}
-              className="rounded border border-gray-200 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50"
-            >
-              Edit
-            </button>
+            <div className="flex flex-col gap-0.5 items-end">
+              <button
+                onClick={startEdit}
+                className="rounded border border-gray-200 px-2 py-0.5 text-[10px] text-gray-500 hover:bg-gray-50"
+              >
+                Edit
+              </button>
+              {catalogUpdated && (
+                <span className="text-[10px] text-teal-600 font-medium whitespace-nowrap">Catalog price updated</span>
+              )}
+            </div>
           )
         )}
       </td>

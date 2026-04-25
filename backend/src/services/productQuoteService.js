@@ -204,7 +204,7 @@ async function generateQuoteForLead(leadId, matchResult) {
     data:  { quoteStatus: 'pending_review' },
   })
 
-  console.log(`[QuoteService] Quote generated | quoteId=${quote.id} leadId=${leadId} items=${items.length} total=₦${totalAmount}`)
+  console.log(`[ProductQuote] draft_created awaiting_admin_review | quoteId=${quote.id} leadId=${leadId} items=${items.length} total=₦${totalAmount}`)
   return quote
 }
 
@@ -221,6 +221,9 @@ async function recomputeQuoteTotal(quoteId) {
 }
 
 async function updateQuoteItem(quoteId, itemId, fields) {
+  // Fetch existing item before update so we can sync catalog price if editedPrice changed
+  const existing = await prisma.productQuoteItem.findUnique({ where: { id: itemId } })
+
   const updated = await prisma.productQuoteItem.update({
     where: { id: itemId },
     data: {
@@ -238,8 +241,19 @@ async function updateQuoteItem(quoteId, itemId, fields) {
 
   await recomputeQuoteTotal(quoteId)
 
-  console.log(`[QuoteService] Item updated | quoteId=${quoteId} itemId=${itemId}`)
-  return updated
+  // If admin changed the price, sync back to the catalog product
+  if (fields.editedPrice != null && updated.productId) {
+    const newPrice = Number(fields.editedPrice)
+    const oldPrice = existing?.unitPrice ?? null
+    await prisma.skincareProduct.update({
+      where: { id: updated.productId },
+      data:  { price: newPrice },
+    }).catch(e => console.error(`[ProductQuote] catalog price sync failed | productId=${updated.productId}:`, e.message))
+    console.log(`[ProductQuote] catalog_price_updated productId=${updated.productId} old=${oldPrice} new=${newPrice}`)
+  }
+
+  console.log(`[ProductQuote] item_updated | quoteId=${quoteId} itemId=${itemId}`)
+  return { ...updated, _catalogPriceUpdated: !!(fields.editedPrice != null && updated.productId) }
 }
 
 async function approveQuote(quoteId, reviewedBy) {
@@ -319,6 +333,13 @@ async function sendDiagnosisAndQuote(leadId, quoteId) {
   if (!quote) throw new Error('No active quote found for this lead')
   if (quote.status === 'sent') throw new Error('Quote is already marked as sent')
 
+  // Hard guard — quote must be approved by admin before it can be sent.
+  // This prevents any automated path from sending prices that haven't been reviewed.
+  if (quote.status === 'pending_review') {
+    console.log(`[ProductQuote] blocked_auto_send_requires_admin_review | leadId=${leadId} quoteId=${quote.id}`)
+    throw new Error('Quote must be approved by admin before sending — please review prices in CRM first')
+  }
+
   // Refresh total from items before sending
   await recomputeQuoteTotal(quote.id)
   const freshQuote = await prisma.productQuote.findUnique({ where: { id: quote.id }, include: { items: true } })
@@ -385,7 +406,7 @@ async function sendDiagnosisAndQuote(leadId, quoteId) {
     },
   }).catch(e => console.error('[QuoteService] MessageLog write failed:', e.message))
 
-  console.log(`[QuoteService] sent | leadId=${leadId} quoteId=${quote.id} msgId=${sendResult.data?.result?.message_id}`)
+  console.log(`[ProductQuote] sent_by_admin leadId=${leadId} quoteId=${quote.id} msgId=${sendResult.data?.result?.message_id}`)
 
   return {
     quoteId:     quote.id,
