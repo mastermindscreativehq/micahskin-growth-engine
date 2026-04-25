@@ -26,6 +26,7 @@ const QUOTE_STATUS_STYLE = {
   pending_review: 'bg-amber-100 text-amber-700',
   approved:       'bg-blue-100 text-blue-700',
   sent:           'bg-green-100 text-green-700',
+  paid:           'bg-emerald-100 text-emerald-800',
   cancelled:      'bg-gray-100 text-gray-500',
 }
 
@@ -282,7 +283,7 @@ function QuoteCard({ quote, onRefresh, leadId, lead }) {
     }
   }
 
-  const readOnly = quote.status === 'sent' || quote.status === 'cancelled'
+  const readOnly = quote.status === 'sent' || quote.status === 'cancelled' || quote.status === 'paid' || quote.paymentStatus === 'paid'
   const statusStyle = QUOTE_STATUS_STYLE[quote.status] || 'bg-gray-100 text-gray-500'
 
   // Recompute displayed total from items (reflects in-browser edits before save)
@@ -370,21 +371,24 @@ function QuoteCard({ quote, onRefresh, leadId, lead }) {
         </div>
 
         {!readOnly && (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {quote.status === 'pending_review' && (
-              <button
-                disabled={!!actioning || sending}
-                onClick={() => handleReview('approve')}
-                className="rounded border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
-              >
-                {actioning === 'approve' ? '…' : 'Approve Quote'}
-              </button>
+              <>
+                <button
+                  disabled={!!actioning}
+                  onClick={() => handleReview('approve')}
+                  className="rounded border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                >
+                  {actioning === 'approve' ? '…' : 'Approve Quote'}
+                </button>
+                <span className="text-[10px] text-amber-600 font-medium">Approve before sending</span>
+              </>
             )}
 
-            {/* Send Diagnosis + Quote — primary CTA */}
-            {(quote.status === 'pending_review' || quote.status === 'approved') && (
+            {/* Send Diagnosis + Quote — only unlocked after admin approves */}
+            {quote.status === 'approved' && (
               <button
-                disabled={!!actioning || sending}
+                disabled={sending}
                 onClick={handleSendDiagnosisAndQuote}
                 className="rounded border border-teal-300 bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -394,8 +398,10 @@ function QuoteCard({ quote, onRefresh, leadId, lead }) {
           </div>
         )}
 
-        {readOnly && quote.status === 'sent' && (
-          <span className="text-xs text-green-600 font-medium">Sent to lead via Telegram</span>
+        {readOnly && (quote.status === 'sent' || quote.status === 'paid') && (
+          <span className="text-xs text-green-600 font-medium">
+            {quote.paymentStatus === 'paid' ? '✓ Paid via Paystack' : 'Sent to lead via Telegram'}
+          </span>
         )}
       </div>
     </div>

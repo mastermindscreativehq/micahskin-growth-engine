@@ -4,6 +4,7 @@ const prisma = require('../lib/prisma')
 const { upsertProduct, runIngestion } = require('../services/productIngestionService')
 const { createManualAdapter } = require('../services/adapters/manualProductAdapter')
 const { matchProductsForLeadId } = require('../services/productMatchService')
+const { sendTelegramMessage }    = require('../services/telegramService')
 const {
   generateQuoteForLead,
   updateQuoteItem,
@@ -137,6 +138,19 @@ async function generateQuote(req, res) {
     const { leadId } = req.body
     if (!leadId) return res.status(400).json({ success: false, message: 'leadId is required' })
     const quote = await generateQuoteForLead(leadId)
+
+    // Admin notification (best-effort) — same alert as the Telegram delivery path
+    prisma.lead.findUnique({ where: { id: leadId }, select: { fullName: true, primaryConcern: true } })
+      .then(lead => sendTelegramMessage(
+        `📋 <b>Product quote ready for review</b>\n\n` +
+        `<b>Name:</b> ${lead?.fullName || '—'}\n` +
+        `<b>Concern:</b> ${(lead?.primaryConcern || '—').replace(/_/g, ' ')}\n` +
+        `<b>Quote ID:</b> ...${quote.id.slice(-8)}\n` +
+        `<b>Draft Total:</b> ₦${(quote.totalAmount || 0).toLocaleString('en-NG')}\n\n` +
+        `⚠️ Review prices in CRM before sending.`
+      ))
+      .catch(() => {})
+
     res.status(201).json({ success: true, data: quote })
   } catch (err) {
     console.error('[Products] generateQuote:', err.message)
