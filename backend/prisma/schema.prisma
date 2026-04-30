@@ -181,12 +181,18 @@ model Lead {
   recommendedNextOffer     String?               // product|consult|academy|human_consult|none
   monetizationReason       String?
 
+  // Phase 30 — Auto Follow-Up Conversion Engine
+  lastFollowUpAt           DateTime?
+  followUpCount            Int       @default(0)
+  followUpStopped          Boolean   @default(false)
+
   replies                  Reply[]
   quotes                   ProductQuote[]
   paymentTransactions      PaymentTransaction[]
   fulfillmentOrders        FulfillmentOrder[]
   skinImages               LeadSkinImage[]
   deepConsultations        DeepConsultation[]
+  followUpLogs             FollowUpLog[]
 
   @@map("leads")
 }
@@ -672,6 +678,19 @@ model FlowEventLog {
   @@index([leadId])
   @@index([eventType])
   @@map("flow_event_logs")
+}
+
+model FollowUpLog {
+  id           String   @id @default(cuid())
+  leadId       String
+  followUpType String
+  message      String?
+  sentAt       DateTime @default(now())
+  lead         Lead     @relation(fields: [leadId], references: [id])
+
+  @@index([leadId])
+  @@index([followUpType])
+  @@map("follow_up_logs")
 }
 
 /// Quiz session state — tracks per-user quiz progress in the n8n academy bot.

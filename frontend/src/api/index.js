@@ -507,6 +507,18 @@ export async function fetchCommandCenter() {
   return protectedFetch(`${BASE_URL}/api/admin/command-center`)
 }
 
+export async function fetchFollowUpStatus() {
+  return protectedFetch(`${BASE_URL}/api/admin/follow-ups/status`)
+}
+
+export async function pauseFollowUps() {
+  return protectedFetch(`${BASE_URL}/api/admin/follow-ups/pause`, { method: 'POST' })
+}
+
+export async function resumeFollowUps() {
+  return protectedFetch(`${BASE_URL}/api/admin/follow-ups/resume`, { method: 'POST' })
+}
+
 export async function fetchSkinImages(leadId) {
   return protectedFetch(`${BASE_URL}/api/leads/${encodeURIComponent(leadId)}/skin-images`)
 }

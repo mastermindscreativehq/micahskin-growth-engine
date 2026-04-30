@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchCommandCenter } from '../api/index.js'
+import { fetchCommandCenter, pauseFollowUps, resumeFollowUps } from '../api/index.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -212,6 +212,83 @@ function AlertRow({ label, count, warn = 1, crit = 5, children }) {
 
 // ── Main panel ────────────────────────────────────────────────────────────────
 
+function FollowUpControlSection({ followUps, onToggle }) {
+  const [acting, setActing] = useState(false)
+
+  const toggle = async () => {
+    setActing(true)
+    try {
+      if (followUps.paused) await resumeFollowUps()
+      else await pauseFollowUps()
+      onToggle()
+    } catch {
+      // swallow — user sees stale state, refresh fixes it
+    } finally {
+      setActing(false)
+    }
+  }
+
+  const rows = [
+    { label: 'Unpaid quotes due',       value: followUps.quoteDue    ?? 0, warn: 1, crit: 5  },
+    { label: 'Pending review notices',  value: followUps.pendingDue  ?? 0, warn: 1, crit: 3  },
+    { label: 'Consult nudges due',      value: followUps.consultDue  ?? 0, warn: 1, crit: 3  },
+    { label: 'Diagnosis no-action',     value: followUps.diagnosisDue ?? 0, warn: 1, crit: 5 },
+    { label: 'Re-engagement due',       value: followUps.abandonedDue ?? 0, warn: 3, crit: 10 },
+  ]
+
+  return (
+    <SectionBox title="Auto Follow-Up Engine" color="amber">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${followUps.paused ? 'bg-gray-400' : 'bg-green-400'}`} />
+          <span className="text-xs font-semibold text-gray-700">
+            {followUps.paused ? 'Engine Paused' : 'Engine Active'}
+          </span>
+          {!followUps.paused && (followUps.total ?? 0) > 0 && (
+            <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-xs font-bold">
+              {followUps.total} due
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={toggle}
+          disabled={acting}
+          className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 ${
+            followUps.paused
+              ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+              : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+          }`}
+        >
+          {acting ? '…' : followUps.paused ? '▶ Resume Follow-ups' : '⏸ Pause Follow-ups'}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {rows.map(({ label, value, warn, crit }) => (
+          <div
+            key={label}
+            className={`rounded-lg border px-3 py-2.5 text-center ${
+              value === 0
+                ? 'border-gray-100 bg-gray-50'
+                : value >= crit
+                  ? 'border-red-200 bg-red-50'
+                  : value >= warn
+                    ? 'border-amber-200 bg-amber-50'
+                    : 'border-gray-100 bg-gray-50'
+            }`}
+          >
+            <div className={`text-2xl font-bold tabular-nums ${
+              value === 0 ? 'text-gray-400' : value >= crit ? 'text-red-700' : 'text-amber-700'
+            }`}>{value}</div>
+            <div className="text-[11px] text-gray-500 mt-0.5 leading-tight">{label}</div>
+          </div>
+        ))}
+      </div>
+    </SectionBox>
+  )
+}
+
 export default function CommandCenterPanel() {
   const [data,       setData]       = useState(null)
   const [loading,    setLoading]    = useState(true)
@@ -256,7 +333,7 @@ export default function CommandCenterPanel() {
 
   if (!data) return null
 
-  const { revenue, leadQueue, fulfillment, consults, alerts } = data
+  const { revenue, leadQueue, fulfillment, consults, alerts, followUps } = data
 
   // Total actionable items — used as a headline attention number
   const totalAction =
@@ -370,7 +447,12 @@ export default function CommandCenterPanel() {
         </div>
       </SectionBox>
 
-      {/* ── 5. System Alerts ── */}
+      {/* ── 5. Auto Follow-Up Engine ── */}
+      {followUps && (
+        <FollowUpControlSection followUps={followUps} onToggle={() => load(true)} />
+      )}
+
+      {/* ── 6. System Alerts ── */}
       <SectionBox title="System Alerts" color="red">
         <div className="space-y-2">
 

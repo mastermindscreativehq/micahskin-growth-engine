@@ -1,6 +1,8 @@
 'use strict'
 
 const prisma = require('../lib/prisma')
+const { Prisma } = require('@prisma/client')
+const { countFollowUpsDue } = require('./autoFollowUpService')
 
 const LEAD_MINI = {
   id: true,
@@ -44,6 +46,7 @@ async function getCommandCenter() {
     quotePendingTooLong,
     diagnosisPendingLeads,
     noProductMatchLeads,
+    followUpsDue,
   ] = await Promise.all([
 
     // ── Revenue ────────────────────────────────────────────────────────────────
@@ -213,13 +216,16 @@ async function getCommandCenter() {
     prisma.lead.findMany({
       where: {
         diagnosisSent: true,
-        productRecommendation: null,
+        productRecommendation: { equals: Prisma.DbNull },
         status: { notIn: ['closed'] },
       },
       select: LEAD_MINI,
       orderBy: { updatedAt: 'desc' },
       take: 8,
     }),
+
+    // Follow-ups due (Phase 30)
+    countFollowUpsDue(),
   ])
 
   // Build fulfillment status map
@@ -270,6 +276,8 @@ async function getCommandCenter() {
       noProductMatches:        { count: noProductMatchLeads.length,    leads: noProductMatchLeads },
       stuckCurrentFlow:        { count: stuckFlowLeads.length,         leads: stuckFlowLeads },
     },
+
+    followUps: followUpsDue,
   }
 }
 
