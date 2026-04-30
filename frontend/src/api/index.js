@@ -496,6 +496,17 @@ export async function updateFulfillmentOrderStatus(orderId, status) {
 
 // ── Skin Images ───────────────────────────────────────────────────────────────
 
+// ── Admin Command Center ──────────────────────────────────────────────────────
+
+/**
+ * Fetch the full operator command center payload.
+ * Aggregates revenue, lead queues, fulfillment, consults, and system alerts.
+ * Read-only — no mutations triggered.
+ */
+export async function fetchCommandCenter() {
+  return protectedFetch(`${BASE_URL}/api/admin/command-center`)
+}
+
 export async function fetchSkinImages(leadId) {
   return protectedFetch(`${BASE_URL}/api/leads/${encodeURIComponent(leadId)}/skin-images`)
 }

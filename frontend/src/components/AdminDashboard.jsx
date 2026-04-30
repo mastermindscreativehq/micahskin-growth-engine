@@ -32,6 +32,7 @@ import ProductQuotePanel from './ProductQuotePanel.jsx'
 import FulfillmentPanel from './FulfillmentPanel.jsx'
 import SkinImagesPanel from './SkinImagesPanel.jsx'
 import DeepConsultPanel from './DeepConsultPanel.jsx'
+import CommandCenterPanel from './CommandCenterPanel.jsx'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -3642,6 +3643,7 @@ function ProductsTab() {
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 const TABS = [
+  { id: 'command',   label: 'Command Center' },
   { id: 'overview',  label: 'Overview' },
   { id: 'leads',     label: 'Leads' },
   { id: 'academy',   label: 'Academy' },
@@ -3650,7 +3652,7 @@ const TABS = [
 ]
 
 export default function AdminDashboard({ onBack, onLogout }) {
-  const [activeTab, setActiveTab] = useState('overview')
+  const [activeTab, setActiveTab] = useState('command')
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -3699,6 +3701,7 @@ export default function AdminDashboard({ onBack, onLogout }) {
 
       {/* Content */}
       <main className="mx-auto max-w-6xl px-3 sm:px-4 py-5 sm:py-8">
+        {activeTab === 'command'   && <CommandCenterPanel />}
         {activeTab === 'overview'  && <OverviewTab />}
         {activeTab === 'leads'     && <LeadsTab />}
         {activeTab === 'academy'   && <AcademyTab />}

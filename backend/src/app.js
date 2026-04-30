@@ -18,6 +18,7 @@ const automationRouter = require('./routes/automation')
 const productsRouter     = require('./routes/products')
 const paymentsRouter     = require('./routes/payments')
 const fulfillmentRouter  = require('./routes/fulfillment')
+const adminRouter        = require('./routes/admin')
 
 const app = express()
 
@@ -182,6 +183,9 @@ app.use('/api/payments', paymentsRouter)
 
 // Fulfillment orders
 app.use('/api/fulfillment', fulfillmentRouter)
+
+// Admin aggregation endpoints (command center, etc.)
+app.use('/api/admin', adminRouter)
 
 // ─────────────────────────────────────────────────────────────
 // 404
