@@ -18,13 +18,29 @@ const router = Router()
 router.use(requireAuth)
 
 // GET /api/admin/command-center
+// Always returns 200 — sections failing are isolated by safeSection() and carry an error field.
 router.get('/command-center', async (req, res) => {
   try {
     const data = await getCommandCenter()
     res.json({ success: true, data })
   } catch (err) {
-    console.error('[Admin] GET /command-center:', err.message)
-    res.status(500).json({ success: false, message: err.message })
+    // Should not reach here because getCommandCenter uses safeSection throughout,
+    // but guard anyway so the frontend always gets a usable payload.
+    console.error('[Admin] GET /command-center unexpected crash:', err.message)
+    res.json({
+      success: true,
+      data: {
+        generatedAt: new Date().toISOString(),
+        _criticalError: err.message,
+        revenue:     { productRevenue: 0, academyRevenue: 0, consultRevenue: 0, unpaidQuoteTotal: 0, paidPendingFulfillmentTotal: 0 },
+        leadQueue:   { hotProductLeads: { count: 0, leads: [] }, deepConsultActive: 0, humanReviewNeeded: 0, abandonedPayment: { count: 0, leads: [] }, academyLocked: { count: 0, leads: [] }, stuckFlows: { count: 0, leads: [] } },
+        fulfillment: { awaitingAddress: 0, pendingFulfillment: 0, packed: 0, delivered: 0, cancelled: 0 },
+        consults:    { activeDeepConsults: { count: 0, items: [] }, completedNeedingReview: { count: 0, items: [] }, redFlagLeads: { count: 0, items: [] }, completedNoProductAction: 0 },
+        alerts:      { failedTelegramSends: 0, quotePendingTooLong: { count: 0, quotes: [] }, diagnosisPendingTooLong: { count: 0, leads: [] }, noProductMatches: { count: 0, leads: [] }, stuckCurrentFlow: { count: 0, leads: [] } },
+        followUps:   { total: 0, paused: false, quoteDue: 0, pendingDue: 0, consultDue: 0, diagnosisDue: 0, abandonedDue: 0 },
+        leadSources: { scrapedToday: 0, highIntentToday: 0, pendingOutreach: 0, processedTotal: 0, totalScraped: 0, engineStatus: 'idle' },
+      },
+    })
   }
 })
 

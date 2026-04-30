@@ -24,7 +24,7 @@ function badgeClass(n, warn, crit) {
 
 // ── Atomic display components ─────────────────────────────────────────────────
 
-function SectionBox({ title, color = 'gray', children }) {
+function SectionBox({ title, color = 'gray', sectionError, children }) {
   const header = {
     gray:   'border-gray-200 text-gray-600',
     teal:   'border-teal-200 text-teal-700',
@@ -38,6 +38,11 @@ function SectionBox({ title, color = 'gray', children }) {
     <div className="rounded-xl border border-gray-200 bg-white p-5">
       <div className={`flex items-center gap-2 border-b pb-2 mb-4 ${header}`}>
         <h2 className={`text-xs font-bold uppercase tracking-wider ${header.split(' ')[1]}`}>{title}</h2>
+        {sectionError && (
+          <span className="ml-auto shrink-0 rounded bg-amber-100 text-amber-700 px-2 py-0.5 text-[10px] font-semibold" title={sectionError}>
+            ⚠ partial data
+          </span>
+        )}
       </div>
       {children}
     </div>
@@ -407,16 +412,24 @@ export default function CommandCenterPanel() {
 
   const { revenue, leadQueue, fulfillment, consults, alerts, followUps, leadSources } = data
 
-  // Total actionable items — used as a headline attention number
+  // Total actionable items — defensive in case a section returned defaults on error
   const totalAction =
-    leadQueue.hotProductLeads.count +
-    leadQueue.humanReviewNeeded +
-    leadQueue.abandonedPayment.count +
-    alerts.failedTelegramSends +
-    alerts.quotePendingTooLong.count
+    (leadQueue?.hotProductLeads?.count  ?? 0) +
+    (leadQueue?.humanReviewNeeded       ?? 0) +
+    (leadQueue?.abandonedPayment?.count ?? 0) +
+    (alerts?.failedTelegramSends        ?? 0) +
+    (alerts?.quotePendingTooLong?.count ?? 0)
 
   return (
     <div className="space-y-6">
+
+      {/* ── Critical error banner (whole-service failure, extremely rare) ── */}
+      {data._criticalError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+          <span className="font-semibold">Dashboard error — showing fallback data.</span>{' '}
+          {data._criticalError}
+        </div>
+      )}
 
       {/* ── Header ── */}
       <div className="flex items-start justify-between gap-3">
@@ -444,7 +457,7 @@ export default function CommandCenterPanel() {
       </div>
 
       {/* ── 1. Revenue Snapshot ── */}
-      <SectionBox title="Revenue Snapshot" color="teal">
+      <SectionBox title="Revenue Snapshot" color="teal" sectionError={revenue?.error}>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <RevStat label="Product Revenue"       value={fmt(revenue.productRevenue)}              color="teal"   />
           <RevStat label="Academy Revenue"       value={fmt(revenue.academyRevenue)}              color="violet" />
@@ -455,7 +468,7 @@ export default function CommandCenterPanel() {
       </SectionBox>
 
       {/* ── 2. Lead Priority Queue ── */}
-      <SectionBox title="Lead Priority Queue" color="red">
+      <SectionBox title="Lead Priority Queue" color="red" sectionError={leadQueue?.error}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
 
           <QueueCard label="Hot Product Leads"      count={leadQueue.hotProductLeads.count}  warn={1} crit={4} color="teal">
@@ -485,7 +498,7 @@ export default function CommandCenterPanel() {
       </SectionBox>
 
       {/* ── 3. Fulfillment Queue ── */}
-      <SectionBox title="Fulfillment Queue" color="indigo">
+      <SectionBox title="Fulfillment Queue" color="indigo" sectionError={fulfillment?.error}>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <FulfillStat label="Awaiting Address"  value={fulfillment.awaitingAddress}    active={fulfillment.awaitingAddress > 0}    />
           <FulfillStat label="Pending Packing"   value={fulfillment.pendingFulfillment} active={fulfillment.pendingFulfillment > 0} />
@@ -496,7 +509,7 @@ export default function CommandCenterPanel() {
       </SectionBox>
 
       {/* ── 4. Consult Queue ── */}
-      <SectionBox title="Consult Queue" color="violet">
+      <SectionBox title="Consult Queue" color="violet" sectionError={consults?.error}>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 
           <QueueCard label="Active Deep Consults"         count={consults.activeDeepConsults.count}     warn={1} crit={5} color="violet">
@@ -530,7 +543,7 @@ export default function CommandCenterPanel() {
       )}
 
       {/* ── 6. System Alerts ── */}
-      <SectionBox title="System Alerts" color="red">
+      <SectionBox title="System Alerts" color="red" sectionError={alerts?.error}>
         <div className="space-y-2">
 
           <AlertRow
