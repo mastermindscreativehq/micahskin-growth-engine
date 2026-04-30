@@ -7,10 +7,10 @@
  * lead state + revenue on the Lead record.
  *
  * Event types:
- *   academy_click  → leadStage: interested  (lead clicked academy CTA)
- *   consult_click  → leadStage: engaged     (lead clicked consult CTA)
- *   academy_signup → leadStage: converted   (lead submitted academy form)
- *   academy_paid   → leadStage: converted   (lead completed payment)
+ *   academy_click  → leadStage: interested      (lead clicked academy CTA)
+ *   consult_click  → leadStage: engaged         (lead clicked consult CTA)
+ *   academy_signup → leadStage: academy_locked  (lead submitted academy form — lead bot silenced)
+ *   academy_paid   → leadStage: academy_locked  (lead completed payment — lead bot silenced)
  *
  * All writes are best-effort: a missing leadId or unknown lead logs a warning
  * but never throws — callers should not block on this.
@@ -21,8 +21,8 @@ const prisma = require('../lib/prisma')
 const STAGE_MAP = {
   academy_click:  'interested',
   consult_click:  'engaged',
-  academy_signup: 'converted',
-  academy_paid:   'converted',
+  academy_signup: 'academy_locked',
+  academy_paid:   'academy_locked',
 }
 
 /**
