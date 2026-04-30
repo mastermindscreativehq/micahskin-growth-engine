@@ -102,15 +102,30 @@ async function getTiktokRunStatus(runId) {
   }
 
   const run = result.data
-  console.log(`[TikTok Scraper] Run ${runId} — status=${run.status} dataset=${run.defaultDatasetId || 'none'}`)
-  return { status: run.status, defaultDatasetId: run.defaultDatasetId || null }
+  const status          = run.status
+  const defaultDatasetId = run.defaultDatasetId || null
+
+  console.log(
+    `[TikTok Scraper] Poll — runId=${runId}` +
+    ` status=${status}` +
+    ` defaultDatasetId=${defaultDatasetId || 'none'}`,
+  )
+
+  return { status, defaultDatasetId }
 }
 
 async function fetchTiktokItems(datasetId) {
   const token = process.env.APIFY_API_TOKEN
   if (!token) throw _err('APIFY_API_TOKEN not configured', 500)
 
-  const url = `${APIFY_BASE}/datasets/${datasetId}/items?clean=true&format=json&token=${encodeURIComponent(token)}`
+  // No clean=true: Apify's skipEmpty=true (bundled inside clean) can silently
+  // drop items the actor marks as partially empty. Fetch raw and let our own
+  // normaliser decide what to keep.
+  const url =
+    `${APIFY_BASE}/datasets/${encodeURIComponent(datasetId)}/items` +
+    `?format=json&limit=200&token=${encodeURIComponent(token)}`
+
+  console.log(`[TikTok Scraper] Fetching dataset — datasetId=${datasetId}`)
 
   let raw
   try {
@@ -125,28 +140,41 @@ async function fetchTiktokItems(datasetId) {
     throw _err(`Failed to reach Apify: ${fetchErr.message}`, 502)
   }
 
-  if (!Array.isArray(raw)) throw _err('Dataset response was not an array', 502)
-
-  if (raw.length === 0) {
-    console.warn(
-      '[TikTok Scraper] Actor completed but returned 0 items. ' +
-      'This means actor/input produced no data, not token failure.',
-    )
-  } else {
-    console.log(`[TikTok Scraper] Fetched ${raw.length} raw items from dataset ${datasetId}`)
+  // Defensive: handle both raw array and wrapped { data: { items } } shape
+  let items = raw
+  if (!Array.isArray(raw)) {
+    if (Array.isArray(raw?.data?.items)) {
+      items = raw.data.items
+      console.log(`[TikTok Scraper] Response wrapped — extracted ${items.length} items from data.items`)
+    } else {
+      throw _err(`Dataset response was not an array (got ${typeof raw})`, 502)
+    }
   }
 
-  return raw
+  if (items.length === 0) {
+    console.warn(
+      `[TikTok Scraper] ACTOR_SUCCEEDED_EMPTY_DATASET — datasetId=${datasetId}. ` +
+      'Apify run succeeded but stored 0 items. Check actor input / hashtag validity.',
+    )
+  } else {
+    console.log(`[TikTok Scraper] Dataset ${datasetId} — ${items.length} items fetched`)
+    const firstKeys = Object.keys(items[0] || {}).slice(0, 20).join(', ')
+    console.log(`[TikTok Scraper] First item keys: ${firstKeys}`)
+  }
+
+  return items
 }
 
 // ── Normaliser ────────────────────────────────────────────────────────────────
 
 function normaliseTiktokItem(item) {
-  const externalId = String(item.id || item.videoId || '')
+  // clockworks/tiktok-hashtag-scraper uses 'id' (string) as the primary video ID
+  const externalId = String(item.id || item.videoId || item.awemeId || item.tiktokId || '')
   if (!externalId) return null
 
   const username =
     item.authorMeta?.name ||
+    item.authorMeta?.uniqueId ||
     item.author?.uniqueId ||
     item.author?.nickname ||
     item.authorUniqueId ||
@@ -170,9 +198,11 @@ function normaliseTiktokItem(item) {
       ? new Date(item.createTimeISO)
       : null
 
+  // clockworks actor records the triggering hashtag in item.input.hashtag
   const hashtag =
     item.inputHashtag ||
     item.searchHashtag ||
+    item.input?.hashtag ||
     (Array.isArray(item.hashtags) && item.hashtags[0]?.name) ||
     null
 

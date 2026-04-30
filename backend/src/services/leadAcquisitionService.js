@@ -26,7 +26,9 @@ const {
 
 let _pendingRunId       = null
 let _pendingRunStartAt  = null
-const RUN_TIMEOUT_MS    = 25 * 60 * 1000   // 25 min — abandon stale runs
+// Must be greater than the 30-min poll interval; 25 min was always expiring
+// before the first poll (T=33 min > 25 min), guaranteeing perpetual timeouts.
+const RUN_TIMEOUT_MS    = 40 * 60 * 1000   // 40 min — abandon truly stale runs
 
 // ── Pain / intent patterns ────────────────────────────────────────────────────
 
@@ -265,13 +267,22 @@ async function runAcquisitionCycle() {
       const { status, defaultDatasetId } = await getTiktokRunStatus(_pendingRunId)
 
       if (status === 'SUCCEEDED' && defaultDatasetId) {
+        console.log(
+          `[LeadAcquisition] Run SUCCEEDED — runId=${_pendingRunId}` +
+          ` defaultDatasetId=${defaultDatasetId}`,
+        )
         const rawItems = await fetchTiktokItems(defaultDatasetId)
+        console.log(`[LeadAcquisition] Raw item count from dataset: ${rawItems.length}`)
         const result   = await processRawItems(rawItems)
         console.log('[LeadAcquisition] Cycle complete:', result)
         _pendingRunId = null; _pendingRunStartAt = null
 
+      } else if (status === 'SUCCEEDED' && !defaultDatasetId) {
+        console.warn(`[LeadAcquisition] Run SUCCEEDED but defaultDatasetId is missing — runId=${_pendingRunId}`)
+        _pendingRunId = null; _pendingRunStartAt = null
+
       } else if (['FAILED', 'TIMED-OUT', 'ABORTED'].includes(status)) {
-        console.warn(`[LeadAcquisition] Run ended with status: ${status}`)
+        console.warn(`[LeadAcquisition] Run ended with status=${status} runId=${_pendingRunId}`)
         _pendingRunId = null; _pendingRunStartAt = null
       }
       // RUNNING / READY — wait for next tick
