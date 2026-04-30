@@ -10,6 +10,8 @@ const { handleAcademyMemberReply } = require('../services/academyExperienceServi
 const { generateQuoteForLead } = require('../services/productQuoteService')
 const { handleIncomingPhoto } = require('../services/skinImageService')
 const { startDeepConsult, handleDeepConsultReply } = require('../services/deepConsultService')
+const { logFlowEvent } = require('../services/flowGuardService')
+const { scoreLeadMonetization } = require('../services/monetizationScoringService')
 
 // Telegram stages where we are collecting delivery details before sending the product quote
 const DELIVERY_COLLECTION_STAGES = new Set([
@@ -109,13 +111,66 @@ async function handleLeadWebhook(req, res) {
       `stage=${lead?.telegramStage || 'none'} diagnosisSent=${lead?.diagnosisSent || false}`
     )
 
-    // ── Academy-locked leads — drop all inbound messages silently ───────────
-    // Once a lead enters the academy path their leadStage is set to
-    // 'academy_locked'. No auto-reply, no state change, no routing.
-    // Only admin-triggered sends (CRM actions) bypass this gate.
-    if (lead && lead.leadStage === 'academy_locked') {
-      console.log(`[LeadWebhook] academy_locked — ignoring inbound | leadId=${lead.id} chatId=${chatId}`)
-      return
+    // ── Phase 29: Global Flow Guard ──────────────────────────────────────────
+    // Check currentFlow (authoritative) then fall back to legacy leadStage.
+    // Guards are ordered by priority. Each guard either returns early or
+    // allows execution to fall through to the normal routing below.
+    if (lead) {
+      const flow = lead.currentFlow
+
+      // Academy locked — silently drop all inbound messages
+      if (flow === 'academy_locked' || lead.leadStage === 'academy_locked') {
+        console.log(`[FlowGuard] academy_locked_ignore | leadId=${lead.id} chatId=${chatId}`)
+        logFlowEvent(lead.id, 'academy_locked_ignore', flow, null, 'inbound_dropped').catch(() => {})
+        prisma.lead.update({
+          where: { id: lead.id },
+          data:  { lastFlowGuardReason: 'academy_locked_ignore' },
+        }).catch(() => {})
+        return
+      }
+
+      // Closed — silently drop all inbound messages
+      if (flow === 'closed' || lead.status === 'closed') {
+        console.log(`[FlowGuard] closed_no_response | leadId=${lead.id} chatId=${chatId}`)
+        logFlowEvent(lead.id, 'closed_no_response', flow, null, 'lead_closed').catch(() => {})
+        return
+      }
+
+      // Product quote pending admin review — tell user once, block regen
+      if (flow === 'product_quote_pending_review') {
+        const alreadyTold = lead.lastFlowGuardReason === 'pending_review_msg_sent'
+        if (!alreadyTold) {
+          await sendTelegramToUser(
+            chatId,
+            'Your product recommendation is being reviewed by our team. ' +
+            "We'll send the final list and payment link once it's confirmed.",
+            LEAD_BOT_TOKEN
+          ).catch(() => {})
+          prisma.lead.update({
+            where: { id: lead.id },
+            data:  { lastFlowGuardReason: 'pending_review_msg_sent' },
+          }).catch(() => {})
+        }
+        logFlowEvent(lead.id, 'blocked_auto_quote_pending_review', flow, null, 'quote_under_admin_review').catch(() => {})
+        console.log(`[FlowGuard] product_quote_pending_review | leadId=${lead.id}`)
+        return
+      }
+
+      // Human consult pending — resend WhatsApp link, don't trigger other flows
+      if (flow === 'human_consult_pending') {
+        const reply = buildConsultInterestReply(lead)
+        await sendTelegramToUser(chatId, reply, LEAD_BOT_TOKEN).catch(() => {})
+        logFlowEvent(lead.id, 'human_consult_pending_reminder', flow, null, 'reminded_whatsapp_link').catch(() => {})
+        console.log(`[FlowGuard] human_consult_pending reminder sent | leadId=${lead.id}`)
+        return
+      }
+
+      // deep_consult_active — handled further down via existing conversationMode check;
+      // just log that we're routing there
+      if (flow === 'deep_consult_active') {
+        logFlowEvent(lead.id, 'routed_to_deep_consult', flow, flow, 'currentFlow=deep_consult_active').catch(() => {})
+        // fall through — existing conversationMode === 'deep_consult_active' handler takes it
+      }
     }
 
     // Always track the latest inbound message on the lead record.
@@ -159,6 +214,8 @@ async function handleLeadWebhook(req, res) {
 
       // ── CONSULT keyword — start AI diagnostic consult engine ─────────────
       if (text.trim().toUpperCase() === 'CONSULT') {
+        logFlowEvent(lead.id, 'routed_to_deep_consult', lead.currentFlow, 'deep_consult_active', 'keyword_consult').catch(() => {})
+        scoreLeadMonetization(lead.id).catch(() => {})
         await startDeepConsult(lead, chatId)
         return
       }
@@ -172,12 +229,15 @@ async function handleLeadWebhook(req, res) {
           await sendTelegramToUser(chatId, reply, LEAD_BOT_TOKEN)
             .catch(err => console.error('[LeadWebhook] human consult offer failed:', err.message))
           await updateConversationState(lead.id, {
-            conversationMode:   'consult_active',
-            lastUserIntent:     'human_consult_request',
-            lastBotIntent:      'human_consult_offer',
+            conversationMode:    'consult_active',
+            currentFlow:         'human_consult_pending',
+            lastUserIntent:      'human_consult_request',
+            lastBotIntent:       'human_consult_offer',
             lastMeaningfulBotAt: new Date(),
-            consultOfferCount:  { increment: 1 },
+            consultOfferCount:   { increment: 1 },
           })
+          logFlowEvent(lead.id, 'routed_to_human_consult', lead.currentFlow, 'human_consult_pending', 'keyword_human_consult').catch(() => {})
+          scoreLeadMonetization(lead.id).catch(() => {})
           return
         }
       }
@@ -646,7 +706,16 @@ async function handleDeliveryCollection(lead, text, chatId) {
       const quote = await generateQuoteForLead(freshLead.id)
       if (!quote) throw new Error('generateQuoteForLead returned null')
 
-      // Draft created — admin must review and send from CRM. Never auto-send.
+      // Draft created — set flow to pending_review so flow guard blocks auto-regen
+      await prisma.lead.update({
+        where: { id: freshLead.id },
+        data:  { currentFlow: 'product_quote_pending_review', lastFlowGuardReason: null },
+      }).catch(() => {})
+      logFlowEvent(freshLead.id, 'quote_draft_created', 'diagnosis_sent', 'product_quote_pending_review', 'delivery_collected').catch(() => {})
+
+      // Trigger monetization scoring (non-blocking)
+      scoreLeadMonetization(freshLead.id).catch(() => {})
+
       console.log(`[ProductQuote] draft_created awaiting_admin_review | leadId=${freshLead.id} quoteId=${quote.id}`)
 
       await sendTelegramMessage(

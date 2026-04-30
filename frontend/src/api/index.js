@@ -238,6 +238,21 @@ export async function trackConversion(leadId, type, value) {
   }
 }
 
+// ── Phase 29: Flow Control ────────────────────────────────────────────────────
+
+/**
+ * Force a lead into a specific flow state from the CRM.
+ * flow: one of the allowed currentFlow values
+ * reason: optional human-readable reason for the audit log
+ */
+export async function updateLeadFlow(id, flow, reason = '') {
+  return protectedFetch(`${BASE_URL}/api/leads/${id}/flow`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flow, reason }),
+  })
+}
+
 // ── Auto Reply Execution ──────────────────────────────────────────────────────
 
 /**

@@ -22,6 +22,7 @@
 
 const prisma = require('../lib/prisma')
 const { sendTelegramToUser, sendTelegramMessage } = require('./telegramService')
+const { scoreLeadMonetization } = require('./monetizationScoringService')
 
 const LEAD_BOT_TOKEN = process.env.TELEGRAM_LEAD_BOT_TOKEN
 
@@ -352,10 +353,14 @@ async function startDeepConsult(lead, chatId) {
     },
   })
 
-  // Set lead conversation mode
+  // Set lead conversation mode + currentFlow
   await prisma.lead.update({
     where: { id: lead.id },
-    data:  { conversationMode: 'deep_consult_active', lastUserIntent: 'deep_consult_started' },
+    data:  {
+      conversationMode: 'deep_consult_active',
+      currentFlow:      'deep_consult_active',
+      lastUserIntent:   'deep_consult_started',
+    },
   })
 
   // Opening message
@@ -471,8 +476,15 @@ async function handleDeepConsultReply(lead, text, chatId) {
     // Return lead to normal post-diagnosis mode so PRODUCT / HUMAN CONSULT / ACADEMY work
     await prisma.lead.update({
       where: { id: lead.id },
-      data:  { conversationMode: 'diagnosis_sent', lastUserIntent: 'deep_consult_completed' },
+      data:  {
+        conversationMode: 'diagnosis_sent',
+        currentFlow:      'diagnosis_sent',
+        lastUserIntent:   'deep_consult_completed',
+      },
     })
+
+    // Trigger monetization scoring with full consult context (non-blocking)
+    scoreLeadMonetization(lead.id).catch(() => {})
 
     // Admin completion alert
     sendTelegramMessage(

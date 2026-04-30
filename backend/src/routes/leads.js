@@ -35,6 +35,71 @@ router.post('/:id/send-followup-1',    requireAuth, executeSendFollowUp1)
 router.post('/:id/send-followup-2',    requireAuth, executeSendFollowUp2)
 router.post('/:id/send-followup-3',    requireAuth, executeSendFollowUp3)
 
+// ── Phase 29: Flow control (admin only) ──────────────────────────────────────
+
+const ALLOWED_FLOWS = [
+  'intake', 'awaiting_images', 'diagnosis_pending', 'diagnosis_sent',
+  'product_quote_pending_review', 'product_quote_sent', 'product_paid',
+  'fulfillment_pending', 'deep_consult_active', 'human_consult_pending',
+  'academy_locked', 'closed',
+]
+
+router.patch('/:id/flow', requireAuth, async (req, res) => {
+  const { flow, reason } = req.body
+
+  if (!flow || !ALLOWED_FLOWS.includes(flow)) {
+    return res.status(400).json({
+      success: false,
+      message: `flow must be one of: ${ALLOWED_FLOWS.join(', ')}`,
+    })
+  }
+
+  try {
+    const lead = await prisma.lead.findUnique({
+      where:  { id: req.params.id },
+      select: { currentFlow: true, id: true },
+    })
+    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' })
+
+    const fromFlow = lead.currentFlow
+
+    const data = {
+      currentFlow:         flow,
+      lastFlowGuardReason: reason ? `admin: ${reason}` : 'forced by admin',
+    }
+
+    if (flow === 'academy_locked') {
+      data.leadStage          = 'academy_locked'
+      data.followupSuppressed = true
+    } else if (flow === 'closed') {
+      data.status             = 'closed'
+      data.followupSuppressed = true
+    } else if (flow === 'diagnosis_sent' || flow === 'intake') {
+      // Reopening — clear suppression flags
+      data.followupSuppressed = false
+      if (lead.currentFlow === 'academy_locked') data.leadStage = 'new'
+    }
+
+    await prisma.lead.update({ where: { id: req.params.id }, data })
+
+    prisma.flowEventLog.create({
+      data: {
+        leadId:    req.params.id,
+        eventType: 'flow_forced_by_admin',
+        fromFlow:  fromFlow || null,
+        toFlow:    flow,
+        reason:    reason || 'admin forced via CRM',
+      },
+    }).catch(() => {})
+
+    const updated = await prisma.lead.findUnique({ where: { id: req.params.id } })
+    return res.json({ success: true, lead: updated })
+  } catch (err) {
+    console.error('[FlowControl] update failed:', err.message)
+    return res.status(500).json({ success: false, message: 'Failed to update lead flow' })
+  }
+})
+
 // ── Deep Consultation sub-resource ───────────────────────────────────────────
 
 // GET /api/leads/:id/deep-consult — fetch the latest deep consultation for a lead

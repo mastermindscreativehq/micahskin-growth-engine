@@ -388,6 +388,9 @@ async function sendDiagnosisAndQuote(leadId, quoteId) {
       lastBotIntent:        'diagnosis_and_quote',
       lastMeaningfulBotAt:  now,
       lastConversionTriggerAt: now,
+      // Phase 29: advance flow to quote_sent so guard allows payment questions
+      currentFlow:          'product_quote_sent',
+      lastFlowGuardReason:  null,
     },
   })
 
@@ -405,6 +408,17 @@ async function sendDiagnosisAndQuote(leadId, quoteId) {
       fallbackUsed:    false,
     },
   }).catch(e => console.error('[QuoteService] MessageLog write failed:', e.message))
+
+  // Phase 29: log quote_sent event
+  prisma.flowEventLog.create({
+    data: {
+      leadId,
+      eventType: 'quote_sent_admin_approved',
+      fromFlow:  'product_quote_pending_review',
+      toFlow:    'product_quote_sent',
+      reason:    'admin_reviewed_and_sent',
+    },
+  }).catch(() => {})
 
   console.log(`[ProductQuote] sent_by_admin leadId=${leadId} quoteId=${quote.id} msgId=${sendResult.data?.result?.message_id}`)
 

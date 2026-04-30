@@ -26,6 +26,7 @@ import {
   deactivateProduct,
   ingestManualProducts,
   fetchIngestionLogs,
+  updateLeadFlow,
 } from '../api/index.js'
 import ProductQuotePanel from './ProductQuotePanel.jsx'
 import FulfillmentPanel from './FulfillmentPanel.jsx'
@@ -1003,6 +1004,11 @@ function LeadsTab() {
                           <DeepConsultPanel lead={lead} />
                         )}
 
+                        {/* Monetization Intelligence Panel — flow control + scoring */}
+                        {(lead.diagnosisSent || lead.telegramStarted || lead.currentFlow) && (
+                          <MonetizationIntelligencePanel lead={lead} onRefresh={load} />
+                        )}
+
                         {/* Product Intelligence Panel — matched products, quote builder */}
                         {lead.primaryConcern && (
                           <ProductQuotePanel lead={lead} />
@@ -1254,6 +1260,175 @@ function LeadsTab() {
         total={result.total}
         onPage={setPage}
       />
+    </div>
+  )
+}
+
+// ── Monetization Intelligence Panel ──────────────────────────────────────────
+
+const FLOW_STYLE = {
+  intake:                        'bg-gray-100 text-gray-600',
+  awaiting_images:               'bg-blue-100 text-blue-700',
+  diagnosis_pending:             'bg-amber-100 text-amber-700',
+  diagnosis_sent:                'bg-teal-100 text-teal-700',
+  product_quote_pending_review:  'bg-orange-100 text-orange-700',
+  product_quote_sent:            'bg-blue-100 text-blue-700',
+  product_paid:                  'bg-emerald-100 text-emerald-700',
+  fulfillment_pending:           'bg-cyan-100 text-cyan-700',
+  deep_consult_active:           'bg-violet-100 text-violet-700',
+  human_consult_pending:         'bg-purple-100 text-purple-700',
+  academy_locked:                'bg-indigo-100 text-indigo-700',
+  closed:                        'bg-red-100 text-red-600',
+}
+
+const OFFER_STYLE = {
+  product:       'bg-teal-100 text-teal-700',
+  consult:       'bg-violet-100 text-violet-700',
+  academy:       'bg-indigo-100 text-indigo-700',
+  human_consult: 'bg-red-100 text-red-700',
+  none:          'bg-gray-100 text-gray-500',
+}
+
+function ScoreBar({ label, score, color }) {
+  const colors = {
+    teal:   { bar: 'bg-teal-500',   text: 'text-teal-700' },
+    violet: { bar: 'bg-violet-500', text: 'text-violet-700' },
+    indigo: { bar: 'bg-indigo-500', text: 'text-indigo-700' },
+  }
+  const c = colors[color] || colors.teal
+  return (
+    <div className="space-y-0.5">
+      <div className="flex justify-between text-[10px]">
+        <span className="text-gray-500 font-medium">{label}</span>
+        <span className={`font-bold ${c.text}`}>{score ?? '—'}</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${c.bar}`}
+          style={{ width: score != null ? `${score}%` : '0%' }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function MonetizationIntelligencePanel({ lead, onRefresh }) {
+  const [acting, setActing]   = useState(null)
+  const [toast, setToast]     = useState(null)
+
+  const hasData =
+    lead.productIntentScore  != null ||
+    lead.consultIntentScore  != null ||
+    lead.academyIntentScore  != null ||
+    lead.recommendedNextOffer ||
+    lead.currentFlow
+
+  function showToast(type, msg) {
+    setToast({ type, msg })
+    setTimeout(() => setToast(null), 4000)
+  }
+
+  async function handleForceFlow(flow, label) {
+    const reason = `CRM: ${label}`
+    setActing(flow)
+    try {
+      await updateLeadFlow(lead.id, flow, reason)
+      showToast('ok', `Flow updated to: ${flow}`)
+      onRefresh()
+    } catch (err) {
+      showToast('err', err?.message || 'Update failed')
+    } finally {
+      setActing(null)
+    }
+  }
+
+  const FLOW_ACTIONS = [
+    { flow: 'diagnosis_sent',   label: 'Reopen Lead',          color: 'emerald' },
+    { flow: 'product_quote_pending_review', label: 'Force Product Flow', color: 'teal' },
+    { flow: 'deep_consult_active',          label: 'Force Deep Consult', color: 'violet' },
+    { flow: 'human_consult_pending',        label: 'Force Human Consult', color: 'purple' },
+    { flow: 'academy_locked',   label: 'Lock Academy',         color: 'indigo' },
+    { flow: 'closed',           label: 'Close Lead',           color: 'red' },
+  ]
+
+  const btnColor = {
+    emerald: 'border-emerald-200 text-emerald-700 hover:bg-emerald-50',
+    teal:    'border-teal-200 text-teal-700 hover:bg-teal-50',
+    violet:  'border-violet-200 text-violet-700 hover:bg-violet-50',
+    purple:  'border-purple-200 text-purple-700 hover:bg-purple-50',
+    indigo:  'border-indigo-200 text-indigo-700 hover:bg-indigo-50',
+    red:     'border-red-200 text-red-600 hover:bg-red-50',
+  }
+
+  return (
+    <div className="rounded-lg border border-amber-100 bg-amber-50/30 px-3 py-2.5 space-y-3" onClick={e => e.stopPropagation()}>
+      {/* Header */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-semibold text-amber-700 uppercase tracking-wide">Monetization Intelligence</span>
+
+        {lead.currentFlow && (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize ${FLOW_STYLE[lead.currentFlow] || 'bg-gray-100 text-gray-500'}`}>
+            {lead.currentFlow.replace(/_/g, ' ')}
+          </span>
+        )}
+        {lead.recommendedNextOffer && lead.recommendedNextOffer !== 'none' && (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize ${OFFER_STYLE[lead.recommendedNextOffer] || 'bg-gray-100 text-gray-500'}`}>
+            rec: {lead.recommendedNextOffer.replace(/_/g, ' ')}
+          </span>
+        )}
+      </div>
+
+      {/* Scores */}
+      {hasData && (lead.productIntentScore != null || lead.consultIntentScore != null || lead.academyIntentScore != null) && (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <ScoreBar label="Product"  score={lead.productIntentScore} color="teal" />
+          <ScoreBar label="Consult"  score={lead.consultIntentScore} color="violet" />
+          <ScoreBar label="Academy"  score={lead.academyIntentScore} color="indigo" />
+        </div>
+      )}
+
+      {/* Reason */}
+      {lead.monetizationReason && (
+        <p className="text-[10px] text-gray-600 italic border-t border-amber-100 pt-1.5">
+          {lead.monetizationReason}
+        </p>
+      )}
+
+      {/* Last flow guard reason */}
+      {lead.lastFlowGuardReason && (
+        <div className="flex gap-1.5 text-[10px] border-t border-amber-100 pt-1.5">
+          <span className="text-gray-400 shrink-0">Last guard:</span>
+          <span className="font-mono text-amber-700">{lead.lastFlowGuardReason}</span>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <p className={`text-[10px] font-medium px-2 py-1 rounded ${toast.type === 'ok' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+          {toast.msg}
+        </p>
+      )}
+
+      {/* Flow control buttons */}
+      <div className="border-t border-amber-100 pt-2">
+        <p className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide mb-1.5">Admin Flow Control</p>
+        <div className="flex flex-wrap gap-1.5">
+          {FLOW_ACTIONS.map(({ flow, label, color }) => (
+            <button
+              key={flow}
+              disabled={!!acting || lead.currentFlow === flow}
+              onClick={() => handleForceFlow(flow, label)}
+              className={`rounded border px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                lead.currentFlow === flow
+                  ? 'border-gray-200 bg-gray-50 text-gray-400 opacity-60'
+                  : btnColor[color]
+              }`}
+            >
+              {acting === flow ? '…' : label}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }

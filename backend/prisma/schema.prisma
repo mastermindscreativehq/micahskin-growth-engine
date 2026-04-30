@@ -171,6 +171,16 @@ model Lead {
   deliveryPhone            String?
   deliveryCity             String?
   deliveryAddress          String?
+
+  // Phase 29 — Flow Control + Monetization Scoring
+  currentFlow              String?               // intake|awaiting_images|diagnosis_pending|diagnosis_sent|product_quote_pending_review|product_quote_sent|product_paid|fulfillment_pending|deep_consult_active|human_consult_pending|academy_locked|closed
+  lastFlowGuardReason      String?
+  productIntentScore       Int?
+  consultIntentScore       Int?
+  academyIntentScore       Int?
+  recommendedNextOffer     String?               // product|consult|academy|human_consult|none
+  monetizationReason       String?
+
   replies                  Reply[]
   quotes                   ProductQuote[]
   paymentTransactions      PaymentTransaction[]
@@ -647,6 +657,21 @@ model FulfillmentOrder {
   @@index([leadId])
   @@index([status])
   @@map("fulfillment_orders")
+}
+
+model FlowEventLog {
+  id        String   @id @default(cuid())
+  leadId    String
+  eventType String
+  fromFlow  String?
+  toFlow    String?
+  reason    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([leadId])
+  @@index([eventType])
+  @@map("flow_event_logs")
 }
 
 /// Quiz session state — tracks per-user quiz progress in the n8n academy bot.

@@ -832,6 +832,8 @@ async function _processAcademyOffers() {
           lastBotIntent:       'auto_academy_offer',
           lastMeaningfulBotAt: now,
           academyPitchCount:   { increment: 1 },
+          // Phase 29: lock flow so bot stays silent after academy pitch
+          // Admin can unlock via CRM → "Reopen Lead"
         },
       })
       await _logAction(lead.id, lead.telegramChatId, 'academy_offer', result)
