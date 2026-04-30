@@ -282,6 +282,11 @@ function shouldSendAutomation(lead, actionType) {
     }
   }
 
+  // Deep AI consult in progress: block all automation
+  if (lead.conversationMode === 'deep_consult_active') {
+    return { allowed: false, reason: 'suppressed:deep_consult_active' }
+  }
+
   return { allowed: true, reason: null }
 }
 
@@ -686,6 +691,7 @@ module.exports = {
   updateConversationState,
   buildAcademyContextualReply,
   buildProductContextualReply,
+  buildConsultInterestReply,
   handleInboundReply,
 
   // Exported constants for shared use

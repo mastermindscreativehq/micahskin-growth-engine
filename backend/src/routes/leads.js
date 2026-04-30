@@ -35,6 +35,79 @@ router.post('/:id/send-followup-1',    requireAuth, executeSendFollowUp1)
 router.post('/:id/send-followup-2',    requireAuth, executeSendFollowUp2)
 router.post('/:id/send-followup-3',    requireAuth, executeSendFollowUp3)
 
+// ── Deep Consultation sub-resource ───────────────────────────────────────────
+
+// GET /api/leads/:id/deep-consult — fetch the latest deep consultation for a lead
+router.get('/:id/deep-consult', requireAuth, async (req, res) => {
+  try {
+    const consult = await prisma.deepConsultation.findFirst({
+      where:   { leadId: req.params.id },
+      orderBy: { createdAt: 'desc' },
+    })
+    return res.json({ success: true, consultation: consult || null })
+  } catch (err) {
+    console.error('[DeepConsult] fetch failed:', err.message)
+    return res.status(500).json({ success: false, message: 'Failed to fetch consultation' })
+  }
+})
+
+// POST /api/leads/:id/deep-consult/mark-human-review — admin flags consult for human review
+router.post('/:id/deep-consult/mark-human-review', requireAuth, async (req, res) => {
+  const { reason } = req.body
+  try {
+    const consult = await prisma.deepConsultation.findFirst({
+      where:   { leadId: req.params.id },
+      orderBy: { createdAt: 'desc' },
+    })
+    if (!consult) {
+      return res.status(404).json({ success: false, message: 'No consultation found for this lead' })
+    }
+    const updated = await prisma.deepConsultation.update({
+      where: { id: consult.id },
+      data:  {
+        needsHumanReview:  true,
+        humanReviewReason: reason || 'Flagged by admin',
+      },
+    })
+    return res.json({ success: true, consultation: updated })
+  } catch (err) {
+    console.error('[DeepConsult] mark-human-review failed:', err.message)
+    return res.status(500).json({ success: false, message: 'Failed to update consultation' })
+  }
+})
+
+// POST /api/leads/:id/deep-consult/send-human-offer — send human consult offer via Telegram
+router.post('/:id/deep-consult/send-human-offer', requireAuth, async (req, res) => {
+  const { sendTelegramToUser } = require('../services/telegramService')
+  const { buildConsultInterestReply } = require('../services/conversationBrainService')
+  const LEAD_BOT_TOKEN = process.env.TELEGRAM_LEAD_BOT_TOKEN
+  try {
+    const lead = await prisma.lead.findUnique({ where: { id: req.params.id } })
+    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' })
+    if (!lead.telegramChatId) {
+      return res.status(400).json({ success: false, message: 'Lead has no Telegram chat ID' })
+    }
+    const message = buildConsultInterestReply(lead)
+    const result  = await sendTelegramToUser(lead.telegramChatId, message, LEAD_BOT_TOKEN)
+    if (!result.success) {
+      return res.status(500).json({ success: false, message: 'Telegram send failed', error: result.error })
+    }
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        conversationMode:   'consult_active',
+        lastBotIntent:      'human_consult_offer',
+        lastMeaningfulBotAt: new Date(),
+        consultOfferCount:  { increment: 1 },
+      },
+    })
+    return res.json({ success: true })
+  } catch (err) {
+    console.error('[DeepConsult] send-human-offer failed:', err.message)
+    return res.status(500).json({ success: false, message: 'Failed to send human consult offer' })
+  }
+})
+
 // ── Skin image sub-resource ───────────────────────────────────────────────────
 
 // GET /api/leads/:id/skin-images — list all images for a lead

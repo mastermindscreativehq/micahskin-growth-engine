@@ -5,10 +5,11 @@ const { isPostDiagnosisLead, classifyFollowUpIntent } = require('../services/tel
 const { processPaidEnrollment } = require('../services/academyOnboardingService')
 const { handlePremiumIntakeReply } = require('../services/premiumDeliveryService')
 const { maybeTriggerAutomaticConversion } = require('../services/conversionEngineService')
-const { handleInboundReply, classifyInboundIntent } = require('../services/conversationBrainService')
+const { handleInboundReply, classifyInboundIntent, buildConsultInterestReply, updateConversationState } = require('../services/conversationBrainService')
 const { handleAcademyMemberReply } = require('../services/academyExperienceService')
 const { generateQuoteForLead } = require('../services/productQuoteService')
 const { handleIncomingPhoto } = require('../services/skinImageService')
+const { startDeepConsult, handleDeepConsultReply } = require('../services/deepConsultService')
 
 // Telegram stages where we are collecting delivery details before sending the product quote
 const DELIVERY_COLLECTION_STAGES = new Set([
@@ -108,6 +109,15 @@ async function handleLeadWebhook(req, res) {
       `stage=${lead?.telegramStage || 'none'} diagnosisSent=${lead?.diagnosisSent || false}`
     )
 
+    // ── Academy-locked leads — drop all inbound messages silently ───────────
+    // Once a lead enters the academy path their leadStage is set to
+    // 'academy_locked'. No auto-reply, no state change, no routing.
+    // Only admin-triggered sends (CRM actions) bypass this gate.
+    if (lead && lead.leadStage === 'academy_locked') {
+      console.log(`[LeadWebhook] academy_locked — ignoring inbound | leadId=${lead.id} chatId=${chatId}`)
+      return
+    }
+
     // Always track the latest inbound message on the lead record.
     // This powers the "Last message" line in the CRM during intake
     // (otherwise admin shows "No reply yet" for the entire 6-question flow).
@@ -139,6 +149,37 @@ async function handleLeadWebhook(req, res) {
       if (text.trim().toUpperCase() === 'PRODUCT') {
         await handleProductRequest(lead, chatId)
         return
+      }
+
+      // ── Deep consult in-progress — route to consult engine ───────────────
+      if (lead.conversationMode === 'deep_consult_active') {
+        await handleDeepConsultReply(lead, text, chatId)
+        return
+      }
+
+      // ── CONSULT keyword — start AI diagnostic consult engine ─────────────
+      if (text.trim().toUpperCase() === 'CONSULT') {
+        await startDeepConsult(lead, chatId)
+        return
+      }
+
+      // ── HUMAN CONSULT / PRIVATE CONSULT — route to human consult offer ───
+      // Does NOT enter the AI diagnostic engine. Sends existing WhatsApp booking link.
+      {
+        const upper = text.trim().toUpperCase()
+        if (upper === 'HUMAN CONSULT' || upper === 'PRIVATE CONSULT') {
+          const reply = buildConsultInterestReply(lead)
+          await sendTelegramToUser(chatId, reply, LEAD_BOT_TOKEN)
+            .catch(err => console.error('[LeadWebhook] human consult offer failed:', err.message))
+          await updateConversationState(lead.id, {
+            conversationMode:   'consult_active',
+            lastUserIntent:     'human_consult_request',
+            lastBotIntent:      'human_consult_offer',
+            lastMeaningfulBotAt: new Date(),
+            consultOfferCount:  { increment: 1 },
+          })
+          return
+        }
       }
 
       // ── Conversation Brain routes and responds ────────────────────────────

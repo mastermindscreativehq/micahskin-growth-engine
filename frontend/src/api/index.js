@@ -495,4 +495,27 @@ export async function updateSkinImage(leadId, imageId, payload) {
     }
   )
 }
+
+// ── Deep Consultation ─────────────────────────────────────────────────────────
+
+export async function fetchDeepConsultation(leadId) {
+  return protectedFetch(`${BASE_URL}/api/leads/${encodeURIComponent(leadId)}/deep-consult`)
+}
+
+export async function markDeepConsultHumanReview(leadId, reason = '') {
+  return protectedFetch(
+    `${BASE_URL}/api/leads/${encodeURIComponent(leadId)}/deep-consult/mark-human-review`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    }
+  )
+}
+
+export async function sendHumanConsultOffer(leadId) {
+  return protectedFetch(
+    `${BASE_URL}/api/leads/${encodeURIComponent(leadId)}/deep-consult/send-human-offer`,
+    { method: 'POST' }
+  )
 }

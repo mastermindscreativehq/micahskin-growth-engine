@@ -176,8 +176,29 @@ model Lead {
   paymentTransactions      PaymentTransaction[]
   fulfillmentOrders        FulfillmentOrder[]
   skinImages               LeadSkinImage[]
+  deepConsultations        DeepConsultation[]
 
   @@map("leads")
+}
+
+model DeepConsultation {
+  id                String    @id @default(cuid())
+  leadId            String
+  currentStage      Int       @default(1)
+  status            String    @default("in_progress") // in_progress | completed | abandoned
+  answers           Json      @default("{}")
+  assessment        String?
+  needsHumanReview  Boolean   @default(false)
+  humanReviewReason String?
+  redFlags          String[]
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  completedAt       DateTime?
+  lead              Lead      @relation(fields: [leadId], references: [id])
+
+  @@index([leadId])
+  @@index([status])
+  @@map("deep_consultations")
 }
 
 model LeadSkinImage {

@@ -30,6 +30,7 @@ import {
 import ProductQuotePanel from './ProductQuotePanel.jsx'
 import FulfillmentPanel from './FulfillmentPanel.jsx'
 import SkinImagesPanel from './SkinImagesPanel.jsx'
+import DeepConsultPanel from './DeepConsultPanel.jsx'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -995,6 +996,11 @@ function LeadsTab() {
                         {/* Conversion Trigger Panel — manual controls + auto-conversion state */}
                         {(lead.telegramStarted || lead.diagnosisSent || lead.conversionStage) && (
                           <ConversionTriggerPanel lead={lead} onRefresh={load} />
+                        )}
+
+                        {/* Deep Consult Panel — AI diagnostic consultation */}
+                        {lead.diagnosisSent && (
+                          <DeepConsultPanel lead={lead} />
                         )}
 
                         {/* Product Intelligence Panel — matched products, quote builder */}
