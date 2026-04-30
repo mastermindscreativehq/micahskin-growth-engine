@@ -693,6 +693,32 @@ model FollowUpLog {
   @@map("follow_up_logs")
 }
 
+// Phase 32 — Lead Acquisition Engine
+model ScrapedLead {
+  id              String    @id @default(cuid())
+  platform        String                            // tiktok
+  username        String?
+  comment         String
+  videoUrl        String?
+  hashtag         String?
+  externalId      String?   @unique               // TikTok video ID — dedup key
+  postedAt        DateTime?
+  concernType     String?                          // acne|hyperpigmentation|stretch_marks|oily_skin|knuckle_darkening|general
+  intentScore     Int       @default(0)            // 0–100
+  urgencyLevel    String?                          // high|medium|low
+  processed       Boolean   @default(false)        // true when injected into leads table
+  injectedLeadId  String?                          // Lead.id set after injection
+  outreachQueued  Boolean   @default(false)        // true when intent >= 70
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([platform])
+  @@index([processed])
+  @@index([intentScore])
+  @@index([createdAt])
+  @@map("scraped_leads")
+}
+
 /// Quiz session state — tracks per-user quiz progress in the n8n academy bot.
 model quiz_sessions {
   id         BigInt   @id @default(autoincrement())

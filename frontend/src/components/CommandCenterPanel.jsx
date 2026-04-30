@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchCommandCenter, pauseFollowUps, resumeFollowUps } from '../api/index.js'
+import { fetchCommandCenter, pauseFollowUps, resumeFollowUps, triggerAcquisitionRun } from '../api/index.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -210,6 +210,78 @@ function AlertRow({ label, count, warn = 1, crit = 5, children }) {
   )
 }
 
+// ── Lead Sources section ──────────────────────────────────────────────────────
+
+function LeadSourcesSection({ leadSources, onRefresh }) {
+  const [acquiring, setAcquiring] = useState(false)
+  const [triggered, setTriggered] = useState(false)
+
+  const trigger = async () => {
+    setAcquiring(true)
+    try {
+      await triggerAcquisitionRun()
+      setTriggered(true)
+      setTimeout(() => setTriggered(false), 6000)
+      onRefresh()
+    } catch {
+      // swallow — stale state, refresh fixes it
+    } finally {
+      setAcquiring(false)
+    }
+  }
+
+  const isRunning = leadSources?.engineStatus === 'running'
+
+  const stats = [
+    { label: 'Scraped Today',     value: leadSources?.scrapedToday   ?? 0, color: 'teal'   },
+    { label: 'High Intent Today', value: leadSources?.highIntentToday ?? 0, color: 'violet' },
+    { label: 'Pending Outreach',  value: leadSources?.pendingOutreach ?? 0, color: 'amber'  },
+    { label: 'Total Injected',    value: leadSources?.processedTotal  ?? 0, color: 'indigo' },
+  ]
+
+  return (
+    <SectionBox title="Lead Sources — TikTok Acquisition" color="teal">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <span className={`h-2.5 w-2.5 rounded-full shrink-0 transition-colors ${
+            isRunning ? 'bg-amber-400 animate-pulse' : 'bg-teal-400'
+          }`} />
+          <span className="text-xs font-semibold text-gray-700">
+            {isRunning ? 'Scrape in progress…' : 'Engine idle'}
+          </span>
+          <span className="text-xs text-gray-400 tabular-nums">
+            {(leadSources?.totalScraped ?? 0).toLocaleString()} total scraped
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={trigger}
+          disabled={acquiring || isRunning}
+          className="shrink-0 rounded-lg border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
+        >
+          {acquiring ? '…' : '▶ Run Now'}
+        </button>
+      </div>
+
+      {triggered && (
+        <div className="mb-3 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2 text-xs text-teal-700">
+          Scrape cycle triggered — results will appear on next refresh.
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {stats.map(({ label, value, color }) => (
+          <RevStat key={label} label={label} value={value} color={color} />
+        ))}
+      </div>
+
+      <p className="mt-3 text-[11px] text-gray-400 leading-snug">
+        Targets 8 TikTok hashtags · Runs every 30 min · High-intent leads (score ≥ 70) auto-appear in Hot Leads queue
+      </p>
+    </SectionBox>
+  )
+}
+
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 function FollowUpControlSection({ followUps, onToggle }) {
@@ -333,7 +405,7 @@ export default function CommandCenterPanel() {
 
   if (!data) return null
 
-  const { revenue, leadQueue, fulfillment, consults, alerts, followUps } = data
+  const { revenue, leadQueue, fulfillment, consults, alerts, followUps, leadSources } = data
 
   // Total actionable items — used as a headline attention number
   const totalAction =
@@ -447,7 +519,12 @@ export default function CommandCenterPanel() {
         </div>
       </SectionBox>
 
-      {/* ── 5. Auto Follow-Up Engine ── */}
+      {/* ── 5. Lead Sources — TikTok Acquisition ── */}
+      {leadSources !== undefined && (
+        <LeadSourcesSection leadSources={leadSources} onRefresh={() => load(true)} />
+      )}
+
+      {/* ── 6. Auto Follow-Up Engine ── */}
       {followUps && (
         <FollowUpControlSection followUps={followUps} onToggle={() => load(true)} />
       )}

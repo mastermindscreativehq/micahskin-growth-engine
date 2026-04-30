@@ -3,6 +3,7 @@
 const prisma = require('../lib/prisma')
 const { Prisma } = require('@prisma/client')
 const { countFollowUpsDue } = require('./autoFollowUpService')
+const { getAcquisitionStats } = require('./leadAcquisitionService')
 
 const LEAD_MINI = {
   id: true,
@@ -47,6 +48,7 @@ async function getCommandCenter() {
     diagnosisPendingLeads,
     noProductMatchLeads,
     followUpsDue,
+    acquisitionStats,
   ] = await Promise.all([
 
     // ── Revenue ────────────────────────────────────────────────────────────────
@@ -226,6 +228,9 @@ async function getCommandCenter() {
 
     // Follow-ups due (Phase 30)
     countFollowUpsDue(),
+
+    // Lead acquisition stats (Phase 32)
+    getAcquisitionStats(),
   ])
 
   // Build fulfillment status map
@@ -278,6 +283,8 @@ async function getCommandCenter() {
     },
 
     followUps: followUpsDue,
+
+    leadSources: acquisitionStats,
   }
 }
 

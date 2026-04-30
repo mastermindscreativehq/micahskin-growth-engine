@@ -9,7 +9,8 @@ const { startOrchestrationPoller } = require('./services/orchestrationService')
 const { startActionEngine } = require('./services/actionEngineService')
 const { startAcademyOnboarding } = require('./services/academyOnboardingService')
 const { startAcademyExperience } = require('./services/academyExperienceService')
-const { startAutoFollowUpService } = require('./services/autoFollowUpService')
+const { startAutoFollowUpService }     = require('./services/autoFollowUpService')
+const { startLeadAcquisitionEngine }   = require('./services/leadAcquisitionService')
 
 const PORT = Number(process.env.PORT) || 4000
 const HOST = '0.0.0.0'
@@ -52,6 +53,7 @@ function startBackgroundServices() {
   safeStartService('Academy Onboarding Service', startAcademyOnboarding)
   safeStartService('Academy Experience Service', startAcademyExperience)
   safeStartService('Auto Follow-Up Conversion Engine', startAutoFollowUpService)
+  safeStartService('Lead Acquisition Engine', startLeadAcquisitionEngine)
 }
 
 async function start() {

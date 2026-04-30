@@ -9,6 +9,10 @@ const {
   resumeFollowUps,
   isFollowUpsPaused,
 } = require('../services/autoFollowUpService')
+const {
+  runAcquisitionCycle,
+  getAcquisitionStats,
+} = require('../services/leadAcquisitionService')
 
 const router = Router()
 router.use(requireAuth)
@@ -45,6 +49,31 @@ router.post('/follow-ups/pause', (req, res) => {
 router.post('/follow-ups/resume', (req, res) => {
   resumeFollowUps()
   res.json({ success: true, paused: false })
+})
+
+// POST /api/admin/acquisition/trigger — manual one-off scrape cycle
+router.post('/acquisition/trigger', async (req, res) => {
+  try {
+    // Fire-and-forget — cycle is async, client gets immediate ack
+    runAcquisitionCycle().catch(err =>
+      console.error('[Admin] Acquisition trigger error:', err.message)
+    )
+    res.json({ success: true, message: 'Acquisition cycle triggered' })
+  } catch (err) {
+    console.error('[Admin] POST /acquisition/trigger:', err.message)
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+// GET /api/admin/acquisition/stats
+router.get('/acquisition/stats', async (req, res) => {
+  try {
+    const stats = await getAcquisitionStats()
+    res.json({ success: true, data: stats })
+  } catch (err) {
+    console.error('[Admin] GET /acquisition/stats:', err.message)
+    res.status(500).json({ success: false, message: err.message })
+  }
 })
 
 module.exports = router

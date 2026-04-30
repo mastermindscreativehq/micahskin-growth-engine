@@ -557,3 +557,13 @@ export async function sendHumanConsultOffer(leadId) {
     { method: 'POST' }
   )
 }
+
+// ── Lead Acquisition Engine (Phase 32) ───────────────────────────────────────
+
+export async function fetchAcquisitionStats() {
+  return protectedFetch(`${BASE_URL}/api/admin/acquisition/stats`)
+}
+
+export async function triggerAcquisitionRun() {
+  return protectedFetch(`${BASE_URL}/api/admin/acquisition/trigger`, { method: 'POST' })
+}
