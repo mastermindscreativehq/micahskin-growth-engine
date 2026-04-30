@@ -20,7 +20,6 @@ const {
   getTiktokRunStatus,
   fetchTiktokItems,
   normaliseTiktokItem,
-  TARGET_HASHTAGS,
 } = require('./tiktokScraperService')
 
 // ── In-memory run state ───────────────────────────────────────────────────────
@@ -281,7 +280,7 @@ async function runAcquisitionCycle() {
 
     // No pending run — trigger a new cycle
     console.log('[LeadAcquisition] Triggering TikTok hashtag scrape...')
-    const { runId } = await triggerTiktokHashtagScrape(TARGET_HASHTAGS)
+    const { runId } = await triggerTiktokHashtagScrape()
     _pendingRunId      = runId
     _pendingRunStartAt = new Date()
 

@@ -9,39 +9,56 @@
  *   APIFY_TIKTOK_ACTOR_ID   — defaults to clockworks/tiktok-hashtag-scraper
  */
 
-const APIFY_BASE = 'https://api.apify.com/v2'
+const { getHashtagsForRun } = require('../config/micahskinTikTokHashtags')
 
-const TARGET_HASHTAGS = [
-  'acne',
-  'darkspots',
-  'hyperpigmentation',
-  'stretchmarks',
-  'oilyskin',
-  'skincareNigeria',
-  'knuckledarkening',
-  'facebreakout',
-]
+const APIFY_BASE = 'https://api.apify.com/v2'
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
-async function triggerTiktokHashtagScrape(hashtags = TARGET_HASHTAGS) {
+/**
+ * triggerTiktokHashtagScrape
+ *
+ * @param {string[]|string} [hashtagsOrMode='priority']
+ *   - String mode ('priority' | 'all' | 'full'): selects + rotates a batch from config
+ *   - String array: uses those hashtags directly (manual / testing)
+ *   Batching is enforced: at most 12 hashtags are ever sent to Apify in one run.
+ */
+async function triggerTiktokHashtagScrape(hashtagsOrMode = 'priority') {
   const token = process.env.APIFY_API_TOKEN
   if (!token) throw _err('APIFY_API_TOKEN not configured', 500)
 
+  let selectedHashtags, runMode
+
+  if (Array.isArray(hashtagsOrMode)) {
+    // Caller passed explicit list — clamp to 12 to stay within safe batch window
+    selectedHashtags = hashtagsOrMode.slice(0, 12).map(h => h.replace(/^#/, ''))
+    runMode = 'custom'
+  } else {
+    runMode = hashtagsOrMode || 'priority'
+    selectedHashtags = getHashtagsForRun(runMode)
+  }
+
   const actorId = process.env.APIFY_TIKTOK_ACTOR_ID || 'clockworks/tiktok-hashtag-scraper'
+
+  // ── Pre-run diagnostic log ──────────────────────────────────────────────────
+  console.log('[TikTok Scraper] ─────────────────────────────────────────')
+  console.log(`[TikTok Scraper] Actor ID    : ${actorId}`)
+  console.log(`[TikTok Scraper] Run mode    : ${runMode}`)
+  console.log(`[TikTok Scraper] Hashtag count: ${selectedHashtags.length}`)
+  console.log(`[TikTok Scraper] Hashtags     : ${selectedHashtags.join(', ')}`)
+  console.log('[TikTok Scraper] ─────────────────────────────────────────')
+
   const url = `${APIFY_BASE}/acts/${encodeURIComponent(actorId)}/runs?token=${encodeURIComponent(token)}`
 
   const input = {
-    hashtags:                     hashtags.map(h => h.replace(/^#/, '')),
-    resultsPerPage:               20,
-    maxResults:                   60,
-    shouldDownloadVideos:         false,
-    shouldDownloadCovers:         false,
-    shouldDownloadSubtitles:      false,
+    hashtags:                      selectedHashtags,
+    resultsPerPage:                20,
+    maxResults:                    60,
+    shouldDownloadVideos:          false,
+    shouldDownloadCovers:          false,
+    shouldDownloadSubtitles:       false,
     shouldDownloadSlideshowImages: false,
   }
-
-  console.log(`[TikTok Scraper] Triggering scrape for ${hashtags.length} hashtags via ${actorId}`)
 
   let result
   try {
@@ -109,7 +126,16 @@ async function fetchTiktokItems(datasetId) {
   }
 
   if (!Array.isArray(raw)) throw _err('Dataset response was not an array', 502)
-  console.log(`[TikTok Scraper] Fetched ${raw.length} raw items from dataset ${datasetId}`)
+
+  if (raw.length === 0) {
+    console.warn(
+      '[TikTok Scraper] Actor completed but returned 0 items. ' +
+      'This means actor/input produced no data, not token failure.',
+    )
+  } else {
+    console.log(`[TikTok Scraper] Fetched ${raw.length} raw items from dataset ${datasetId}`)
+  }
+
   return raw
 }
 
@@ -166,5 +192,4 @@ module.exports = {
   getTiktokRunStatus,
   fetchTiktokItems,
   normaliseTiktokItem,
-  TARGET_HASHTAGS,
 }
