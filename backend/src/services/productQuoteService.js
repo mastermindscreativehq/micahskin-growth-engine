@@ -1,9 +1,10 @@
 'use strict'
 
 const https  = require('https')
+const crypto = require('crypto')
 const prisma = require('../lib/prisma')
 const { matchProductsForLeadId } = require('./productMatchService')
-const { sendTelegramToUser } = require('./telegramService')
+const { sendTelegramToUser, sendTelegramMessage } = require('./telegramService')
 
 const LEAD_BOT_TOKEN = process.env.TELEGRAM_LEAD_BOT_TOKEN
 const WHATSAPP_LINK  = process.env.WHATSAPP_LINK || 'https://wa.me/+2348140468759'
@@ -39,6 +40,12 @@ function paystackPost(path, body) {
 
 // ── Generate Paystack payment link for a quote ────────────────────────────────
 
+/**
+ * Initialises a fresh Paystack transaction for the quote.
+ * Always generates a unique reference — never reuses an old authorization_url.
+ * Saves the reference and checkout URL back to the ProductQuote row.
+ * Returns the authorization_url or null on failure.
+ */
 async function generatePaymentLink(lead, quote) {
   const secretKey = process.env.PAYSTACK_SECRET_KEY
   if (!secretKey) {
@@ -56,29 +63,46 @@ async function generatePaymentLink(lead, quote) {
 
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
   const callbackUrl = `${frontendUrl}/?productQuote=${quote.id}`
+  // Always generate a unique reference so old auth URLs are never reused
+  const reference = `msk_${quote.id.slice(-8)}_${crypto.randomBytes(4).toString('hex')}`
+  const amountKobo = Math.round(quote.totalAmount * 100)
+
+  console.log(`[QuoteService] Paystack init | quoteId=${quote.id} leadId=${lead.id} amount=₦${quote.totalAmount} (${amountKobo} kobo) reference=${reference}`)
 
   try {
     const res = await paystackPost('/transaction/initialize', {
-      email:  lead.email,
-      amount: Math.round(quote.totalAmount * 100), // kobo
+      email:        lead.email,
+      amount:       amountKobo,
+      reference,
       metadata: {
-        leadId:    lead.id,
-        quoteId:   quote.id,
-        type:      'product_quote',
-        fullName:  lead.fullName,
+        leadId:   lead.id,
+        quoteId:  quote.id,
+        type:     'product_quote',
+        fullName: lead.fullName,
       },
       callback_url: callbackUrl,
     })
 
+    console.log(`[QuoteService] Paystack response | quoteId=${quote.id} status=${res.status} message=${res.message || 'n/a'}`)
+
     if (res.status && res.data?.authorization_url) {
-      console.log(`[QuoteService] Paystack link generated | quoteId=${quote.id} amount=₦${quote.totalAmount}`)
-      return res.data.authorization_url
+      const authUrl = res.data.authorization_url
+      const ref     = res.data.reference || reference
+
+      // Persist reference + checkout URL so admin can inspect and we never reuse stale links
+      await prisma.productQuote.update({
+        where: { id: quote.id },
+        data:  { paymentReference: ref, checkoutUrl: authUrl },
+      }).catch(e => console.error(`[QuoteService] failed to save checkout URL | quoteId=${quote.id}:`, e.message))
+
+      console.log(`[QuoteService] Paystack link generated | quoteId=${quote.id} reference=${ref} url=${authUrl}`)
+      return authUrl
     }
 
-    console.error('[QuoteService] Paystack init failed:', JSON.stringify(res))
+    console.error(`[QuoteService] Paystack init failed | quoteId=${quote.id} response=${JSON.stringify(res)}`)
     return null
   } catch (err) {
-    console.error('[QuoteService] Paystack error:', err.message)
+    console.error(`[QuoteService] Paystack error | quoteId=${quote.id}:`, err.message)
     return null
   }
 }
@@ -316,10 +340,9 @@ async function sendDiagnosisAndQuote(leadId, quoteId) {
   const lead = await prisma.lead.findUnique({ where: { id: leadId } })
   if (!lead) throw new Error(`Lead ${leadId} not found`)
 
-  // Dedup — don't send if already sent
+  // Warn if already sent but do NOT block — admin may need to resend with a fresh Paystack link
   if (lead.productQuoteSentAt) {
-    console.warn(`[QuoteService] already sent | leadId=${leadId} sentAt=${lead.productQuoteSentAt.toISOString()}`)
-    throw new Error('Quote already sent to this lead')
+    console.warn(`[QuoteService] re-send requested | leadId=${leadId} previousSentAt=${lead.productQuoteSentAt.toISOString()} — generating fresh Paystack link`)
   }
 
   if (!lead.telegramChatId) {
@@ -331,7 +354,10 @@ async function sendDiagnosisAndQuote(leadId, quoteId) {
     : await getLatestActiveQuote(leadId)
 
   if (!quote) throw new Error('No active quote found for this lead')
-  if (quote.status === 'sent') throw new Error('Quote is already marked as sent')
+  // Allow resend even if previously sent — fresh Paystack link will be generated below
+  if (quote.status === 'sent') {
+    console.warn(`[QuoteService] quote status=sent but resend requested | quoteId=${quote.id} leadId=${leadId}`)
+  }
 
   // Hard guard — quote must be approved by admin before it can be sent.
   // This prevents any automated path from sending prices that haven't been reviewed.
@@ -344,12 +370,25 @@ async function sendDiagnosisAndQuote(leadId, quoteId) {
   await recomputeQuoteTotal(quote.id)
   const freshQuote = await prisma.productQuote.findUnique({ where: { id: quote.id }, include: { items: true } })
 
-  // Generate Paystack link (best-effort)
+  // Generate a fresh Paystack link — never reuse old authorization_url
   const paymentLink = await generatePaymentLink(lead, freshQuote)
+
+  if (!paymentLink) {
+    // Notify admin so they can resend manually once Paystack is resolved
+    sendTelegramMessage(
+      `⚠️ <b>Paystack link could not be generated</b>\n\n` +
+      `<b>Lead:</b> ${lead.fullName}\n` +
+      `<b>Quote ID:</b> ...${freshQuote.id.slice(-8)}\n` +
+      `<b>Total:</b> ₦${(freshQuote.totalAmount || 0).toLocaleString('en-NG')}\n` +
+      `<b>Email:</b> ${lead.email || '—'}\n\n` +
+      `Quote message sent with WhatsApp fallback. Regenerate from CRM once Paystack is available.`
+    ).catch(() => {})
+    console.warn(`[QuoteService] Paystack link generation failed | quoteId=${freshQuote.id} leadId=${leadId} — falling back to WhatsApp link`)
+  }
 
   const message = buildDiagnosisAndQuoteMessage(lead, freshQuote, paymentLink)
 
-  console.log(`[QuoteService] sending diagnosis+quote | leadId=${leadId} quoteId=${quote.id} total=₦${freshQuote.totalAmount} hasPaymentLink=${!!paymentLink}`)
+  console.log(`[QuoteService] sending diagnosis+quote | leadId=${leadId} quoteId=${freshQuote.id} total=₦${freshQuote.totalAmount} hasPaymentLink=${!!paymentLink} checkoutUrl=${freshQuote.checkoutUrl || 'n/a'}`)
 
   const sendResult = await sendTelegramToUser(lead.telegramChatId, message, LEAD_BOT_TOKEN)
   const now = new Date()

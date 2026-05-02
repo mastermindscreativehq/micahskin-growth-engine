@@ -727,7 +727,36 @@ function LeadsTab() {
                             )}
                           </div>
                         ) : (
-                          <div className="text-xs text-gray-400 italic">Telegram not connected</div>
+                          <div className="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2 space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="font-semibold text-amber-700 uppercase tracking-wide">Telegram</span>
+                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Not connected</span>
+                              <span className="text-amber-600 text-[10px]">Bot link not tapped yet — use manual channels below</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {lead.phone && (
+                                <a
+                                  href={`https://wa.me/${lead.phone.replace(/\D/g, '')}?text=${encodeURIComponent('Hi ' + (lead.fullName || '') + ', this is MICAHSKIN following up on your skin consultation request.')}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="rounded border border-green-200 bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700 hover:bg-green-100 transition-colors"
+                                >
+                                  WhatsApp {lead.phone}
+                                </a>
+                              )}
+                              {lead.email && (
+                                <a
+                                  href={`mailto:${lead.email}?subject=${encodeURIComponent('Your MICAHSKIN Skin Consultation')}`}
+                                  className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100 transition-colors"
+                                >
+                                  Email {lead.email}
+                                </a>
+                              )}
+                              {!lead.phone && !lead.email && (
+                                <span className="text-[11px] text-gray-400 italic">No contact details on file</span>
+                              )}
+                            </div>
+                          </div>
                         )}
 
                         {/* Skin Images Panel — shown whenever image upload phase was entered */}
@@ -1159,24 +1188,27 @@ function LeadsTab() {
                           {(() => {
                             const isSent = !!(lead.initialReplySentAt || lead.initialMessageSent)
                             const isBlocked = STOP_STATUSES.includes(lead.status)
+                            const noTelegram = !lead.telegramChatId
                             const isSending = sendingId === `initial-${lead.id}`
-                            const disabled = isSent || isBlocked || isSending
+                            const disabled = isSent || isBlocked || noTelegram || isSending
                             return (
                               <button
                                 disabled={disabled}
                                 onClick={() => handleSend(lead.id, 'initial')}
                                 title={
-                                  isSent    ? `Sent ${fmtDateTime(lead.initialReplySentAt) || ''}` :
-                                  isBlocked ? `Blocked — lead is ${lead.status}` :
+                                  isSent     ? `Sent ${fmtDateTime(lead.initialReplySentAt) || ''}` :
+                                  isBlocked  ? `Blocked — lead is ${lead.status}` :
+                                  noTelegram ? 'Telegram not connected — use WhatsApp or email above' :
                                   'Send initial reply via Telegram'
                                 }
                                 className={`rounded border px-2 py-0.5 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
-                                  isSent    ? 'border-green-200 bg-green-50 text-green-700 opacity-70' :
-                                  isBlocked ? 'border-gray-200 text-gray-400 opacity-50' :
-                                              'border-brand-300 text-brand-700 hover:bg-brand-50'
+                                  isSent     ? 'border-green-200 bg-green-50 text-green-700 opacity-70' :
+                                  noTelegram ? 'border-amber-200 text-amber-500 opacity-60' :
+                                  isBlocked  ? 'border-gray-200 text-gray-400 opacity-50' :
+                                               'border-brand-300 text-brand-700 hover:bg-brand-50'
                                 }`}
                               >
-                                {isSending ? '…' : isSent ? '✓ Initial Sent' : 'Send Initial'}
+                                {isSending ? '…' : isSent ? '✓ Initial Sent' : noTelegram ? 'No Telegram' : 'Send Initial'}
                               </button>
                             )
                           })()}

@@ -127,8 +127,14 @@ function formatAcademyTelegramMessage(registration) {
  * Format: https://t.me/<BOT_USERNAME>?start=lead_<leadId>
  */
 function buildLeadTelegramStartLink(leadId) {
-  if (!TELEGRAM_LEAD_BOT_USERNAME) return null
-  return `https://t.me/${TELEGRAM_LEAD_BOT_USERNAME}?start=lead_${leadId}`
+  if (!TELEGRAM_LEAD_BOT_USERNAME) {
+    console.warn(`[Telegram] buildLeadTelegramStartLink: TELEGRAM_LEAD_BOT_USERNAME not set — cannot build deep link for leadId=${leadId}`)
+    return null
+  }
+  const payload = `lead_${leadId}`
+  const link    = `https://t.me/${TELEGRAM_LEAD_BOT_USERNAME}?start=${payload}`
+  console.log(`[Telegram] buildLeadTelegramStartLink | leadId=${leadId} botUsername=${TELEGRAM_LEAD_BOT_USERNAME} payload=${payload} link=${link}`)
+  return link
 }
 
 /**

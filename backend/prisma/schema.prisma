@@ -304,6 +304,7 @@ model ProductQuote {
   paymentStatus     String             @default("pending")
   paidAt            DateTime?
   paymentReference  String?
+  checkoutUrl       String?
   fulfillmentStatus String?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt

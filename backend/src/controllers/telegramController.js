@@ -80,6 +80,7 @@ async function handleLeadWebhook(req, res) {
 
     if (text.startsWith('/start')) {
       const payload = text.slice('/start'.length).trim()
+      console.log(`[LeadWebhook] /start received | chatId=${chatId} username=${username || 'none'} payload="${payload || '(empty)'}"`)
 
       if (payload.startsWith('lead_')) {
         const leadId = payload.slice('lead_'.length)
@@ -88,9 +89,42 @@ async function handleLeadWebhook(req, res) {
         return
       }
 
-      // Plain /start — begin or restart intake
-      const reply = await handleTelegramMessage(chatId, '/start')
-      if (reply) await sendTelegramToUser(chatId, reply, LEAD_BOT_TOKEN)
+      // Unknown/missing payload — check if this chatId is already linked to a lead
+      const existingLead = await prisma.lead.findFirst({
+        where:   { telegramChatId: chatId },
+        orderBy: { createdAt: 'desc' },
+        select:  { id: true, fullName: true, telegramStage: true },
+      })
+
+      if (existingLead) {
+        console.log(`[LeadWebhook] /start with no valid payload — already linked to leadId=${existingLead.id}`)
+        const firstName = (existingLead.fullName || 'there').split(' ')[0]
+        await sendTelegramToUser(
+          chatId,
+          `Welcome back, ${firstName}! 🌿 You're already connected to MICAHSKIN.\n\nReply with:\n- <b>PRODUCT</b> for your product recommendations\n- <b>CONSULT</b> for a private skin consultation\n- <b>ACADEMY</b> to learn about our Academy`,
+          LEAD_BOT_TOKEN
+        )
+        return
+      }
+
+      if (payload && !payload.startsWith('lead_')) {
+        // Unrecognised payload — could be an expired/malformed link
+        console.warn(`[LeadWebhook] /start with unrecognised payload="${payload}" chatId=${chatId} — asking for contact details`)
+        await sendTelegramToUser(
+          chatId,
+          `Hi! 👋 We couldn't find your registration from that link.\n\nPlease reply with your <b>phone number or email address</b> so we can connect your account — or visit micahskin.com to sign up.`,
+          LEAD_BOT_TOKEN
+        )
+        return
+      }
+
+      // Plain /start with no payload and no existing account — ask how to identify them
+      console.log(`[LeadWebhook] /start with no payload and no linked lead | chatId=${chatId} — asking for contact details`)
+      await sendTelegramToUser(
+        chatId,
+        `Hi! 👋 Welcome to <b>MICAHSKIN</b>.\n\nTo connect your account, please reply with your <b>phone number or email address</b>.\n\nIf you haven't signed up yet, visit micahskin.com to get started.`,
+        LEAD_BOT_TOKEN
+      )
       return
     }
 
