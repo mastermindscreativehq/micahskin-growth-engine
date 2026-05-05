@@ -9,6 +9,7 @@ const { handleInboundReply, classifyInboundIntent, buildConsultInterestReply, up
 const { handleAcademyMemberReply } = require('../services/academyExperienceService')
 const { generateQuoteForLead } = require('../services/productQuoteService')
 const { handleIncomingPhoto } = require('../services/skinImageService')
+const { startDeepConsult, handleDeepConsultReply } = require('../services/deepConsultService')
 
 // Telegram stages where we are collecting delivery details before sending the product quote
 const DELIVERY_COLLECTION_STAGES = new Set([
@@ -20,6 +21,12 @@ const DELIVERY_COLLECTION_STAGES = new Set([
 
 const LEAD_BOT_TOKEN    = process.env.TELEGRAM_LEAD_BOT_TOKEN
 const ACADEMY_BOT_TOKEN = process.env.TELEGRAM_ACADEMY_BOT_TOKEN
+
+// Escape keywords that exit deep_consult_active mode without closing the lead
+const CONSULT_ESCAPE_WORDS = new Set(['STOP', 'EXIT', 'CANCEL', 'MENU'])
+
+// Deep consult session timeout: reset conversationMode if no reply for this long
+const CONSULT_TIMEOUT_MS = 45 * 60 * 1000 // 45 minutes
 
 // Intents where we should NOT queue an automatic conversion offer
 // (stop/thanks/greeting are terminal or noise — conversion engine shouldn't act on them)
@@ -169,6 +176,63 @@ async function handleLeadWebhook(req, res) {
         return
       }
 
+      // ── AI dermatologist consult in progress ────────────────────────────────
+      if (lead.conversationMode === 'deep_consult_active') {
+        const upper = text.trim().toUpperCase()
+
+        // 1. Escape hatch — exit consult without closing the lead
+        if (CONSULT_ESCAPE_WORDS.has(upper)) {
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: {
+              conversationMode: 'diagnosis_sent',
+              currentFlow:      'diagnosis_sent',
+              lastUserIntent:   'consult_escaped',
+            },
+          })
+          await sendTelegramToUser(
+            chatId,
+            'You have exited the consultation. You can type <b>CONSULT</b> to start again or continue with <b>PRODUCT</b>, <b>ACADEMY</b>, or other options.',
+            LEAD_BOT_TOKEN
+          ).catch(() => {})
+          return
+        }
+
+        // 2. Timeout — reset stale session on next incoming message
+        const lastAt  = lead.telegramLastMessageAt ? new Date(lead.telegramLastMessageAt).getTime() : 0
+        const isStale = lastAt > 0 && (Date.now() - lastAt) > CONSULT_TIMEOUT_MS
+        if (isStale) {
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: {
+              conversationMode: 'diagnosis_sent',
+              currentFlow:      'diagnosis_sent',
+              lastUserIntent:   'consult_timeout',
+            },
+          })
+          await sendTelegramToUser(
+            chatId,
+            'Your consultation session timed out due to inactivity.\n\nType <b>CONSULT</b> to begin a fresh session, or <b>PRODUCT</b> / <b>ACADEMY</b> to continue.',
+            LEAD_BOT_TOKEN
+          ).catch(() => {})
+          return
+        }
+
+        // 3. PRODUCT override — always exits consult and starts product flow
+        if (upper === 'PRODUCT') {
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: { conversationMode: 'diagnosis_sent', currentFlow: 'diagnosis_sent' },
+          })
+          await handleProductRequest(lead, chatId)
+          return
+        }
+
+        // 4. Route answer to the consult engine
+        await handleDeepConsultReply(lead, text, chatId)
+        return
+      }
+
       // ── PRODUCT keyword — begin delivery detail collection ────────────────
       if (text.trim().toUpperCase() === 'PRODUCT') {
         await handleProductRequest(lead, chatId)
@@ -192,6 +256,14 @@ async function handleLeadWebhook(req, res) {
           })
           return
         }
+      }
+
+      // ── CONSULT keyword — start AI dermatologist consultation ────────────
+      // HUMAN CONSULT / PRIVATE CONSULT (handled above) routes to WhatsApp.
+      // Plain CONSULT enters the 9-stage AI diagnostic engine.
+      if (text.trim().toUpperCase() === 'CONSULT') {
+        await startDeepConsult(lead, chatId)
+        return
       }
 
       // ── Conversation Brain routes and responds ────────────────────────────
