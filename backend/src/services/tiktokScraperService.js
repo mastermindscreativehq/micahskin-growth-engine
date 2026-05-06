@@ -140,14 +140,21 @@ async function fetchTiktokItems(datasetId) {
     throw _err(`Failed to reach Apify: ${fetchErr.message}`, 502)
   }
 
-  // Defensive: handle both raw array and wrapped { data: { items } } shape
+  // Defensive: handle multiple Apify V2 response shapes
   let items = raw
   if (!Array.isArray(raw)) {
     if (Array.isArray(raw?.data?.items)) {
       items = raw.data.items
-      console.log(`[TikTok Scraper] Response wrapped — extracted ${items.length} items from data.items`)
+      console.log(`[TikTok Scraper] Response shape: data.items — extracted ${items.length} items`)
+    } else if (Array.isArray(raw?.data)) {
+      items = raw.data
+      console.log(`[TikTok Scraper] Response shape: data[] — extracted ${items.length} items`)
     } else {
-      throw _err(`Dataset response was not an array (got ${typeof raw})`, 502)
+      const preview = JSON.stringify(raw).slice(0, 300)
+      throw _err(
+        `Dataset response was not an array. Shape: ${typeof raw}. Preview: ${preview}`,
+        502,
+      )
     }
   }
 
@@ -167,30 +174,61 @@ async function fetchTiktokItems(datasetId) {
 
 // ── Normaliser ────────────────────────────────────────────────────────────────
 
+// Coerce a value that may be a string, number, object, or null into a safe
+// string suitable for a Prisma `String?` column. Apify actor schemas drift
+// across versions — fields like `hashtag`, `authorMeta`, `videoMeta`,
+// `musicMeta` sometimes arrive as objects (`{ name, views }`) rather than
+// scalars, which causes `Invalid value provided. Expected String or Null,
+// provided Object.` at the Prisma layer.
+function _toSafeString(val) {
+  if (val == null) return null
+  if (typeof val === 'string') return val.trim() || null
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val)
+  if (Array.isArray(val)) return _toSafeString(val[0])
+  if (typeof val === 'object') {
+    return (
+      val.name ||
+      val.title ||
+      val.uniqueId ||
+      val.value ||
+      val.id ||
+      null
+    )
+  }
+  return null
+}
+
 function normaliseTiktokItem(item) {
   // clockworks/tiktok-hashtag-scraper uses 'id' (string) as the primary video ID
   const externalId = String(item.id || item.videoId || item.awemeId || item.tiktokId || '')
   if (!externalId) return null
 
-  const username =
+  const username = _toSafeString(
     item.authorMeta?.name ||
     item.authorMeta?.uniqueId ||
     item.author?.uniqueId ||
     item.author?.nickname ||
     item.authorUniqueId ||
-    null
+    item.authorMeta ||
+    item.author ||
+    null,
+  )
 
   const text =
-    item.text ||
-    item.desc ||
-    item.description ||
-    item.caption ||
+    (typeof item.text === 'string' && item.text) ||
+    (typeof item.desc === 'string' && item.desc) ||
+    (typeof item.description === 'string' && item.description) ||
+    (typeof item.caption === 'string' && item.caption) ||
     ''
 
-  const videoUrl =
+  const videoUrl = _toSafeString(
     item.webVideoUrl ||
     item.videoUrl ||
-    (username && externalId ? `https://www.tiktok.com/@${username}/video/${externalId}` : null)
+    item.videoMeta?.downloadAddr ||
+    item.videoMeta?.playAddr ||
+    item.videoMeta ||
+    (username && externalId ? `https://www.tiktok.com/@${username}/video/${externalId}` : null),
+  )
 
   const postedAt = item.createTime
     ? new Date(Number(item.createTime) * 1000)
@@ -198,15 +236,37 @@ function normaliseTiktokItem(item) {
       ? new Date(item.createTimeISO)
       : null
 
-  // clockworks actor records the triggering hashtag in item.input.hashtag
-  const hashtag =
+  // clockworks actor records the triggering hashtag in several shapes:
+  //   item.inputHashtag  (string)
+  //   item.input.hashtag (string)
+  //   item.hashtag       (object: { name, views })
+  //   item.hashtags[0]   (object: { name })
+  const rawHashtag =
     item.inputHashtag ||
     item.searchHashtag ||
     item.input?.hashtag ||
-    (Array.isArray(item.hashtags) && item.hashtags[0]?.name) ||
+    (Array.isArray(item.hashtags) ? item.hashtags[0] : null) ||
+    item.hashtag ||
     null
+  const hashtag = _toSafeString(rawHashtag)
 
-  return { externalId, username, text, videoUrl, postedAt, hashtag }
+  // Defensive logs — surface any object-shaped scalars so future drift is
+  // caught before Prisma blows up on string columns.
+  console.log('[Normalizer] hashtag normalized:', hashtag)
+
+  const normalized = { externalId, username, text, videoUrl, postedAt, hashtag }
+
+  // Final safety pass — guarantee no string-typed field is an object
+  for (const key of ['username', 'videoUrl', 'hashtag']) {
+    if (normalized[key] !== null && typeof normalized[key] !== 'string') {
+      console.warn(
+        `[Normalizer] Coercing non-string ${key} (${typeof normalized[key]}) → null`,
+      )
+      normalized[key] = _toSafeString(normalized[key])
+    }
+  }
+
+  return normalized
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

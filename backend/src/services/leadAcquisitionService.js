@@ -182,69 +182,134 @@ async function injectToLead(scrapedLead) {
 // ── Batch processor ───────────────────────────────────────────────────────────
 
 async function processRawItems(rawItems) {
-  let total = rawItems.length, accepted = 0, rejected = 0, injected = 0, queued = 0
+  const stats = {
+    total:      rawItems.length,
+    normalised: 0,
+    stored:     0,   // saved to scraped_leads
+    accepted:   0,   // injected into leads (score >= 50)
+    injected:   0,
+    queued:     0,   // score >= 70 → outreachQueued
+    rejected:   0,
+    reasons: {
+      norm_failed:  0,  // normaliseTiktokItem returned null / empty text
+      duplicate:    0,  // externalId already in DB
+      spam_filter:  0,  // failed pain-signal filter
+      low_score:    0,  // score < 30
+      stored_only:  0,  // score 30–49: stored but not injected
+    },
+  }
 
   for (const raw of rawItems) {
     const norm = normaliseTiktokItem(raw)
-    if (!norm || !norm.text?.trim()) { rejected++; continue }
+    if (!norm || !norm.text?.trim()) {
+      stats.reasons.norm_failed++
+      stats.rejected++
+      continue
+    }
+    stats.normalised++
 
     // Skip duplicates by externalId
     if (norm.externalId) {
       const exists = await prisma.scrapedLead.findUnique({
         where: { externalId: norm.externalId },
       })
-      if (exists) { rejected++; continue }
+      if (exists) {
+        stats.reasons.duplicate++
+        stats.rejected++
+        continue
+      }
     }
 
-    const passes  = filterComment(norm.text)
-    const score   = scoreComment(norm.text)
+    const passes    = filterComment(norm.text)
+    const score     = scoreComment(norm.text)
     const [concern] = detectConcern(norm.text)
-    const urgency = detectUrgency(norm.text, score)
+    const urgency   = detectUrgency(norm.text, score)
+
+    // Last-line defense — coerce any object-shaped scalars right before Prisma.
+    // The normaliser already does this, but Apify schema drift has bitten us
+    // before, so keep a redundant guard here.
+    const safeStr = (v) =>
+      v == null ? null
+        : typeof v === 'string' ? (v.trim() || null)
+        : typeof v === 'object' ? (v.name || v.title || v.uniqueId || v.id || null)
+        : String(v)
 
     // Always persist scraped item (processed=false if below threshold)
     let saved
     try {
       saved = await prisma.scrapedLead.create({
         data: {
-          platform:    'tiktok',
-          username:    norm.username,
-          comment:     norm.text,
-          videoUrl:    norm.videoUrl,
-          hashtag:     norm.hashtag,
-          externalId:  norm.externalId || null,
-          postedAt:    norm.postedAt,
-          concernType: concern,
-          intentScore: score,
+          platform:     'tiktok',
+          username:     safeStr(norm.username),
+          comment:      norm.text,
+          videoUrl:     safeStr(norm.videoUrl),
+          hashtag:      safeStr(norm.hashtag),
+          externalId:   norm.externalId || null,
+          postedAt:     norm.postedAt,
+          concernType:  concern,
+          intentScore:  score,
           urgencyLevel: urgency,
-          processed:   false,
+          processed:    false,
         },
       })
+      stats.stored++
     } catch (dbErr) {
       // Unique constraint race — already inserted by a concurrent run
-      if (dbErr.code === 'P2002') { rejected++; continue }
+      if (dbErr.code === 'P2002') {
+        stats.reasons.duplicate++
+        stats.rejected++
+        continue
+      }
       throw dbErr
     }
 
-    if (!passes || score < 30) { rejected++; continue }
-    accepted++
+    if (!passes) {
+      stats.reasons.spam_filter++
+      stats.rejected++
+      continue
+    }
+    if (score < 30) {
+      stats.reasons.low_score++
+      stats.rejected++
+      continue
+    }
+    // Score 30–49: stored, not injected
+    if (score < 50) {
+      stats.reasons.stored_only++
+      continue
+    }
 
-    // Inject into main leads table if score >= 50
-    if (score >= 50) {
-      try {
-        const leadId = await injectToLead({ ...saved })
-        await prisma.scrapedLead.update({
-          where: { id: saved.id },
-          data:  { processed: true, injectedLeadId: leadId, outreachQueued: score >= 70 },
-        })
-        injected++
-        if (score >= 70) queued++
-      } catch (err) {
-        console.error(`[LeadAcquisition] Inject failed for @${norm.username}:`, err.message)
+    stats.accepted++
+
+    // Inject into main leads table — score >= 50
+    try {
+      const leadId = await injectToLead({ ...saved })
+      await prisma.scrapedLead.update({
+        where: { id: saved.id },
+        data:  { processed: true, injectedLeadId: leadId, outreachQueued: score >= 70 },
+      })
+      stats.injected++
+      if (score >= 70) {
+        stats.queued++
+        console.log(
+          `[LeadAcquisition] HIGH INTENT injected — @${norm.username || 'unknown'}` +
+          ` score=${score} concern=${concern || 'general'} urgency=${urgency}`,
+        )
       }
+    } catch (err) {
+      console.error(`[LeadAcquisition] Inject failed for @${norm.username}:`, err.message)
     }
   }
 
-  return { total, accepted, rejected, injected, queued }
+  console.log(
+    `[LeadAcquisition] Batch complete —` +
+    ` total=${stats.total} normalised=${stats.normalised} stored=${stats.stored}` +
+    ` accepted=${stats.accepted} injected=${stats.injected} queued=${stats.queued}` +
+    ` rejected=${stats.rejected}`,
+  )
+  console.log('[LeadAcquisition] Rejection breakdown:', stats.reasons)
+
+  return stats
 }
 
 // ── Scheduler cycle ───────────────────────────────────────────────────────────
