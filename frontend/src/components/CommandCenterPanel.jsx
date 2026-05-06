@@ -235,7 +235,29 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
     }
   }
 
-  const isRunning = leadSources?.engineStatus === 'running'
+  // Default to idle — never infer "running" from a lingering pendingRunId alone.
+  const status = leadSources?.acquisitionStatus ?? {
+    state: 'idle', running: false, pendingRunId: null,
+    runStartedAt: null, lastRunAt: null, lastRunFinishedAt: null,
+    lastStatus: null, stale: false,
+  }
+  const isRunning = status.running === true || !!status.pendingRunId
+
+  const dotClass = isRunning
+    ? 'bg-amber-400 animate-pulse'
+    : status.state === 'failed'
+      ? 'bg-red-400'
+      : status.state === 'completed'
+        ? 'bg-emerald-400'
+        : 'bg-teal-400'
+
+  const stateLabel = isRunning
+    ? 'Scrape in progress…'
+    : status.state === 'failed'
+      ? `Last run failed${status.lastStatus ? ` (${status.lastStatus})` : ''}`
+      : status.state === 'completed'
+        ? 'Last run completed'
+        : 'Engine idle'
 
   const stats = [
     { label: 'Scraped Today',     value: leadSources?.scrapedToday   ?? 0, color: 'teal'   },
@@ -248,12 +270,8 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
     <SectionBox title="Lead Sources — TikTok Acquisition" color="teal">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <span className={`h-2.5 w-2.5 rounded-full shrink-0 transition-colors ${
-            isRunning ? 'bg-amber-400 animate-pulse' : 'bg-teal-400'
-          }`} />
-          <span className="text-xs font-semibold text-gray-700">
-            {isRunning ? 'Scrape in progress…' : 'Engine idle'}
-          </span>
+          <span className={`h-2.5 w-2.5 rounded-full shrink-0 transition-colors ${dotClass}`} />
+          <span className="text-xs font-semibold text-gray-700">{stateLabel}</span>
           <span className="text-xs text-gray-400 tabular-nums">
             {(leadSources?.totalScraped ?? 0).toLocaleString()} total scraped
           </span>
@@ -267,6 +285,19 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
           {acquiring ? '…' : '▶ Run Now'}
         </button>
       </div>
+
+      <div className="mb-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-gray-500 sm:grid-cols-4">
+        <span>Last run: <span className="text-gray-700 tabular-nums">{status.lastRunAt ? fmtDT(status.lastRunAt) : '—'}</span></span>
+        <span>Finished: <span className="text-gray-700 tabular-nums">{status.lastRunFinishedAt ? fmtDT(status.lastRunFinishedAt) : '—'}</span></span>
+        <span>Last status: <span className="text-gray-700">{status.lastStatus ?? '—'}</span></span>
+        <span>Total injected: <span className="text-gray-700 tabular-nums">{(leadSources?.processedTotal ?? 0).toLocaleString()}</span></span>
+      </div>
+
+      {status.stale && (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          Last run exceeded the 15-minute failsafe and was auto-reset to idle.
+        </div>
+      )}
 
       {triggered && (
         <div className="mb-3 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2 text-xs text-teal-700">

@@ -265,7 +265,13 @@ async function getCommandCenter() {
   // ── 7. Acquisition stats — runs last ──────────────────────────────────────
   const leadSources = await safeSection('leadSources', {
     scrapedToday: 0, highIntentToday: 0, pendingOutreach: 0,
-    processedTotal: 0, totalScraped: 0, engineStatus: 'idle',
+    processedTotal: 0, totalScraped: 0,
+    engineStatus: 'idle',
+    acquisitionStatus: {
+      state: 'idle', running: false, pendingRunId: null,
+      runStartedAt: null, lastRunAt: null, lastRunFinishedAt: null,
+      lastStatus: null, stale: false,
+    },
   }, getAcquisitionStats)
 
   return {

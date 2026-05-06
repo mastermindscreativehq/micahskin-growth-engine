@@ -23,12 +23,68 @@ const {
 } = require('./tiktokScraperService')
 
 // ── In-memory run state ───────────────────────────────────────────────────────
+//
+// Explicit state machine — replaces the old "_pendingRunId ? running : idle"
+// inference, which left the dashboard stuck on "Scrape in progress…" any time
+// an Apify run hung past the 30-min poll window.
 
-let _pendingRunId       = null
-let _pendingRunStartAt  = null
-// Must be greater than the 30-min poll interval; 25 min was always expiring
-// before the first poll (T=33 min > 25 min), guaranteeing perpetual timeouts.
-const RUN_TIMEOUT_MS    = 40 * 60 * 1000   // 40 min — abandon truly stale runs
+const STATE = {
+  state:             'idle',   // 'idle' | 'running' | 'completed' | 'failed'
+  running:           false,    // strict: true only while a real run is in flight
+  pendingRunId:      null,
+  runStartedAt:      null,     // Date | null
+  lastRunAt:         null,     // Date | null — when the most recent run started
+  lastRunFinishedAt: null,     // Date | null — when it ended (any terminal status)
+  lastStatus:        null,     // last terminal Apify status string
+  lastStale:         false,    // true if the last reset was a failsafe-timeout reset
+}
+
+// Failsafe — anything still flagged "running" beyond this is treated as stale
+// and force-reset to idle, regardless of whether Apify ever reports back.
+const STALE_TIMEOUT_MS = 15 * 60 * 1000   // 15 min
+
+function _resetIdle({ stale = false } = {}) {
+  STATE.state             = 'idle'
+  STATE.running           = false
+  STATE.pendingRunId      = null
+  STATE.runStartedAt      = null
+  STATE.lastRunFinishedAt = new Date()
+  STATE.lastStale         = stale
+}
+
+function _markCompleted() {
+  STATE.state             = 'completed'
+  STATE.running           = false
+  STATE.pendingRunId      = null
+  STATE.runStartedAt      = null
+  STATE.lastRunFinishedAt = new Date()
+  STATE.lastStatus        = 'SUCCEEDED'
+  STATE.lastStale         = false
+}
+
+function _markFailed(status) {
+  STATE.state             = 'failed'
+  STATE.running           = false
+  STATE.pendingRunId      = null
+  STATE.runStartedAt      = null
+  STATE.lastRunFinishedAt = new Date()
+  STATE.lastStatus        = status || 'FAILED'
+  STATE.lastStale         = false
+}
+
+function _checkStale() {
+  if (!STATE.running || !STATE.runStartedAt) return false
+  const age = Date.now() - STATE.runStartedAt.getTime()
+  if (age > STALE_TIMEOUT_MS) {
+    console.warn(
+      `[LeadAcquisition] Failsafe — run flagged running for ${Math.round(age / 60000)} min` +
+      ` without updates; force-reset to idle (stale=true) runId=${STATE.pendingRunId}`,
+    )
+    _resetIdle({ stale: true })
+    return true
+  }
+  return false
+}
 
 // ── Pain / intent patterns ────────────────────────────────────────────────────
 
@@ -321,48 +377,49 @@ async function runAcquisitionCycle() {
   }
 
   try {
-    if (_pendingRunId) {
-      const age = Date.now() - (_pendingRunStartAt?.getTime() || 0)
-      if (age > RUN_TIMEOUT_MS) {
-        console.warn('[LeadAcquisition] Pending run timed out — abandoning', _pendingRunId)
-        _pendingRunId = null; _pendingRunStartAt = null
-        return
-      }
+    // Failsafe runs first so a stuck run never blocks a fresh trigger
+    if (_checkStale()) return
 
-      const { status, defaultDatasetId } = await getTiktokRunStatus(_pendingRunId)
+    if (STATE.running && STATE.pendingRunId) {
+      const { status, defaultDatasetId } = await getTiktokRunStatus(STATE.pendingRunId)
 
       if (status === 'SUCCEEDED' && defaultDatasetId) {
         console.log(
-          `[LeadAcquisition] Run SUCCEEDED — runId=${_pendingRunId}` +
+          `[LeadAcquisition] Run SUCCEEDED — runId=${STATE.pendingRunId}` +
           ` defaultDatasetId=${defaultDatasetId}`,
         )
         const rawItems = await fetchTiktokItems(defaultDatasetId)
         console.log(`[LeadAcquisition] Raw item count from dataset: ${rawItems.length}`)
         const result   = await processRawItems(rawItems)
         console.log('[LeadAcquisition] Cycle complete:', result)
-        _pendingRunId = null; _pendingRunStartAt = null
+        _markCompleted()
 
       } else if (status === 'SUCCEEDED' && !defaultDatasetId) {
-        console.warn(`[LeadAcquisition] Run SUCCEEDED but defaultDatasetId is missing — runId=${_pendingRunId}`)
-        _pendingRunId = null; _pendingRunStartAt = null
+        console.warn(`[LeadAcquisition] Run SUCCEEDED but defaultDatasetId is missing — runId=${STATE.pendingRunId}`)
+        _markFailed('SUCCEEDED_NO_DATASET')
 
       } else if (['FAILED', 'TIMED-OUT', 'ABORTED'].includes(status)) {
-        console.warn(`[LeadAcquisition] Run ended with status=${status} runId=${_pendingRunId}`)
-        _pendingRunId = null; _pendingRunStartAt = null
+        console.warn(`[LeadAcquisition] Run ended with status=${status} runId=${STATE.pendingRunId}`)
+        _markFailed(status)
       }
-      // RUNNING / READY — wait for next tick
+      // RUNNING / READY — wait for next tick (stale check above guards the upper bound)
       return
     }
 
     // No pending run — trigger a new cycle
     console.log('[LeadAcquisition] Triggering TikTok hashtag scrape...')
     const { runId } = await triggerTiktokHashtagScrape()
-    _pendingRunId      = runId
-    _pendingRunStartAt = new Date()
+    const now = new Date()
+    STATE.state        = 'running'
+    STATE.running      = true
+    STATE.pendingRunId = runId
+    STATE.runStartedAt = now
+    STATE.lastRunAt    = now
+    STATE.lastStale    = false
 
   } catch (err) {
     console.error('[LeadAcquisition] Cycle error:', err.message)
-    _pendingRunId = null; _pendingRunStartAt = null
+    _markFailed('CYCLE_ERROR')
   }
 }
 
@@ -379,6 +436,10 @@ function startLeadAcquisitionEngine() {
 // ── Stats (used by Command Center) ───────────────────────────────────────────
 
 async function getAcquisitionStats() {
+  // Run the failsafe on read too — if the page is loaded after a stuck run
+  // exceeded the 15-min window, we collapse it to idle before reporting state.
+  _checkStale()
+
   const now   = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
@@ -391,13 +452,27 @@ async function getAcquisitionStats() {
       prisma.scrapedLead.count(),
     ])
 
+  const acquisitionStatus = {
+    state:             STATE.state,
+    running:           STATE.running,
+    pendingRunId:      STATE.pendingRunId,
+    runStartedAt:      STATE.runStartedAt      ? STATE.runStartedAt.toISOString()      : null,
+    lastRunAt:         STATE.lastRunAt         ? STATE.lastRunAt.toISOString()         : null,
+    lastRunFinishedAt: STATE.lastRunFinishedAt ? STATE.lastRunFinishedAt.toISOString() : null,
+    lastStatus:        STATE.lastStatus,
+    stale:             STATE.lastStale,
+  }
+
   return {
     scrapedToday,
     highIntentToday,
     pendingOutreach,
     processedTotal,
     totalScraped,
-    engineStatus: _pendingRunId ? 'running' : 'idle',
+    acquisitionStatus,
+    // Back-compat for any older consumer — derived strictly from `running`,
+    // never inferred from a lingering pendingRunId.
+    engineStatus: acquisitionStatus.running ? 'running' : 'idle',
   }
 }
 

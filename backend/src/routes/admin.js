@@ -38,7 +38,15 @@ router.get('/command-center', async (req, res) => {
         consults:    { activeDeepConsults: { count: 0, items: [] }, completedNeedingReview: { count: 0, items: [] }, redFlagLeads: { count: 0, items: [] }, completedNoProductAction: 0 },
         alerts:      { failedTelegramSends: 0, quotePendingTooLong: { count: 0, quotes: [] }, diagnosisPendingTooLong: { count: 0, leads: [] }, noProductMatches: { count: 0, leads: [] }, stuckCurrentFlow: { count: 0, leads: [] } },
         followUps:   { total: 0, paused: false, quoteDue: 0, pendingDue: 0, consultDue: 0, diagnosisDue: 0, abandonedDue: 0 },
-        leadSources: { scrapedToday: 0, highIntentToday: 0, pendingOutreach: 0, processedTotal: 0, totalScraped: 0, engineStatus: 'idle' },
+        leadSources: {
+          scrapedToday: 0, highIntentToday: 0, pendingOutreach: 0, processedTotal: 0, totalScraped: 0,
+          engineStatus: 'idle',
+          acquisitionStatus: {
+            state: 'idle', running: false, pendingRunId: null,
+            runStartedAt: null, lastRunAt: null, lastRunFinishedAt: null,
+            lastStatus: null, stale: false,
+          },
+        },
       },
     })
   }
