@@ -164,36 +164,58 @@ model Lead {
   academyJoinedAt          DateTime?
   academyProgressStage     String?
   academyEngagementScore   Int?
-  imageUploadStatus        String?               // pending | uploaded | skipped
-  imageUploadCount         Int                   @default(0)
-  imageReviewStatus        String?               // pending | reviewed | not_required
+  imageUploadStatus        String? // pending | uploaded | skipped
+  imageUploadCount         Int       @default(0)
+  imageReviewStatus        String? // pending | reviewed | not_required
   deliveryName             String?
   deliveryPhone            String?
   deliveryCity             String?
   deliveryAddress          String?
 
   // Phase 29 — Flow Control + Monetization Scoring
-  currentFlow              String?               // intake|awaiting_images|diagnosis_pending|diagnosis_sent|product_quote_pending_review|product_quote_sent|product_paid|fulfillment_pending|deep_consult_active|human_consult_pending|academy_locked|closed
-  lastFlowGuardReason      String?
-  productIntentScore       Int?
-  consultIntentScore       Int?
-  academyIntentScore       Int?
-  recommendedNextOffer     String?               // product|consult|academy|human_consult|none
-  monetizationReason       String?
+  currentFlow          String? // intake|awaiting_images|diagnosis_pending|diagnosis_sent|product_quote_pending_review|product_quote_sent|product_paid|fulfillment_pending|deep_consult_active|human_consult_pending|academy_locked|closed
+  lastFlowGuardReason  String?
+  productIntentScore   Int?
+  consultIntentScore   Int?
+  academyIntentScore   Int?
+  recommendedNextOffer String? // product|consult|academy|human_consult|none
+  monetizationReason   String?
 
   // Phase 30 — Auto Follow-Up Conversion Engine
-  lastFollowUpAt           DateTime?
-  followUpCount            Int       @default(0)
-  followUpStopped          Boolean   @default(false)
+  lastFollowUpAt  DateTime?
+  followUpCount   Int       @default(0)
+  followUpStopped Boolean   @default(false)
 
-  replies                  Reply[]
-  quotes                   ProductQuote[]
-  paymentTransactions      PaymentTransaction[]
-  fulfillmentOrders        FulfillmentOrder[]
-  skinImages               LeadSkinImage[]
-  deepConsultations        DeepConsultation[]
-  followUpLogs             FollowUpLog[]
+  // Phase 34 — MICAHSKIN Conversion Engine (MCE)
+  // All fields nullable / safely defaulted — additive only, no breakage to existing systems.
+  conversationPath     String? // diagnosis_first | direct_buy | consult_first | academy_first | reseller_first
+  funnelType           String? // product | consult | academy | reseller
+  routingReason        String?
+  resellerIntent       Boolean   @default(false)
+  budgetSignal         String? // strong | weak | none
+  emotionalPainScore   Int? // 0-100 derived from MAIE painScore + emotionalIntensity
+  academyScore         Int? // 0-100 — split from academyIntentScore: includes reseller weighting
+  whatsappCtaUrl       String? // pre-generated personalised wa.me deep link
+  whatsappFirstClickAt DateTime?
+  whatsappClickCount   Int       @default(0)
+  objectionsRaised     Json? // [{ type, text, at }]
+  viewedOffers         Json? // [{ offerType, at }]
+  ignoredFollowupCount Int       @default(0)
+  mceLastFollowUpType  String?
+  mceLastFollowUpAt    DateTime?
 
+  replies             Reply[]
+  quotes              ProductQuote[]
+  paymentTransactions PaymentTransaction[]
+  fulfillmentOrders   FulfillmentOrder[]
+  skinImages          LeadSkinImage[]
+  deepConsultations   DeepConsultation[]
+  followUpLogs        FollowUpLog[]
+  timeline            LeadTimeline[]
+
+  @@index([funnelType])
+  @@index([conversationPath])
+  @@index([resellerIntent])
   @@map("leads")
 }
 
@@ -225,7 +247,7 @@ model LeadSkinImage {
   fileUrl              String?
   mimeType             String?
   uploadedAt           DateTime @default(now())
-  status               String   @default("uploaded")  // uploaded | reviewed | rejected
+  status               String   @default("uploaded") // uploaded | reviewed | rejected
   notes                String?
   lead                 Lead     @relation(fields: [leadId], references: [id])
 
@@ -292,24 +314,24 @@ model ProductIngestionLog {
 }
 
 model ProductQuote {
-  id                String             @id @default(cuid())
-  leadId            String
-  status            String             @default("pending_review")
-  totalAmount       Float              @default(0)
-  currency          String             @default("NGN")
-  notes             String?
-  reviewedBy        String?
-  reviewedAt        DateTime?
-  sentAt            DateTime?
-  paymentStatus     String             @default("pending")
-  paidAt            DateTime?
-  paymentReference  String?
-  checkoutUrl       String?
-  fulfillmentStatus String?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  lead              Lead               @relation(fields: [leadId], references: [id])
-  items             ProductQuoteItem[]
+  id                  String               @id @default(cuid())
+  leadId              String
+  status              String               @default("pending_review")
+  totalAmount         Float                @default(0)
+  currency            String               @default("NGN")
+  notes               String?
+  reviewedBy          String?
+  reviewedAt          DateTime?
+  sentAt              DateTime?
+  paymentStatus       String               @default("pending")
+  paidAt              DateTime?
+  paymentReference    String?
+  checkoutUrl         String?
+  fulfillmentStatus   String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  lead                Lead                 @relation(fields: [leadId], references: [id])
+  items               ProductQuoteItem[]
   paymentTransactions PaymentTransaction[]
   fulfillmentOrders   FulfillmentOrder[]
 
@@ -694,25 +716,45 @@ model FollowUpLog {
   @@map("follow_up_logs")
 }
 
+// Phase 34 — MICAHSKIN Conversion Engine (MCE)
+// Append-only event log per lead. Powers the per-lead timeline panel and
+// drives funnel attribution, top-objections, and WhatsApp click reporting.
+model LeadTimeline {
+  id         String   @id @default(cuid())
+  leadId     String
+  eventType  String // whatsapp_click | offer_viewed | objection | reply_received | followup_sent | conversion | route_assigned
+  channel    String? // whatsapp | telegram | email | system
+  payload    Json?
+  funnelType String? // product | consult | academy | reseller — denormalised for fast filtering
+  createdAt  DateTime @default(now())
+  lead       Lead     @relation(fields: [leadId], references: [id])
+
+  @@index([leadId, createdAt])
+  @@index([eventType])
+  @@index([funnelType])
+  @@index([createdAt])
+  @@map("lead_timeline")
+}
+
 // Phase 32 — Lead Acquisition Engine
 // Phase 33 (MAIE) — Acquisition Intelligence fields appended below; all nullable, additive only.
 model ScrapedLead {
-  id              String    @id @default(cuid())
-  platform        String                            // tiktok
-  username        String?
-  comment         String
-  videoUrl        String?
-  hashtag         String?
-  externalId      String?   @unique               // TikTok video ID — dedup key
-  postedAt        DateTime?
-  concernType     String?                          // acne|hyperpigmentation|stretch_marks|oily_skin|knuckle_darkening|general
-  intentScore     Int       @default(0)            // 0–100  (legacy heuristic, retained for back-compat)
-  urgencyLevel    String?                          // high|medium|low
-  processed       Boolean   @default(false)        // true when injected into leads table
-  injectedLeadId  String?                          // Lead.id set after injection
-  outreachQueued  Boolean   @default(false)        // true when heat >= 70
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  platform       String // tiktok
+  username       String?
+  comment        String
+  videoUrl       String?
+  hashtag        String?
+  externalId     String?   @unique // TikTok video ID — dedup key
+  postedAt       DateTime?
+  concernType    String? // acne|hyperpigmentation|stretch_marks|oily_skin|knuckle_darkening|general
+  intentScore    Int       @default(0) // 0–100  (legacy heuristic, retained for back-compat)
+  urgencyLevel   String? // high|medium|low
+  processed      Boolean   @default(false) // true when injected into leads table
+  injectedLeadId String? // Lead.id set after injection
+  outreachQueued Boolean   @default(false) // true when heat >= 70
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   // ── Phase 33 — MAIE intelligence fields ──────────────────────────────────
   countryConfidence  Float?

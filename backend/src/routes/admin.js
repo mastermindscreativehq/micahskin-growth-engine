@@ -51,6 +51,14 @@ router.get('/command-center', async (req, res) => {
             lastStatus: null, stale: false,
           },
         },
+        // Phase 34 (MCE) — fallback shape so frontend never breaks
+        mce: {
+          funnel:     { summary: [], totalRevenue: 0 },
+          whatsapp:   { totalClicks: 0, uniqueLeadsClicked: 0, clicksLast24h: 0, ctaGenerated: 0, clickRatePct: 0, byFunnel: { product: 0, consult: 0, academy: 0, reseller: 0 } },
+          objections: { days: 30, summary: [], totalObjections: 0 },
+          cities:     [],
+          followUps:  { oneHourDue: 0, sixHourObjectionDue: 0, twentyFourDue: 0, threeDayDue: 0, total: 0, paused: false },
+        },
       },
     })
   }

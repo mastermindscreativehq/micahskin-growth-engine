@@ -5,6 +5,11 @@ const { Prisma } = require('@prisma/client')
 const { countFollowUpsDue } = require('./autoFollowUpService')
 const { getAcquisitionStats } = require('./leadAcquisitionService')
 
+// ── Phase 34 — MCE intelligence aggregations ────────────────────────────────
+const mceWhatsAppBridge   = require('./mce/whatsappBridgeService')
+const mceFunnelAttribution = require('./mce/funnelAttributionService')
+const mceFollowUp         = require('./mce/mceFollowUpService')
+
 const LEAD_MINI = {
   id: true,
   fullName: true,
@@ -280,6 +285,23 @@ async function getCommandCenter() {
     },
   }, getAcquisitionStats)
 
+  // ── 8. MCE — funnel attribution, WhatsApp clicks, top objections ──────────
+  // Each block is independently safe; one failure never blocks the dashboard.
+  const mceFunnel = await safeSection('mceFunnel', { summary: [], totalRevenue: 0 },
+    () => mceFunnelAttribution.getFunnelStats()
+  )
+  const mceWhatsApp = await safeSection('mceWhatsApp', {
+    totalClicks: 0, uniqueLeadsClicked: 0, clicksLast24h: 0, ctaGenerated: 0, clickRatePct: 0,
+    byFunnel: { product: 0, consult: 0, academy: 0, reseller: 0 },
+  }, () => mceWhatsAppBridge.getClickStats())
+  const mceObjections = await safeSection('mceObjections', { days: 30, summary: [], totalObjections: 0 },
+    () => mceFunnelAttribution.getTopObjections({ days: 30, limit: 8 })
+  )
+  const mceCities = await safeSection('mceCities', [], () => mceFunnelAttribution.getCityFunnelBreakdown({ limit: 8 }))
+  const mceFollowUps = await safeSection('mceFollowUps', {
+    oneHourDue: 0, sixHourObjectionDue: 0, twentyFourDue: 0, threeDayDue: 0, total: 0, paused: false,
+  }, () => mceFollowUp.countMceDue())
+
   return {
     generatedAt: now.toISOString(),
     revenue,
@@ -289,6 +311,14 @@ async function getCommandCenter() {
     alerts,
     followUps,
     leadSources,
+    // ── Phase 34 (MCE) ────────────────────────────────────────────────────
+    mce: {
+      funnel:     mceFunnel,
+      whatsapp:   mceWhatsApp,
+      objections: mceObjections,
+      cities:     mceCities,
+      followUps:  mceFollowUps,
+    },
   }
 }
 

@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { fetchCommandCenter, pauseFollowUps, resumeFollowUps, triggerAcquisitionRun } from '../api/index.js'
+import FunnelConversionPanel from './mce/FunnelConversionPanel.jsx'
+import WhatsAppClickPanel    from './mce/WhatsAppClickPanel.jsx'
+import TopObjectionsPanel    from './mce/TopObjectionsPanel.jsx'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -586,7 +589,7 @@ export default function CommandCenterPanel() {
 
   if (!data) return null
 
-  const { revenue, leadQueue, fulfillment, consults, alerts, followUps, leadSources } = data
+  const { revenue, leadQueue, fulfillment, consults, alerts, followUps, leadSources, mce } = data
 
   // Total actionable items — defensive in case a section returned defaults on error
   const totalAction =
@@ -712,6 +715,15 @@ export default function CommandCenterPanel() {
       {leadSources !== undefined && (
         <LeadSourcesSection leadSources={leadSources} onRefresh={() => load(true)} />
       )}
+
+      {/* ── 5b. MCE — Funnel Conversion Stats (Phase 34) ── */}
+      {mce?.funnel && <FunnelConversionPanel data={mce.funnel} />}
+
+      {/* ── 5c. MCE — WhatsApp Click Rate (Phase 34) ── */}
+      {mce?.whatsapp && <WhatsAppClickPanel data={mce.whatsapp} />}
+
+      {/* ── 5d. MCE — Top Objections (Phase 34) ── */}
+      {mce?.objections && <TopObjectionsPanel data={mce.objections} />}
 
       {/* ── 6. Auto Follow-Up Engine ── */}
       {followUps && (

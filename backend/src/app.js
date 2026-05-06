@@ -19,6 +19,7 @@ const productsRouter     = require('./routes/products')
 const paymentsRouter     = require('./routes/payments')
 const fulfillmentRouter  = require('./routes/fulfillment')
 const adminRouter        = require('./routes/admin')
+const mceRouter          = require('./routes/mce')
 
 const app = express()
 
@@ -186,6 +187,9 @@ app.use('/api/fulfillment', fulfillmentRouter)
 
 // Admin aggregation endpoints (command center, etc.)
 app.use('/api/admin', adminRouter)
+
+// MICAHSKIN Conversion Engine (Phase 34) — public WhatsApp redirect + protected admin endpoints
+app.use('/api/mce', mceRouter)
 
 // ─────────────────────────────────────────────────────────────
 // 404

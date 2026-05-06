@@ -46,6 +46,11 @@
 
 const prisma = require('../lib/prisma')
 
+// ── Phase 34 — MCE hooks (additive; non-blocking) ─────────────────────────────
+const mceObjectionDetector = require('./mce/objectionDetector')
+const mceLeadTimeline      = require('./mce/leadTimelineService')
+const mceConversationRouter = require('./mce/conversationRouter')
+
 const ACADEMY_LINK  = process.env.ACADEMY_LINK  || 'https://micahskin-growth-engine.vercel.app/academy'
 const WHATSAPP_LINK = process.env.WHATSAPP_LINK || 'https://wa.me/+2348140468759'
 
@@ -559,6 +564,52 @@ async function handleInboundReply(lead, text) {
     `productOfferCount=${lead.productOfferCount || 0} ` +
     `botMuted=${isBotMuted(lead)}`
   )
+
+  // ── Phase 34 — MCE hooks (best-effort, non-blocking) ───────────────────────
+  // 1. Record reply_received timeline event
+  // 2. Detect objection and append to objectionsRaised + timeline
+  // 3. Reassign route if inbound text suggests a new funnel (idempotent)
+  try {
+    await mceLeadTimeline.record({
+      leadId:     lead.id,
+      eventType:  'reply_received',
+      channel:    'telegram',
+      funnelType: lead.funnelType || null,
+      payload:    { intent, mode, textPreview: (text || '').slice(0, 120) },
+    })
+
+    const objection = mceObjectionDetector.detect(text)
+    if (objection) {
+      console.log(`[MCE/Objection] detected leadId=${lead.id} type=${objection.type} text="${objection.matchedText}"`)
+      await mceLeadTimeline.record({
+        leadId:     lead.id,
+        eventType:  'objection',
+        channel:    'telegram',
+        funnelType: lead.funnelType || null,
+        payload:    { type: objection.type, text: objection.matchedText, at: now.toISOString() },
+      })
+      // Append to lead.objectionsRaised (non-blocking)
+      try {
+        const existing = Array.isArray(lead.objectionsRaised) ? lead.objectionsRaised : []
+        const next = [...existing, { type: objection.type, text: objection.matchedText, at: now.toISOString() }]
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data:  { objectionsRaised: next.slice(-50) },  // keep last 50
+        })
+      } catch (objPersistErr) {
+        console.error(`[MCE/Objection] persist failed leadId=${lead.id}:`, objPersistErr.message)
+      }
+    }
+
+    // Re-run router on inbound text — funnelType may shift after a reseller signal etc.
+    if (text && text.length > 4) {
+      mceConversationRouter.assign(lead, { inboundText: text }).catch(err =>
+        console.error(`[MCE/Router] inbound reassign failed leadId=${lead.id}:`, err.message)
+      )
+    }
+  } catch (mceErr) {
+    console.error(`[MCE] inbound hook failed leadId=${lead.id}:`, mceErr.message)
+  }
 
   // Base state recorded for every inbound message
   const baseUpdate = {

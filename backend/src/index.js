@@ -11,6 +11,7 @@ const { startAcademyOnboarding } = require('./services/academyOnboardingService'
 const { startAcademyExperience } = require('./services/academyExperienceService')
 const { startAutoFollowUpService }     = require('./services/autoFollowUpService')
 const { startLeadAcquisitionEngine }   = require('./services/leadAcquisitionService')
+const { startMceFollowUpService }      = require('./services/mce/mceFollowUpService')
 
 const PORT = Number(process.env.PORT) || 4000
 const HOST = '0.0.0.0'
@@ -54,6 +55,7 @@ function startBackgroundServices() {
   safeStartService('Academy Experience Service', startAcademyExperience)
   safeStartService('Auto Follow-Up Conversion Engine', startAutoFollowUpService)
   safeStartService('Lead Acquisition Engine', startLeadAcquisitionEngine)
+  safeStartService('MCE Follow-Up Engine', startMceFollowUpService)
 }
 
 async function start() {

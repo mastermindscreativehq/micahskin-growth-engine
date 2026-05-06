@@ -29,6 +29,10 @@ const leadHeatEngine      = require('./leadHeatEngine')
 const leadSegmentation    = require('./leadSegmentationService')
 const outreachIntelligence = require('./outreachIntelligenceService')
 
+// ── Phase 34 — MCE (read MAIE outputs, never modify them) ─────────────────────
+const mceRouter         = require('./mce/conversationRouter')
+const mceWhatsAppBridge = require('./mce/whatsappBridgeService')
+
 // Toggleable behaviour — when MAIE_REJECT_NON_NIGERIAN=true, leads with
 // nigeriaConfidence < 18 are auto-rejected even if heat is high. Default is
 // false so we don't suddenly reject existing global English-language traffic.
@@ -494,6 +498,33 @@ async function processRawItems(rawItems) {
         where: { id: saved.id },
         data:  { processed: true, injectedLeadId: leadId, outreachQueued: isHot },
       })
+
+      // ── Phase 34 — MCE: assign route + generate WhatsApp CTA ─────────────
+      // Reads MAIE outputs from `saved`. Never writes back to MAIE fields.
+      // Failure here is logged, never throws upstream — MAIE pipeline is
+      // unaffected if MCE breaks.
+      try {
+        const newLead = await prisma.lead.findUnique({ where: { id: leadId } })
+        if (newLead) {
+          await mceRouter.assign(newLead, {
+            maie: {
+              painScore:          saved.painScore,
+              emotionalIntensity: saved.emotionalIntensity,
+              urgencyScore:       saved.urgencyScore,
+              leadSegment:        saved.leadSegment,
+              detectedCity:       saved.detectedCity,
+            },
+          })
+          // Refresh after router writes funnelType/budgetSignal/etc.
+          const refreshed = await prisma.lead.findUnique({ where: { id: leadId } })
+          if (refreshed) {
+            await mceWhatsAppBridge.generateAndStoreCta(refreshed)
+          }
+        }
+      } catch (mceErr) {
+        console.error(`[MCE] post-injection hook failed leadId=${leadId}:`, mceErr.message)
+      }
+
       stats.injected++
       if (isHot) {
         stats.queued++

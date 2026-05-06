@@ -567,3 +567,76 @@ export async function fetchAcquisitionStats() {
 export async function triggerAcquisitionRun() {
   return protectedFetch(`${BASE_URL}/api/admin/acquisition/trigger`, { method: 'POST' })
 }
+
+// ── MICAHSKIN Conversion Engine (Phase 34 — MCE) ─────────────────────────────
+
+/**
+ * Per-lead timeline events (objections, clicks, follow-ups, route assignments).
+ */
+export async function fetchLeadTimeline(leadId, limit = 100) {
+  return protectedFetch(`${BASE_URL}/api/mce/timeline/${encodeURIComponent(leadId)}?limit=${limit}`)
+}
+
+/**
+ * Funnel-level conversion + revenue stats.
+ */
+export async function fetchMceFunnelStats() {
+  return protectedFetch(`${BASE_URL}/api/mce/funnel/stats`)
+}
+
+/**
+ * WhatsApp click rate + per-funnel click breakdown.
+ */
+export async function fetchMceWhatsAppStats() {
+  return protectedFetch(`${BASE_URL}/api/mce/whatsapp/stats`)
+}
+
+/**
+ * Top objections detected in inbound replies (default last 30 days).
+ */
+export async function fetchMceTopObjections({ days = 30, limit = 10 } = {}) {
+  return protectedFetch(`${BASE_URL}/api/mce/objections/top?days=${days}&limit=${limit}`)
+}
+
+/**
+ * City × funnel breakdown — feedback loop for the localiser.
+ */
+export async function fetchMceCityBreakdown(limit = 10) {
+  return protectedFetch(`${BASE_URL}/api/mce/cities/breakdown?limit=${limit}`)
+}
+
+/**
+ * Regenerate the WhatsApp CTA URL for a lead (e.g. after editing primary concern).
+ */
+export async function regenerateMceCta(leadId) {
+  return protectedFetch(`${BASE_URL}/api/mce/whatsapp/cta/${encodeURIComponent(leadId)}`, {
+    method: 'POST',
+  })
+}
+
+/**
+ * Re-run the conversation router on a lead — useful when the concern
+ * or signal changes manually in the CRM.
+ */
+export async function reassignMceRoute(leadId, inboundText = '') {
+  return protectedFetch(`${BASE_URL}/api/mce/router/reassign/${encodeURIComponent(leadId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inboundText }),
+  })
+}
+
+/**
+ * MCE follow-up due-counts + pause/resume.
+ */
+export async function fetchMceFollowUpStatus() {
+  return protectedFetch(`${BASE_URL}/api/mce/follow-ups/status`)
+}
+
+export async function pauseMceFollowUps() {
+  return protectedFetch(`${BASE_URL}/api/mce/follow-ups/pause`, { method: 'POST' })
+}
+
+export async function resumeMceFollowUps() {
+  return protectedFetch(`${BASE_URL}/api/mce/follow-ups/resume`, { method: 'POST' })
+}
