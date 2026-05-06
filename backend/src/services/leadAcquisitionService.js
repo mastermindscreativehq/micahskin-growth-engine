@@ -4,7 +4,7 @@
  * leadAcquisitionService.js
  * Phase 32 — Lead Acquisition Engine
  *
- * Every 30 minutes:
+ * Every 3 hours:
  *   1. Trigger Apify TikTok hashtag scraper
  *   2. Poll until complete (on next tick)
  *   3. Filter for pain / intent signals
@@ -424,13 +424,13 @@ async function runAcquisitionCycle() {
 }
 
 function startLeadAcquisitionEngine() {
-  const INTERVAL_MS = 30 * 60 * 1000   // 30 min
+  const INTERVAL_MS = 3 * 60 * 60 * 1000   // 3 hours
 
   // First cycle after 3 minutes (let server boot + other services start)
   setTimeout(runAcquisitionCycle, 3 * 60 * 1000)
 
   setInterval(runAcquisitionCycle, INTERVAL_MS)
-  console.log('[LeadAcquisition] Engine started — 30-min cycle, first run in 3 min')
+  console.log('[LeadAcquisition] Engine started — 3-hour cycle, first run in 3 min')
 }
 
 // ── Stats (used by Command Center) ───────────────────────────────────────────

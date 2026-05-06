@@ -312,7 +312,7 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
       </div>
 
       <p className="mt-3 text-[11px] text-gray-400 leading-snug">
-        Targets 8 TikTok hashtags · Runs every 30 min · High-intent leads (score ≥ 70) auto-appear in Hot Leads queue
+        Targets 8 TikTok hashtags · Runs every 3 hours · High-intent leads (score ≥ 70) auto-appear in Hot Leads queue
       </p>
     </SectionBox>
   )
