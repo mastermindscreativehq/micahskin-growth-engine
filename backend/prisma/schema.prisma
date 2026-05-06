@@ -695,6 +695,7 @@ model FollowUpLog {
 }
 
 // Phase 32 — Lead Acquisition Engine
+// Phase 33 (MAIE) — Acquisition Intelligence fields appended below; all nullable, additive only.
 model ScrapedLead {
   id              String    @id @default(cuid())
   platform        String                            // tiktok
@@ -705,18 +706,42 @@ model ScrapedLead {
   externalId      String?   @unique               // TikTok video ID — dedup key
   postedAt        DateTime?
   concernType     String?                          // acne|hyperpigmentation|stretch_marks|oily_skin|knuckle_darkening|general
-  intentScore     Int       @default(0)            // 0–100
+  intentScore     Int       @default(0)            // 0–100  (legacy heuristic, retained for back-compat)
   urgencyLevel    String?                          // high|medium|low
   processed       Boolean   @default(false)        // true when injected into leads table
   injectedLeadId  String?                          // Lead.id set after injection
-  outreachQueued  Boolean   @default(false)        // true when intent >= 70
+  outreachQueued  Boolean   @default(false)        // true when heat >= 70
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+
+  // ── Phase 33 — MAIE intelligence fields ──────────────────────────────────
+  countryConfidence  Float?
+  nigeriaConfidence  Float?
+  painScore          Float?
+  urgencyScore       Float?
+  buyerIntentScore   Float?
+  authenticityScore  Float?
+  emotionalIntensity Float?
+  leadHeatScore      Float?
+  leadSegment        String?
+  detectedCity       String?
+  detectedCountry    String?
+  detectedLanguage   String?
+  painSignals        Json?
+  buyerSignals       Json?
+  locationSignals    Json?
+  rejectionReason    String?
+  aiSummary          String?
+  outreachAngle      String?
 
   @@index([platform])
   @@index([processed])
   @@index([intentScore])
   @@index([createdAt])
+  @@index([leadHeatScore])
+  @@index([leadSegment])
+  @@index([nigeriaConfidence])
+  @@index([rejectionReason])
   @@map("scraped_leads")
 }
 

@@ -40,6 +40,10 @@ router.get('/command-center', async (req, res) => {
         followUps:   { total: 0, paused: false, quoteDue: 0, pendingDue: 0, consultDue: 0, diagnosisDue: 0, abandonedDue: 0 },
         leadSources: {
           scrapedToday: 0, highIntentToday: 0, pendingOutreach: 0, processedTotal: 0, totalScraped: 0,
+          nigerianTotal: 0, highHeatTotal: 0,
+          academyLeadCount: 0, consultLeadCount: 0,
+          segmentBreakdown: [], cityBreakdown: [],
+          rejectionBreakdown: [], painBreakdownByConcern: [],
           engineStatus: 'idle',
           acquisitionStatus: {
             state: 'idle', running: false, pendingRunId: null,

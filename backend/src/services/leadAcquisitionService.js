@@ -22,6 +22,19 @@ const {
   normaliseTiktokItem,
 } = require('./tiktokScraperService')
 
+// ── Phase 33 — MAIE intelligence services ─────────────────────────────────────
+const nigeriaSignal       = require('./nigeriaSignalService')
+const leadPsychology      = require('./leadPsychologyService')
+const leadHeatEngine      = require('./leadHeatEngine')
+const leadSegmentation    = require('./leadSegmentationService')
+const outreachIntelligence = require('./outreachIntelligenceService')
+
+// Toggleable behaviour — when MAIE_REJECT_NON_NIGERIAN=true, leads with
+// nigeriaConfidence < 18 are auto-rejected even if heat is high. Default is
+// false so we don't suddenly reject existing global English-language traffic.
+const REJECT_NON_NIGERIAN =
+  String(process.env.MAIE_REJECT_NON_NIGERIAN || '').toLowerCase() === 'true'
+
 // ── In-memory run state ───────────────────────────────────────────────────────
 //
 // Explicit state machine — replaces the old "_pendingRunId ? running : idle"
@@ -208,27 +221,48 @@ function detectUrgency(text, score) {
 
 // ── Lead injection ────────────────────────────────────────────────────────────
 
-async function injectToLead(scrapedLead) {
+/**
+ * Inject a scraped item into the main `leads` table.
+ * Accepts the persisted ScrapedLead row plus the MAIE outreach copy generated
+ * during scoring. MAIE-derived fields slot into existing Lead columns
+ * (suggestedReply / primaryConcern / urgencyLevel / academyIntentScore etc.) so
+ * downstream flows (diagnosis engine, conversion engine, conversation brain)
+ * keep working unchanged.
+ */
+async function injectToLead(scrapedLead, outreach = null) {
   const username   = scrapedLead.username || 'unknown'
   const concern    = scrapedLead.concernType || 'general'
   const skinLabel  = concern.replace(/_/g, ' ')
 
+  const heat = Number(scrapedLead.leadHeatScore ?? scrapedLead.intentScore ?? 0)
+  const productScore = Math.round(heat)
+  const consultScore = Math.round(heat * 0.6)
+  const academyScore = leadSegmentation.isAcademySegment(scrapedLead.leadSegment)
+    ? Math.round(Math.max(60, heat))
+    : Math.round(heat * 0.4)
+
   const lead = await prisma.lead.create({
     data: {
-      fullName:          `@${username} (TikTok)`,
-      sourcePlatform:    'tiktok',
-      sourceType:        'scraped',
-      skinConcern:       skinLabel,
-      message:           scrapedLead.comment,
-      handle:            username,
-      status:            'new',
-      priority:          scrapedLead.intentScore >= 70 ? 'high' : 'low',
-      productIntentScore: scrapedLead.intentScore,
-      consultIntentScore: Math.floor(scrapedLead.intentScore * 0.6),
-      primaryConcern:    concern,
-      urgencyLevel:      scrapedLead.urgencyLevel,
-      leadStage:         'new',
-      lastInteractionAt: new Date(),
+      fullName:           `@${username} (TikTok)`,
+      sourcePlatform:     'tiktok',
+      sourceType:         'scraped',
+      skinConcern:        skinLabel,
+      message:            scrapedLead.comment,
+      handle:             username,
+      status:             'new',
+      priority:           heat >= leadHeatEngine.HOT_THRESHOLD ? 'high' : 'low',
+      productIntentScore: productScore,
+      consultIntentScore: consultScore,
+      academyIntentScore: academyScore,
+      primaryConcern:     concern,
+      urgencyLevel:       scrapedLead.urgencyLevel,
+      leadStage:          'new',
+      lastInteractionAt:  new Date(),
+      suggestedReply:     outreach?.suggestedReply || null,
+      followupAngle:      outreach?.outreachAngle  || null,
+      monetizationReason: scrapedLead.leadSegment
+        ? `MAIE segment=${scrapedLead.leadSegment} heat=${productScore}`
+        : null,
     },
   })
 
@@ -242,17 +276,25 @@ async function processRawItems(rawItems) {
     total:      rawItems.length,
     normalised: 0,
     stored:     0,   // saved to scraped_leads
-    accepted:   0,   // injected into leads (score >= 50)
+    nigerian:   0,   // nigeriaConfidence >= 30
+    accepted:   0,   // passed all gates → injected into leads
     injected:   0,
-    queued:     0,   // score >= 70 → outreachQueued
+    queued:     0,   // heat >= 70 → outreachQueued
     rejected:   0,
     reasons: {
-      norm_failed:  0,  // normaliseTiktokItem returned null / empty text
-      duplicate:    0,  // externalId already in DB
-      spam_filter:  0,  // failed pain-signal filter
-      low_score:    0,  // score < 30
-      stored_only:  0,  // score 30–49: stored but not injected
+      norm_failed:    0,  // normaliseTiktokItem returned null / empty text
+      duplicate:      0,
+      spam:           0,  // legacy spam filter
+      fake_profile:   0,  // MAIE authenticity floor
+      low_intent:     0,  // MAIE pain+buyer floor
+      non_nigerian:   0,
+      low_heat:       0,  // heat < 50 — stored, not injected
     },
+    // Aggregations for the cycle summary log
+    topSegments: {},
+    topCities:   {},
+    topPainTags: {},
+    topAngles:   {},
   }
 
   for (const raw of rawItems) {
@@ -264,33 +306,105 @@ async function processRawItems(rawItems) {
     }
     stats.normalised++
 
-    // Skip duplicates by externalId
+    // ── Duplicate check (must run before any expensive work) ───────────────
+    let isDup = false
     if (norm.externalId) {
       const exists = await prisma.scrapedLead.findUnique({
         where: { externalId: norm.externalId },
+        select: { id: true },
       })
-      if (exists) {
-        stats.reasons.duplicate++
-        stats.rejected++
-        continue
-      }
+      if (exists) isDup = true
+    }
+    if (isDup) {
+      stats.reasons.duplicate++
+      stats.rejected++
+      continue
     }
 
-    const passes    = filterComment(norm.text)
-    const score     = scoreComment(norm.text)
-    const [concern] = detectConcern(norm.text)
-    const urgency   = detectUrgency(norm.text, score)
+    // ── Phase 33 — MAIE intelligence pipeline ───────────────────────────────
+    const corpus = norm.text
 
-    // Last-line defense — coerce any object-shaped scalars right before Prisma.
-    // The normaliser already does this, but Apify schema drift has bitten us
-    // before, so keep a redundant guard here.
+    const ngResult = nigeriaSignal.detect(corpus, {
+      username: norm.username,
+      hashtag:  norm.hashtag,
+    })
+    console.log(
+      `[NigeriaDetector] @${norm.username || 'unknown'}` +
+      ` confidence=${ngResult.nigeriaConfidence}` +
+      ` city=${ngResult.detectedCity || '—'}` +
+      ` lang=${ngResult.detectedLanguage || '—'}` +
+      ` signals=${ngResult.locationSignals.length}`,
+    )
+    if (ngResult.nigeriaConfidence >= 30) stats.nigerian++
+
+    const psychResult = leadPsychology.analyze(corpus)
+    console.log(
+      `[Psychology] @${norm.username || 'unknown'}` +
+      ` pain=${psychResult.painScore}` +
+      ` urgency=${psychResult.urgencyScore}` +
+      ` buyer=${psychResult.buyerIntentScore}` +
+      ` emotion=${psychResult.emotionalIntensity}` +
+      ` auth=${psychResult.authenticityScore}`,
+    )
+
+    const segmentResult = leadSegmentation.classify(corpus, {
+      username: norm.username,
+      hashtag:  norm.hashtag,
+    })
+    console.log(
+      `[Segmentation] @${norm.username || 'unknown'}` +
+      ` segment=${segmentResult.segment}` +
+      ` confidence=${segmentResult.segmentConfidence}` +
+      ` secondary=[${segmentResult.secondarySegments.join(',')}]`,
+    )
+
+    const heatResult = leadHeatEngine.evaluate({
+      nigeria:      ngResult,
+      psychology:   psychResult,
+      segmentation: segmentResult,
+      engagement:   { likes: raw?.diggCount || raw?.likes, comments: raw?.commentCount },
+      duplicate:    false,
+      rejectNonNigerian: REJECT_NON_NIGERIAN,
+    })
+    console.log(
+      `[LeadHeat] @${norm.username || 'unknown'}` +
+      ` heat=${heatResult.leadHeatScore}` +
+      ` reject=${heatResult.rejectionReason || 'none'}` +
+      ` ${heatResult.rejectionDetail || ''}`,
+    )
+
+    // Outreach copy — generated for everyone we'll persist (lets the dashboard
+    // surface a suggestedReply even on stored-only items).
+    const outreach = outreachIntelligence.generate({
+      text:         corpus,
+      nigeria:      ngResult,
+      psychology:   psychResult,
+      segmentation: segmentResult,
+      username:     norm.username,
+      externalId:   norm.externalId,
+    })
+    console.log(
+      `[OutreachAI] @${norm.username || 'unknown'}` +
+      ` angle=${outreach.outreachAngle}` +
+      ` summary="${outreach.aiSummary}"`,
+    )
+
+    // ── Legacy compatibility — keep intentScore + concernType populated ─────
+    const legacyConcern  = leadSegmentation.mapToConcernType(segmentResult.segment)
+    const legacyIntent   = scoreComment(corpus)
+    const urgencyLabel   = (() => {
+      if ((psychResult.urgencyScore ?? 0) >= 30 || heatResult.leadHeatScore >= 70) return 'high'
+      if (heatResult.leadHeatScore >= 40) return 'medium'
+      return 'low'
+    })()
+
     const safeStr = (v) =>
       v == null ? null
         : typeof v === 'string' ? (v.trim() || null)
         : typeof v === 'object' ? (v.name || v.title || v.uniqueId || v.id || null)
         : String(v)
 
-    // Always persist scraped item (processed=false if below threshold)
+    // ── Persist scraped item with the full MAIE payload ─────────────────────
     let saved
     try {
       saved = await prisma.scrapedLead.create({
@@ -302,15 +416,51 @@ async function processRawItems(rawItems) {
           hashtag:      safeStr(norm.hashtag),
           externalId:   norm.externalId || null,
           postedAt:     norm.postedAt,
-          concernType:  concern,
-          intentScore:  score,
-          urgencyLevel: urgency,
+          // legacy back-compat fields
+          concernType:  legacyConcern,
+          intentScore:  legacyIntent,
+          urgencyLevel: urgencyLabel,
           processed:    false,
+
+          // MAIE fields
+          nigeriaConfidence:  ngResult.nigeriaConfidence,
+          countryConfidence:  ngResult.countryConfidence,
+          detectedCity:       ngResult.detectedCity,
+          detectedCountry:    ngResult.detectedCountry,
+          detectedLanguage:   ngResult.detectedLanguage,
+          locationSignals:    ngResult.locationSignals,
+
+          painScore:          psychResult.painScore,
+          urgencyScore:       psychResult.urgencyScore,
+          buyerIntentScore:   psychResult.buyerIntentScore,
+          authenticityScore:  psychResult.authenticityScore,
+          emotionalIntensity: psychResult.emotionalIntensity,
+          painSignals:        psychResult.painSignals,
+          buyerSignals:       psychResult.buyerSignals,
+
+          leadHeatScore:      heatResult.leadHeatScore,
+          leadSegment:        segmentResult.segment,
+          rejectionReason:    heatResult.rejectionReason,
+
+          aiSummary:          outreach.aiSummary,
+          outreachAngle:      outreach.outreachAngle,
         },
       })
       stats.stored++
+
+      // Aggregations for cycle summary
+      stats.topSegments[segmentResult.segment] =
+        (stats.topSegments[segmentResult.segment] || 0) + 1
+      if (ngResult.detectedCity) {
+        stats.topCities[ngResult.detectedCity] =
+          (stats.topCities[ngResult.detectedCity] || 0) + 1
+      }
+      for (const tag of psychResult.painSignals) {
+        stats.topPainTags[tag] = (stats.topPainTags[tag] || 0) + 1
+      }
+      stats.topAngles[outreach.outreachAngle] =
+        (stats.topAngles[outreach.outreachAngle] || 0) + 1
     } catch (dbErr) {
-      // Unique constraint race — already inserted by a concurrent run
       if (dbErr.code === 'P2002') {
         stats.reasons.duplicate++
         stats.rejected++
@@ -319,37 +469,40 @@ async function processRawItems(rawItems) {
       throw dbErr
     }
 
-    if (!passes) {
-      stats.reasons.spam_filter++
-      stats.rejected++
-      continue
-    }
-    if (score < 30) {
-      stats.reasons.low_score++
-      stats.rejected++
-      continue
-    }
-    // Score 30–49: stored, not injected
-    if (score < 50) {
-      stats.reasons.stored_only++
+    // ── Decide: inject vs. store-only vs. rejected ──────────────────────────
+    if (heatResult.rejectionReason) {
+      const r = heatResult.rejectionReason
+      // Map the heat-engine reasons into our stats bucket; unknown reasons bucket as low_heat.
+      if      (r === 'fake_profile') stats.reasons.fake_profile++
+      else if (r === 'low_intent')   stats.reasons.low_intent++
+      else if (r === 'non_nigerian') stats.reasons.non_nigerian++
+      else if (r === 'low_heat')     stats.reasons.low_heat++
+      else                            stats.reasons.low_heat++
+
+      // low_heat is a "stored, not injected" outcome — not a hard reject for
+      // counter purposes (matches the legacy `stored_only` semantics).
+      if (r !== 'low_heat') stats.rejected++
       continue
     }
 
+    // ── Inject into leads table ─────────────────────────────────────────────
     stats.accepted++
-
-    // Inject into main leads table — score >= 50
     try {
-      const leadId = await injectToLead({ ...saved })
+      const leadId = await injectToLead({ ...saved }, outreach)
+      const isHot  = leadHeatEngine.isHot(heatResult.leadHeatScore)
       await prisma.scrapedLead.update({
         where: { id: saved.id },
-        data:  { processed: true, injectedLeadId: leadId, outreachQueued: score >= 70 },
+        data:  { processed: true, injectedLeadId: leadId, outreachQueued: isHot },
       })
       stats.injected++
-      if (score >= 70) {
+      if (isHot) {
         stats.queued++
         console.log(
-          `[LeadAcquisition] HIGH INTENT injected — @${norm.username || 'unknown'}` +
-          ` score=${score} concern=${concern || 'general'} urgency=${urgency}`,
+          `[LeadAcquisition] HOT injected — @${norm.username || 'unknown'}` +
+          ` heat=${heatResult.leadHeatScore}` +
+          ` segment=${segmentResult.segment}` +
+          ` ng=${ngResult.nigeriaConfidence}` +
+          ` city=${ngResult.detectedCity || '—'}`,
         )
       }
     } catch (err) {
@@ -357,13 +510,27 @@ async function processRawItems(rawItems) {
     }
   }
 
+  // ── End-of-cycle summary ─────────────────────────────────────────────────
+  const topN = (obj, n = 5) =>
+    Object.entries(obj)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, n)
+      .map(([k, v]) => `${k}:${v}`)
+      .join(' ') || '—'
+
+  console.log('[LeadAcquisition] ─────────── Cycle Summary ───────────')
   console.log(
-    `[LeadAcquisition] Batch complete —` +
-    ` total=${stats.total} normalised=${stats.normalised} stored=${stats.stored}` +
+    `[LeadAcquisition] total=${stats.total} normalised=${stats.normalised}` +
+    ` stored=${stats.stored} nigerian=${stats.nigerian}` +
     ` accepted=${stats.accepted} injected=${stats.injected} queued=${stats.queued}` +
     ` rejected=${stats.rejected}`,
   )
-  console.log('[LeadAcquisition] Rejection breakdown:', stats.reasons)
+  console.log('[LeadAcquisition] Rejections:    ', stats.reasons)
+  console.log('[LeadAcquisition] Top segments:  ', topN(stats.topSegments))
+  console.log('[LeadAcquisition] Top NG cities: ', topN(stats.topCities))
+  console.log('[LeadAcquisition] Top pain tags: ', topN(stats.topPainTags, 8))
+  console.log('[LeadAcquisition] Top angles:    ', topN(stats.topAngles))
+  console.log('[LeadAcquisition] ──────────────────────────────────────')
 
   return stats
 }
@@ -443,14 +610,96 @@ async function getAcquisitionStats() {
   const now   = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
-  const [scrapedToday, highIntentToday, pendingOutreach, processedTotal, totalScraped] =
+  // Headline counters
+  const [scrapedToday, highIntentToday, pendingOutreach, processedTotal, totalScraped, nigerianTotal, highHeatTotal] =
     await Promise.all([
       prisma.scrapedLead.count({ where: { createdAt: { gte: today } } }),
-      prisma.scrapedLead.count({ where: { createdAt: { gte: today }, intentScore: { gte: 70 } } }),
+      // Use leadHeatScore when present, fall back to legacy intentScore for back-compat
+      prisma.scrapedLead.count({
+        where: {
+          createdAt: { gte: today },
+          OR: [
+            { leadHeatScore: { gte: 70 } },
+            { AND: [{ leadHeatScore: null }, { intentScore: { gte: 70 } }] },
+          ],
+        },
+      }),
       prisma.scrapedLead.count({ where: { outreachQueued: true, processed: false } }),
       prisma.scrapedLead.count({ where: { processed: true } }),
       prisma.scrapedLead.count(),
+      prisma.scrapedLead.count({ where: { nigeriaConfidence: { gte: 30 } } }),
+      prisma.scrapedLead.count({ where: { leadHeatScore: { gte: 70 } } }),
     ])
+
+  // ── MAIE breakdowns — groupBy aggregations for the dashboard ─────────────
+  // All wrapped in a defensive try block: if these columns don't exist yet
+  // (i.e. migration hasn't been run), we still return the headline counters.
+  let segmentBreakdown = []
+  let cityBreakdown    = []
+  let rejectionBreakdown = []
+  let painBreakdownByConcern = []
+  let academyLeadCount = 0
+  let consultLeadCount = 0
+  try {
+    const [segGroups, cityGroups, rejGroups, concernGroups] = await Promise.all([
+      prisma.scrapedLead.groupBy({
+        by: ['leadSegment'],
+        where: { leadSegment: { not: null } },
+        _count: { _all: true },
+        orderBy: { _count: { leadSegment: 'desc' } },
+        take: 12,
+      }),
+      prisma.scrapedLead.groupBy({
+        by: ['detectedCity'],
+        where: { detectedCity: { not: null } },
+        _count: { _all: true },
+        orderBy: { _count: { detectedCity: 'desc' } },
+        take: 10,
+      }),
+      prisma.scrapedLead.groupBy({
+        by: ['rejectionReason'],
+        where: { rejectionReason: { not: null }, createdAt: { gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) } },
+        _count: { _all: true },
+        orderBy: { _count: { rejectionReason: 'desc' } },
+        take: 10,
+      }),
+      prisma.scrapedLead.groupBy({
+        by: ['concernType'],
+        where: { concernType: { not: null }, leadHeatScore: { gte: 50 } },
+        _count: { _all: true },
+        orderBy: { _count: { concernType: 'desc' } },
+        take: 10,
+      }),
+    ])
+
+    segmentBreakdown = segGroups.map(g => ({
+      segment: g.leadSegment,
+      count:   g._count._all,
+    }))
+    cityBreakdown = cityGroups.map(g => ({
+      city:  g.detectedCity,
+      count: g._count._all,
+    }))
+    rejectionBreakdown = rejGroups.map(g => ({
+      reason: g.rejectionReason,
+      count:  g._count._all,
+    }))
+    painBreakdownByConcern = concernGroups.map(g => ({
+      concern: g.concernType,
+      count:   g._count._all,
+    }))
+
+    // Funnel tallies — count leads in academy / consult buckets
+    academyLeadCount = segmentBreakdown
+      .filter(s => ['academy', 'reseller', 'entrepreneur', 'skincare_business'].includes(s.segment))
+      .reduce((sum, s) => sum + s.count, 0)
+    consultLeadCount = segmentBreakdown
+      .filter(s => s.segment === 'consultation')
+      .reduce((sum, s) => sum + s.count, 0)
+  } catch (err) {
+    // Most likely the migration hasn't run yet. Log once and return defaults.
+    console.warn('[LeadAcquisition] MAIE breakdowns unavailable:', err.message)
+  }
 
   const acquisitionStatus = {
     state:             STATE.state,
@@ -469,6 +718,16 @@ async function getAcquisitionStats() {
     pendingOutreach,
     processedTotal,
     totalScraped,
+    // ── Phase 33 — MAIE headline counters ─────────────────────────────────
+    nigerianTotal,
+    highHeatTotal,
+    academyLeadCount,
+    consultLeadCount,
+    // ── Phase 33 — MAIE breakdowns ────────────────────────────────────────
+    segmentBreakdown,
+    cityBreakdown,
+    rejectionBreakdown,
+    painBreakdownByConcern,
     acquisitionStatus,
     // Back-compat for any older consumer — derived strictly from `running`,
     // never inferred from a lingering pendingRunId.

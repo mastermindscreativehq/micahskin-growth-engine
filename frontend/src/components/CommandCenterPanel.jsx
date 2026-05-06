@@ -215,6 +215,80 @@ function AlertRow({ label, count, warn = 1, crit = 5, children }) {
   )
 }
 
+// ── MAIE intelligence sub-components (Phase 33) ───────────────────────────────
+
+function MAIEStatCard({ label, value, color = 'gray', sub }) {
+  const cls = {
+    gray:    'bg-gray-50 border-gray-200 text-gray-700',
+    teal:    'bg-teal-50 border-teal-200 text-teal-700',
+    emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700',
+    rose:    'bg-rose-50 border-rose-200 text-rose-700',
+    violet:  'bg-violet-50 border-violet-200 text-violet-700',
+    sky:     'bg-sky-50 border-sky-200 text-sky-700',
+    amber:   'bg-amber-50 border-amber-200 text-amber-700',
+  }[color] || 'bg-gray-50 border-gray-200 text-gray-700'
+
+  return (
+    <div className={`rounded-lg border px-4 py-3 ${cls}`}>
+      <div className="text-base font-bold tabular-nums truncate">{value}</div>
+      <div className="text-[11px] font-medium mt-0.5 leading-tight">{label}</div>
+      {sub && <div className="text-[10px] mt-0.5 opacity-60">{sub}</div>}
+    </div>
+  )
+}
+
+function MAIEBreakdownBar({ items, keyField, valueField = 'count', emptyLabel = 'No data yet', barColor = 'bg-teal-400' }) {
+  if (!items || items.length === 0) {
+    return <p className="text-xs text-gray-400 py-2 text-center">{emptyLabel}</p>
+  }
+  const max = Math.max(...items.map(i => i[valueField] || 0), 1)
+  return (
+    <div className="space-y-1.5">
+      {items.map((item, idx) => {
+        const v = item[valueField] || 0
+        const pct = Math.round((v / max) * 100)
+        const label = item[keyField] || '—'
+        return (
+          <div key={`${label}-${idx}`} className="flex items-center gap-2 text-xs">
+            <span className="w-28 shrink-0 truncate text-gray-700 capitalize" title={label}>
+              {String(label).replace(/_/g, ' ')}
+            </span>
+            <div className="flex-1 h-1.5 rounded bg-gray-100 overflow-hidden">
+              <div className={`h-full ${barColor}`} style={{ width: `${pct}%` }} />
+            </div>
+            <span className="w-8 shrink-0 text-right tabular-nums text-gray-600 text-[11px]">{v}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function MAIEBreakdownCard({ title, items, keyField, barColor, emptyLabel }) {
+  const [open, setOpen] = useState(true)
+  const total = (items || []).reduce((s, it) => s + (it.count || 0), 0)
+  return (
+    <div className="rounded-lg border border-gray-100 bg-white overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-left bg-gray-50 border-b border-gray-100"
+      >
+        <span className="text-[11px] font-bold uppercase tracking-wider text-gray-600">{title}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[11px] tabular-nums text-gray-500">{total} total</span>
+          <span className="text-gray-300 text-[10px]">{open ? '▲' : '▼'}</span>
+        </div>
+      </button>
+      {open && (
+        <div className="px-3 py-3">
+          <MAIEBreakdownBar items={items} keyField={keyField} barColor={barColor} emptyLabel={emptyLabel} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Lead Sources section ──────────────────────────────────────────────────────
 
 function LeadSourcesSection({ leadSources, onRefresh }) {
@@ -311,8 +385,79 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
         ))}
       </div>
 
-      <p className="mt-3 text-[11px] text-gray-400 leading-snug">
-        Targets 8 TikTok hashtags · Runs every 3 hours · High-intent leads (score ≥ 70) auto-appear in Hot Leads queue
+      {/* ── Phase 33 — MAIE Intelligence Panels ───────────────────────────── */}
+      <div className="mt-5 pt-5 border-t border-dashed border-gray-200">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">
+            MAIE Intelligence
+          </span>
+          <span className="rounded-full bg-emerald-50 text-emerald-600 px-2 py-0.5 text-[9px] font-semibold">
+            Acquisition Intelligence Engine
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
+          <MAIEStatCard
+            label="Nigerian Leads"
+            value={(leadSources?.nigerianTotal ?? 0).toLocaleString()}
+            color="emerald"
+            sub="confidence ≥ 30"
+          />
+          <MAIEStatCard
+            label="High Heat (≥70)"
+            value={(leadSources?.highHeatTotal ?? 0).toLocaleString()}
+            color="rose"
+            sub="all-time"
+          />
+          <MAIEStatCard
+            label="Academy Funnel"
+            value={(leadSources?.academyLeadCount ?? 0).toLocaleString()}
+            color="violet"
+            sub="reseller / business"
+          />
+          <MAIEStatCard
+            label="Consult Funnel"
+            value={(leadSources?.consultLeadCount ?? 0).toLocaleString()}
+            color="sky"
+            sub="seeking expert"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <MAIEBreakdownCard
+            title="Lead Segments"
+            items={leadSources?.segmentBreakdown}
+            keyField="segment"
+            barColor="bg-teal-400"
+            emptyLabel="Run a cycle to populate segments"
+          />
+          <MAIEBreakdownCard
+            title="Top Nigerian Cities"
+            items={leadSources?.cityBreakdown}
+            keyField="city"
+            barColor="bg-emerald-400"
+            emptyLabel="No city signals detected yet"
+          />
+          <MAIEBreakdownCard
+            title="Rejection Reasons (last 7d)"
+            items={leadSources?.rejectionBreakdown}
+            keyField="reason"
+            barColor="bg-rose-400"
+            emptyLabel="No rejections recorded"
+          />
+          <MAIEBreakdownCard
+            title="Pain Categories — Hot Leads"
+            items={leadSources?.painBreakdownByConcern}
+            keyField="concern"
+            barColor="bg-amber-400"
+            emptyLabel="No high-heat leads yet"
+          />
+        </div>
+      </div>
+
+      <p className="mt-4 text-[11px] text-gray-400 leading-snug">
+        MAIE: TikTok scrape → Nigeria detect → psychology score → heat engine → segmentation → outreach.
+        Hot leads (heat ≥ 70) auto-queued for outreach.
       </p>
     </SectionBox>
   )

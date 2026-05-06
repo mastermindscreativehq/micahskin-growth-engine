@@ -266,6 +266,12 @@ async function getCommandCenter() {
   const leadSources = await safeSection('leadSources', {
     scrapedToday: 0, highIntentToday: 0, pendingOutreach: 0,
     processedTotal: 0, totalScraped: 0,
+    // Phase 33 — MAIE headline counters
+    nigerianTotal: 0, highHeatTotal: 0,
+    academyLeadCount: 0, consultLeadCount: 0,
+    // Phase 33 — MAIE breakdowns
+    segmentBreakdown: [], cityBreakdown: [],
+    rejectionBreakdown: [], painBreakdownByConcern: [],
     engineStatus: 'idle',
     acquisitionStatus: {
       state: 'idle', running: false, pendingRunId: null,
