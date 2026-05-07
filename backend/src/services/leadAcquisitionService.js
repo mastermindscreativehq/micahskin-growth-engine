@@ -3,15 +3,17 @@
 /**
  * leadAcquisitionService.js
  * Phase 32 — Lead Acquisition Engine
+ * Phase 35 — Pain-point-first Nigerian discovery (was hashtag-first)
  *
- * Every 3 hours:
- *   1. Trigger Apify TikTok hashtag scraper
- *   2. Poll until complete (on next tick)
- *   3. Filter for pain / intent signals
- *   4. Score 0–100 and classify concern type
- *   5. Store in scraped_leads table
- *   6. Inject scoring >= 50 into the leads table
- *   7. Queue scoring >= 70 for manual outreach (appears in Command Center hot queue)
+ * Every 6 hours:
+ *   1. Pick the next un-scraped pain-point batch (24h reuse block)
+ *   2. Trigger Apify TikTok scraper with that batch (≤150 items per run)
+ *   3. Poll until complete (on next tick)
+ *   4. Filter for pain / intent signals
+ *   5. Score 0–100 and classify concern type
+ *   6. Store in scraped_leads table
+ *   7. Inject scoring >= 50 into the leads table
+ *   8. Queue scoring >= 70 for manual outreach (appears in Command Center hot queue)
  */
 
 const prisma = require('../lib/prisma')
@@ -21,6 +23,10 @@ const {
   fetchTiktokItems,
   normaliseTiktokItem,
 } = require('./tiktokScraperService')
+const {
+  getNextPainBatch,
+  getRecentBatchSnapshot,
+} = require('../config/painPointQueries')
 
 // ── Phase 33 — MAIE intelligence services ─────────────────────────────────────
 const nigeriaSignal       = require('./nigeriaSignalService')
@@ -39,6 +45,48 @@ const mceWhatsAppBridge = require('./mce/whatsappBridgeService')
 const REJECT_NON_NIGERIAN =
   String(process.env.MAIE_REJECT_NON_NIGERIAN || '').toLowerCase() === 'true'
 
+// ── Phase 35 — Credit-protection config ───────────────────────────────────────
+//
+// Resolved once on module load so every cycle uses the same numbers and the
+// dashboard can advertise them. Defaults are deliberately conservative — the
+// goal is to stop burning Apify credits, not to maximise throughput.
+
+const INTERVAL_HOURS_DEFAULT = 6
+const MAX_ITEMS_DEFAULT      = 100
+const MAX_ITEMS_HARD_CEILING = 150
+
+function _resolveIntervalHours() {
+  const raw = Number(process.env.LEAD_ACQUISITION_INTERVAL_HOURS)
+  if (!Number.isFinite(raw) || raw <= 0) return INTERVAL_HOURS_DEFAULT
+  // Clamp 1h..24h — anything outside that range is misconfiguration.
+  return Math.min(24, Math.max(1, Math.round(raw)))
+}
+
+function _resolveMaxItems() {
+  const raw = Number(process.env.APIFY_MAX_ITEMS_PER_RUN)
+  if (!Number.isFinite(raw) || raw <= 0) return MAX_ITEMS_DEFAULT
+  return Math.min(MAX_ITEMS_HARD_CEILING, Math.max(30, Math.round(raw)))
+}
+
+function _resolveAcquisitionMode() {
+  const raw = String(process.env.ACQUISITION_MODE || 'pain_point_first').toLowerCase().trim()
+  return raw === 'hashtag_backup' ? 'hashtag_backup' : 'pain_point_first'
+}
+
+const INTERVAL_HOURS    = _resolveIntervalHours()
+const INTERVAL_MS       = INTERVAL_HOURS * 60 * 60 * 1000
+const MAX_ITEMS_PER_RUN = _resolveMaxItems()
+const ACQUISITION_MODE  = _resolveAcquisitionMode()
+const CREDITS_PROTECTION_ACTIVE =
+  INTERVAL_HOURS >= INTERVAL_HOURS_DEFAULT && MAX_ITEMS_PER_RUN <= MAX_ITEMS_HARD_CEILING
+
+console.log(
+  `[LeadAcquisition] Config — mode=${ACQUISITION_MODE}` +
+  ` intervalHours=${INTERVAL_HOURS}` +
+  ` maxItemsPerRun=${MAX_ITEMS_PER_RUN}` +
+  ` creditsProtection=${CREDITS_PROTECTION_ACTIVE ? 'active' : 'relaxed'}`,
+)
+
 // ── In-memory run state ───────────────────────────────────────────────────────
 //
 // Explicit state machine — replaces the old "_pendingRunId ? running : idle"
@@ -54,11 +102,23 @@ const STATE = {
   lastRunFinishedAt: null,     // Date | null — when it ended (any terminal status)
   lastStatus:        null,     // last terminal Apify status string
   lastStale:         false,    // true if the last reset was a failsafe-timeout reset
+  // ── Phase 35 — batch + cycle visibility ────────────────────────────────────
+  lastBatch:         null,     // { mode, batch:[], phrases:[], key, ranAt }
+  itemsThisCycle:    0,        // raw items fetched in the current/most-recent run
+  nextRunAt:         null,     // Date — when scheduler will fire next
 }
 
 // Failsafe — anything still flagged "running" beyond this is treated as stale
 // and force-reset to idle, regardless of whether Apify ever reports back.
 const STALE_TIMEOUT_MS = 15 * 60 * 1000   // 15 min
+
+function _refreshNextRunAt() {
+  if (STATE.lastRunAt) {
+    STATE.nextRunAt = new Date(STATE.lastRunAt.getTime() + INTERVAL_MS)
+  } else {
+    STATE.nextRunAt = new Date(Date.now() + INTERVAL_MS)
+  }
+}
 
 function _resetIdle({ stale = false } = {}) {
   STATE.state             = 'idle'
@@ -67,6 +127,7 @@ function _resetIdle({ stale = false } = {}) {
   STATE.runStartedAt      = null
   STATE.lastRunFinishedAt = new Date()
   STATE.lastStale         = stale
+  _refreshNextRunAt()
 }
 
 function _markCompleted() {
@@ -77,6 +138,7 @@ function _markCompleted() {
   STATE.lastRunFinishedAt = new Date()
   STATE.lastStatus        = 'SUCCEEDED'
   STATE.lastStale         = false
+  _refreshNextRunAt()
 }
 
 function _markFailed(status) {
@@ -87,6 +149,7 @@ function _markFailed(status) {
   STATE.lastRunFinishedAt = new Date()
   STATE.lastStatus        = status || 'FAILED'
   STATE.lastStale         = false
+  _refreshNextRunAt()
 }
 
 function _checkStale() {
@@ -587,9 +650,18 @@ async function runAcquisitionCycle() {
           ` defaultDatasetId=${defaultDatasetId}`,
         )
         const rawItems = await fetchTiktokItems(defaultDatasetId)
-        console.log(`[LeadAcquisition] Raw item count from dataset: ${rawItems.length}`)
-        const result   = await processRawItems(rawItems)
-        console.log('[LeadAcquisition] Cycle complete:', result)
+        STATE.itemsThisCycle = rawItems.length
+        console.log(
+          `[LeadAcquisition] Raw item count from dataset: ${rawItems.length}` +
+          ` (cap=${MAX_ITEMS_PER_RUN})`,
+        )
+        const result = await processRawItems(rawItems)
+        console.log(
+          `[LeadAcquisition] Cycle complete — fetched=${rawItems.length}` +
+          ` stored=${result.stored} accepted=${result.accepted}` +
+          ` injected=${result.injected} queued=${result.queued}` +
+          ` rejected=${result.rejected}`,
+        )
         _markCompleted()
 
       } else if (status === 'SUCCEEDED' && !defaultDatasetId) {
@@ -604,16 +676,55 @@ async function runAcquisitionCycle() {
       return
     }
 
-    // No pending run — trigger a new cycle
-    console.log('[LeadAcquisition] Triggering TikTok hashtag scrape...')
-    const { runId } = await triggerTiktokHashtagScrape()
+    // ── No pending run — trigger a new cycle ──────────────────────────────────
+    //
+    // Phase 35 — pain-point-first by default. Hashtag pool stays available as a
+    // backup channel by setting ACQUISITION_MODE=hashtag_backup.
+
+    let triggerArg, modeLabel, painPicked
+    if (ACQUISITION_MODE === 'hashtag_backup') {
+      triggerArg = 'priority'           // delegate batch selection to hashtag config
+      modeLabel  = 'hashtag_backup'
+      console.log('[LeadAcquisition] Mode=hashtag_backup — using rotating hashtag pool')
+    } else {
+      painPicked = getNextPainBatch()
+      triggerArg = painPicked.batch
+      modeLabel  = 'pain_point_first'
+      console.log(
+        `[LeadAcquisition] Mode=pain_point_first — batch (${painPicked.batch.length}):` +
+        ` [${painPicked.phrases.join(' | ')}]` +
+        (painPicked.forced ? ' (forced — all batches recently used)' : ''),
+      )
+    }
+
+    const { runId, hashtags, maxItems, runMode } = await triggerTiktokHashtagScrape(
+      triggerArg,
+      { maxItems: MAX_ITEMS_PER_RUN, modeLabel },
+    )
+
     const now = new Date()
-    STATE.state        = 'running'
-    STATE.running      = true
-    STATE.pendingRunId = runId
-    STATE.runStartedAt = now
-    STATE.lastRunAt    = now
-    STATE.lastStale    = false
+    STATE.state          = 'running'
+    STATE.running        = true
+    STATE.pendingRunId   = runId
+    STATE.runStartedAt   = now
+    STATE.lastRunAt      = now
+    STATE.lastStale      = false
+    STATE.itemsThisCycle = 0
+    STATE.lastBatch      = {
+      mode:     modeLabel,
+      runMode,                                     // resolved by scraper (e.g. 'priority' fallback)
+      hashtags: hashtags || [],
+      phrases:  painPicked ? painPicked.phrases : (hashtags || []),
+      key:      painPicked ? painPicked.key : null,
+      maxItems,
+      ranAt:    now.toISOString(),
+    }
+    STATE.nextRunAt = new Date(now.getTime() + INTERVAL_MS)
+    console.log(
+      `[LeadAcquisition] Run queued — runId=${runId}` +
+      ` mode=${modeLabel} maxItems=${maxItems}` +
+      ` nextRunAt=${STATE.nextRunAt.toISOString()}`,
+    )
 
   } catch (err) {
     console.error('[LeadAcquisition] Cycle error:', err.message)
@@ -622,13 +733,17 @@ async function runAcquisitionCycle() {
 }
 
 function startLeadAcquisitionEngine() {
-  const INTERVAL_MS = 3 * 60 * 60 * 1000   // 3 hours
-
   // First cycle after 3 minutes (let server boot + other services start)
-  setTimeout(runAcquisitionCycle, 3 * 60 * 1000)
+  const firstRunAt = new Date(Date.now() + 3 * 60 * 1000)
+  STATE.nextRunAt = firstRunAt
 
+  setTimeout(runAcquisitionCycle, 3 * 60 * 1000)
   setInterval(runAcquisitionCycle, INTERVAL_MS)
-  console.log('[LeadAcquisition] Engine started — 3-hour cycle, first run in 3 min')
+
+  console.log(
+    `[LeadAcquisition] Engine started — ${INTERVAL_HOURS}-hour cycle,` +
+    ` first run in 3 min (mode=${ACQUISITION_MODE}, maxItems=${MAX_ITEMS_PER_RUN})`,
+  )
 }
 
 // ── Stats (used by Command Center) ───────────────────────────────────────────
@@ -741,6 +856,16 @@ async function getAcquisitionStats() {
     lastRunFinishedAt: STATE.lastRunFinishedAt ? STATE.lastRunFinishedAt.toISOString() : null,
     lastStatus:        STATE.lastStatus,
     stale:             STATE.lastStale,
+
+    // ── Phase 35 — pain-point + credit-protection visibility ───────────────
+    mode:                ACQUISITION_MODE,         // 'pain_point_first' | 'hashtag_backup'
+    intervalHours:       INTERVAL_HOURS,           // e.g. 6
+    maxItemsPerRun:      MAX_ITEMS_PER_RUN,        // e.g. 100
+    creditsProtection:   CREDITS_PROTECTION_ACTIVE ? 'active' : 'relaxed',
+    nextRunAt:           STATE.nextRunAt ? STATE.nextRunAt.toISOString() : null,
+    itemsThisCycle:      STATE.itemsThisCycle ?? 0,
+    lastBatch:           STATE.lastBatch,
+    recentBatchesBlocked: getRecentBatchSnapshot().length,
   }
 
   return {

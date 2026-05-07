@@ -317,8 +317,30 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
     state: 'idle', running: false, pendingRunId: null,
     runStartedAt: null, lastRunAt: null, lastRunFinishedAt: null,
     lastStatus: null, stale: false,
+    mode: 'pain_point_first', intervalHours: 6, maxItemsPerRun: 100,
+    creditsProtection: 'active', nextRunAt: null, itemsThisCycle: 0,
+    lastBatch: null, recentBatchesBlocked: 0,
   }
   const isRunning = status.running === true || !!status.pendingRunId
+
+  // ── Phase 35 — Acquisition mode + credit protection display ──────────────
+  const mode             = status.mode            || 'pain_point_first'
+  const intervalHours    = status.intervalHours   || 6
+  const maxItemsPerRun   = status.maxItemsPerRun  || 100
+  const creditsProtect   = status.creditsProtection || 'active'
+  const itemsThisCycle   = status.itemsThisCycle ?? 0
+  const recentBlocked    = status.recentBatchesBlocked ?? 0
+  const lastBatch        = status.lastBatch
+  const lastBatchPhrases = lastBatch?.phrases?.length
+    ? lastBatch.phrases
+    : (lastBatch?.hashtags || [])
+  const modeLabel        = mode === 'pain_point_first' ? 'Pain-point first' : 'Hashtag backup'
+  const modeBadgeClass   = mode === 'pain_point_first'
+    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    : 'bg-amber-50 text-amber-700 border-amber-200'
+  const creditsBadgeClass = creditsProtect === 'active'
+    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    : 'bg-rose-50 text-rose-700 border-rose-200'
 
   const dotClass = isRunning
     ? 'bg-amber-400 animate-pulse'
@@ -368,6 +390,40 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
         <span>Finished: <span className="text-gray-700 tabular-nums">{status.lastRunFinishedAt ? fmtDT(status.lastRunFinishedAt) : '—'}</span></span>
         <span>Last status: <span className="text-gray-700">{status.lastStatus ?? '—'}</span></span>
         <span>Total injected: <span className="text-gray-700 tabular-nums">{(leadSources?.processedTotal ?? 0).toLocaleString()}</span></span>
+      </div>
+
+      {/* ── Phase 35 — Acquisition mode + credit protection panel ─────────── */}
+      <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${modeBadgeClass}`}>
+            Mode: {modeLabel}
+          </span>
+          <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold">
+            Runs every {intervalHours} hours
+          </span>
+          <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums">
+            Max {maxItemsPerRun} items / run
+          </span>
+          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${creditsBadgeClass}`}>
+            Credits protection: {creditsProtect}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-gray-500 sm:grid-cols-4">
+          <span>Next run: <span className="text-gray-700 tabular-nums">{status.nextRunAt ? fmtDT(status.nextRunAt) : '—'}</span></span>
+          <span>Items this cycle: <span className="text-gray-700 tabular-nums">{itemsThisCycle}</span></span>
+          <span>24h blocked batches: <span className="text-gray-700 tabular-nums">{recentBlocked}</span></span>
+          <span>Hashtag fallback: <span className="text-gray-700">{mode === 'pain_point_first' ? 'backup only' : 'active'}</span></span>
+        </div>
+
+        <div className="mt-2 text-[11px] text-gray-500">
+          Last query batch:{' '}
+          {lastBatchPhrases.length === 0 ? (
+            <span className="text-gray-400">— (no run yet)</span>
+          ) : (
+            <span className="text-gray-700">{lastBatchPhrases.slice(0, 10).join(' · ')}</span>
+          )}
+        </div>
       </div>
 
       {status.stale && (

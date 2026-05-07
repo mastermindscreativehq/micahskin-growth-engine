@@ -82,12 +82,37 @@ const BATCH_SIZE = 10   // 8–12 per Apify run; 10 is the safe midpoint
 
 let _batchIndex = 0
 
+// 24h reuse-block memory — keyed by sorted-canonical batch string so the
+// hashtag-backup channel never re-scrapes the same set within a day.
+const _recentHashtagBatches = new Map()
+const HASHTAG_REUSE_BLOCK_MS = 24 * 60 * 60 * 1000
+
+function _canon(arr) {
+  return [...arr].sort().join('|')
+}
+
+function _hashtagBatchUsedRecently(key) {
+  const ts = _recentHashtagBatches.get(key)
+  if (!ts) return false
+  if (Date.now() - ts > HASHTAG_REUSE_BLOCK_MS) {
+    _recentHashtagBatches.delete(key)
+    return false
+  }
+  return true
+}
+
+function _pickBatch(pool, startIdx) {
+  const batch = []
+  for (let i = 0; i < BATCH_SIZE; i++) batch.push(pool[(startIdx + i) % pool.length])
+  return batch
+}
+
 /**
  * getHashtagsForRun(mode)
  *
  * Returns a de-overlapping rotating batch of BATCH_SIZE hashtags each call.
- * The rotation ensures different tags are scraped on consecutive 30-min cycles
- * without repeating the same set every run.
+ * Skips batches scraped within the last 24h so the backup channel keeps
+ * rotating instead of replaying the same tags.
  *
  * mode:
  *   'priority' (default) — rotate through PRIORITY_HASHTAGS (Tier 1 + 2)
@@ -101,21 +126,43 @@ function getHashtagsForRun(mode = 'priority') {
   if (mode === 'full') return ALL_HASHTAGS
 
   const pool = mode === 'all' ? ALL_HASHTAGS : PRIORITY_HASHTAGS
+  const totalOffsets = Math.max(1, Math.ceil(pool.length / BATCH_SIZE))
 
-  const start = (_batchIndex * BATCH_SIZE) % pool.length
-  const batch = []
-  for (let i = 0; i < BATCH_SIZE; i++) {
-    batch.push(pool[(start + i) % pool.length])
+  let chosenBatch = null
+  let chosenStart = 0
+  let chosenIndex = _batchIndex
+
+  for (let attempt = 0; attempt < totalOffsets; attempt++) {
+    const idx   = _batchIndex + attempt
+    const start = (idx * BATCH_SIZE) % pool.length
+    const batch = _pickBatch(pool, start)
+    const key   = _canon(batch)
+    if (!_hashtagBatchUsedRecently(key)) {
+      chosenBatch = batch
+      chosenStart = start
+      chosenIndex = idx
+      _recentHashtagBatches.set(key, Date.now())
+      break
+    }
   }
 
-  const currentBatch = _batchIndex
-  _batchIndex++
+  // Fallthrough — every offset was used in last 24h. Force-rotate.
+  if (!chosenBatch) {
+    chosenStart  = (_batchIndex * BATCH_SIZE) % pool.length
+    chosenBatch  = _pickBatch(pool, chosenStart)
+    chosenIndex  = _batchIndex
+    _recentHashtagBatches.set(_canon(chosenBatch), Date.now())
+  }
+
+  _batchIndex = chosenIndex + 1
 
   console.log(
-    `[HashtagConfig] Batch #${currentBatch} selected — mode=${mode} start=${start} pool_size=${pool.length}`,
+    `[HashtagConfig] Batch #${chosenIndex} selected — mode=${mode}` +
+    ` start=${chosenStart} pool_size=${pool.length}` +
+    ` blocked_recent=${_recentHashtagBatches.size}`,
   )
 
-  return batch
+  return chosenBatch
 }
 
 module.exports = {

@@ -49,6 +49,10 @@ router.get('/command-center', async (req, res) => {
             state: 'idle', running: false, pendingRunId: null,
             runStartedAt: null, lastRunAt: null, lastRunFinishedAt: null,
             lastStatus: null, stale: false,
+            // Phase 35 — credit protection + pain-point fields
+            mode: 'pain_point_first', intervalHours: 6, maxItemsPerRun: 100,
+            creditsProtection: 'active', nextRunAt: null, itemsThisCycle: 0,
+            lastBatch: null, recentBatchesBlocked: 0,
           },
         },
         // Phase 34 (MCE) — fallback shape so frontend never breaks

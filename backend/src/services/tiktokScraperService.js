@@ -15,15 +15,29 @@ const APIFY_BASE = 'https://api.apify.com/v2'
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
+// Phase 35 — Apify credit cap. Default 100, hard ceiling 150 even when env
+// var is configured higher. Anything below 30 is widened to 30 to keep batches
+// useful.
+const MAX_ITEMS_HARD_CEILING = 150
+const MAX_ITEMS_DEFAULT      = 100
+function _resolveMaxItems(override) {
+  const raw = Number(override ?? process.env.APIFY_MAX_ITEMS_PER_RUN ?? MAX_ITEMS_DEFAULT)
+  if (!Number.isFinite(raw) || raw <= 0) return MAX_ITEMS_DEFAULT
+  return Math.min(MAX_ITEMS_HARD_CEILING, Math.max(30, Math.round(raw)))
+}
+
 /**
  * triggerTiktokHashtagScrape
  *
  * @param {string[]|string} [hashtagsOrMode='priority']
  *   - String mode ('priority' | 'all' | 'full'): selects + rotates a batch from config
- *   - String array: uses those hashtags directly (manual / testing)
+ *   - String array: uses those hashtags directly (manual / testing / pain-point batches)
  *   Batching is enforced: at most 12 hashtags are ever sent to Apify in one run.
+ * @param {object} [opts]
+ * @param {number} [opts.maxItems]   Per-run item cap (defaults to APIFY_MAX_ITEMS_PER_RUN env, 100)
+ * @param {string} [opts.modeLabel]  Optional label for the diagnostic log (e.g. 'pain_point_first')
  */
-async function triggerTiktokHashtagScrape(hashtagsOrMode = 'priority') {
+async function triggerTiktokHashtagScrape(hashtagsOrMode = 'priority', opts = {}) {
   const token = process.env.APIFY_API_TOKEN
   if (!token) throw _err('APIFY_API_TOKEN not configured', 500)
 
@@ -32,28 +46,33 @@ async function triggerTiktokHashtagScrape(hashtagsOrMode = 'priority') {
   if (Array.isArray(hashtagsOrMode)) {
     // Caller passed explicit list — clamp to 12 to stay within safe batch window
     selectedHashtags = hashtagsOrMode.slice(0, 12).map(h => h.replace(/^#/, ''))
-    runMode = 'custom'
+    runMode = opts.modeLabel || 'custom'
   } else {
     runMode = hashtagsOrMode || 'priority'
     selectedHashtags = getHashtagsForRun(runMode)
   }
 
-  const actorId = process.env.APIFY_TIKTOK_ACTOR_ID || 'clockworks/tiktok-hashtag-scraper'
+  const actorId   = process.env.APIFY_TIKTOK_ACTOR_ID || 'clockworks/tiktok-hashtag-scraper'
+  const maxItems  = _resolveMaxItems(opts.maxItems)
+  // Spread item budget across the batch so the actor doesn't burn credits on
+  // a single hashtag. Never go below 5 items per page.
+  const perPage   = Math.max(5, Math.floor(maxItems / Math.max(1, selectedHashtags.length)))
 
   // ── Pre-run diagnostic log ──────────────────────────────────────────────────
   console.log('[TikTok Scraper] ─────────────────────────────────────────')
-  console.log(`[TikTok Scraper] Actor ID    : ${actorId}`)
-  console.log(`[TikTok Scraper] Run mode    : ${runMode}`)
+  console.log(`[TikTok Scraper] Actor ID     : ${actorId}`)
+  console.log(`[TikTok Scraper] Run mode     : ${runMode}`)
   console.log(`[TikTok Scraper] Hashtag count: ${selectedHashtags.length}`)
   console.log(`[TikTok Scraper] Hashtags     : ${selectedHashtags.join(', ')}`)
+  console.log(`[TikTok Scraper] maxItems     : ${maxItems}  resultsPerPage: ${perPage}`)
   console.log('[TikTok Scraper] ─────────────────────────────────────────')
 
   const url = `${APIFY_BASE}/acts/${encodeURIComponent(actorId)}/runs?token=${encodeURIComponent(token)}`
 
   const input = {
     hashtags:                      selectedHashtags,
-    resultsPerPage:                20,
-    maxResults:                    60,
+    resultsPerPage:                perPage,
+    maxResults:                    maxItems,
     shouldDownloadVideos:          false,
     shouldDownloadCovers:          false,
     shouldDownloadSubtitles:       false,
@@ -79,7 +98,13 @@ async function triggerTiktokHashtagScrape(hashtagsOrMode = 'priority') {
 
   const run = result.data
   console.log(`[TikTok Scraper] Run started — ID: ${run.id}, status: ${run.status}`)
-  return { runId: run.id, status: run.status }
+  return {
+    runId:    run.id,
+    status:   run.status,
+    hashtags: selectedHashtags,
+    runMode,
+    maxItems,
+  }
 }
 
 async function getTiktokRunStatus(runId) {
