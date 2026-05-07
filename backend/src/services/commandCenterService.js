@@ -277,6 +277,10 @@ async function getCommandCenter() {
     // Phase 33 — MAIE breakdowns
     segmentBreakdown: [], cityBreakdown: [],
     rejectionBreakdown: [], painBreakdownByConcern: [],
+    // Phase 35 — Pain Signal Classifier counters + breakdowns
+    painSignalLeads: 0, buyerReadyLeads: 0, hotBuyerLeads: 0, rejectedLowQuality: 0,
+    topPainPhrases: [], topBuyerPhrases: [],
+    actionBreakdown: [], qualityBreakdown: [], stageBreakdown: [],
     engineStatus: 'idle',
     acquisitionStatus: {
       state: 'idle', running: false, pendingRunId: null,

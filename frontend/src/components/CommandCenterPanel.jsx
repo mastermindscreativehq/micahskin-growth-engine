@@ -518,6 +518,82 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
         MAIE: TikTok scrape → Nigeria detect → psychology score → heat engine → segmentation → outreach.
         Hot leads (heat ≥ 70) auto-queued for outreach.
       </p>
+
+      {/* ── Phase 35 — Pain Signal Classifier ─────────────────────────── */}
+      <div className="mt-5 pt-5 border-t border-dashed border-gray-200">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600">
+            Pain Signal Classifier
+          </span>
+          <span className="rounded-full bg-rose-50 text-rose-600 px-2 py-0.5 text-[9px] font-semibold">
+            Buyer Readiness Engine
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
+          <MAIEStatCard
+            label="Pain Signal Leads"
+            value={(leadSources?.painSignalLeads ?? 0).toLocaleString()}
+            color="rose"
+            sub="painScore ≥ 25"
+          />
+          <MAIEStatCard
+            label="Buyer Ready Leads"
+            value={(leadSources?.buyerReadyLeads ?? 0).toLocaleString()}
+            color="emerald"
+            sub="readiness ≥ 45"
+          />
+          <MAIEStatCard
+            label="Hot Buyer Leads"
+            value={(leadSources?.hotBuyerLeads ?? 0).toLocaleString()}
+            color="amber"
+            sub="quality = hot"
+          />
+          <MAIEStatCard
+            label="Rejected Low Quality"
+            value={(leadSources?.rejectedLowQuality ?? 0).toLocaleString()}
+            color="gray"
+            sub="spam / fake / generic"
+          />
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <MAIEBreakdownCard
+            title="Top Pain Phrases (last 30d)"
+            items={leadSources?.topPainPhrases}
+            keyField="phrase"
+            barColor="bg-rose-400"
+            emptyLabel="No pain phrases captured yet"
+          />
+          <MAIEBreakdownCard
+            title="Top Buyer Phrases (last 30d)"
+            items={leadSources?.topBuyerPhrases}
+            keyField="phrase"
+            barColor="bg-emerald-400"
+            emptyLabel="No buyer phrases captured yet"
+          />
+          <MAIEBreakdownCard
+            title="Recommended Actions"
+            items={leadSources?.actionBreakdown}
+            keyField="action"
+            barColor="bg-violet-400"
+            emptyLabel="Run a cycle to populate actions"
+          />
+          <MAIEBreakdownCard
+            title="Buying Stage"
+            items={leadSources?.stageBreakdown}
+            keyField="stage"
+            barColor="bg-sky-400"
+            emptyLabel="No buying-stage data yet"
+          />
+        </div>
+
+        <p className="mt-4 text-[11px] text-gray-400 leading-snug">
+          Phase 35: classifies emotional desperation + buying intent — final score combines
+          pain (35%), buyer readiness (35%), emotional pain (20%), Nigeria confidence (10%).
+          Hot ≥ 70 routes to outreach; reject filters spam, emoji-only, brand promo.
+        </p>
+      </div>
     </SectionBox>
   )
 }

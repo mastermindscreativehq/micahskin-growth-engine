@@ -39,6 +39,11 @@ const outreachIntelligence = require('./outreachIntelligenceService')
 const mceRouter         = require('./mce/conversationRouter')
 const mceWhatsAppBridge = require('./mce/whatsappBridgeService')
 
+// ── Phase 35 — Pain Signal Classifier + buyer readiness + quality gate ───────
+const painSignalClassifier = require('./painSignalClassifierService')
+const buyerReadiness       = require('./buyerReadinessService')
+const leadQualityGate      = require('./leadQualityGateService')
+
 // Toggleable behaviour — when MAIE_REJECT_NON_NIGERIAN=true, leads with
 // nigeriaConfidence < 18 are auto-rejected even if heat is high. Default is
 // false so we don't suddenly reject existing global English-language traffic.
@@ -362,6 +367,14 @@ async function processRawItems(rawItems) {
     topCities:   {},
     topPainTags: {},
     topAngles:   {},
+    // ── Phase 35 — pain signal + buyer readiness aggregations ─────────────
+    painSignalLeads:  0,   // painSignalScore >= 25
+    buyerReadyLeads:  0,   // buyerReadinessScore >= 45
+    hotBuyerLeads:    0,   // leadQuality === 'hot'
+    rejectedLowQuality: 0, // leadQuality === 'reject' from quality gate
+    topPainPhrases:   {},
+    topBuyerPhrases: {},
+    actionBreakdown:  {},
   }
 
   for (const raw of rawItems) {
@@ -423,6 +436,28 @@ async function processRawItems(rawItems) {
       ` segment=${segmentResult.segment}` +
       ` confidence=${segmentResult.segmentConfidence}` +
       ` secondary=[${segmentResult.secondarySegments.join(',')}]`,
+    )
+
+    // ── Phase 35 — Pain Signal Classifier ────────────────────────────────
+    // Runs after MAIE psychology/segmentation, before the heat decision and
+    // persistence. Pure functions, no I/O — adds ~1ms per item.
+    const painClassification = painSignalClassifier.classify(corpus)
+    const buyerResult = buyerReadiness.evaluate(corpus, {
+      painClassification,
+      segmentation: segmentResult,
+    })
+    const qualityGate = leadQualityGate.evaluate({
+      painClassification,
+      buyerReadiness: buyerResult,
+      nigeriaSignal:  ngResult,
+      segmentation:   segmentResult,
+    })
+    console.log(
+      `[PainSignal] @${norm.username || 'unknown'}` +
+      ` score=${painClassification.painSignalScore}` +
+      ` buyer=${buyerResult.buyerReadinessScore}` +
+      ` quality=${qualityGate.leadQuality}` +
+      ` action=${qualityGate.recommendedAction}`,
     )
 
     const heatResult = leadHeatEngine.evaluate({
@@ -511,6 +546,18 @@ async function processRawItems(rawItems) {
 
           aiSummary:          outreach.aiSummary,
           outreachAngle:      outreach.outreachAngle,
+
+          // ── Phase 35 — Pain Signal Classifier persistence ────────────────
+          painSignalScore:       Math.round(painClassification.painSignalScore),
+          buyerReadinessScore:   Math.round(buyerResult.buyerReadinessScore),
+          emotionalPainLevel:    Math.round(painClassification.emotionalPainLevel),
+          problemAwarenessLevel: painClassification.problemAwarenessLevel,
+          buyingStage:           buyerResult.buyingStage,
+          matchedPainSignals:    painClassification.matchedPainSignals,
+          matchedBuyerSignals:   buyerResult.matchedBuyerSignals,
+          leadQuality:           qualityGate.leadQuality,
+          leadQualityReason:     qualityGate.leadQualityReason,
+          recommendedAction:     qualityGate.recommendedAction,
         },
       })
       stats.stored++
@@ -527,6 +574,30 @@ async function processRawItems(rawItems) {
       }
       stats.topAngles[outreach.outreachAngle] =
         (stats.topAngles[outreach.outreachAngle] || 0) + 1
+
+      // ── Phase 35 — Pain Signal aggregations ────────────────────────────
+      if (painClassification.painSignalScore >= 25) stats.painSignalLeads++
+      if (buyerResult.buyerReadinessScore   >= 45) stats.buyerReadyLeads++
+      if (qualityGate.leadQuality === 'hot')        stats.hotBuyerLeads++
+      if (qualityGate.leadQuality === 'reject')     stats.rejectedLowQuality++
+
+      for (const phrase of painClassification.painPhrases) {
+        stats.topPainPhrases[phrase] = (stats.topPainPhrases[phrase] || 0) + 1
+      }
+      for (const phrase of buyerResult.buyerPhrases) {
+        stats.topBuyerPhrases[phrase] = (stats.topBuyerPhrases[phrase] || 0) + 1
+      }
+      stats.actionBreakdown[qualityGate.recommendedAction] =
+        (stats.actionBreakdown[qualityGate.recommendedAction] || 0) + 1
+
+      // ── Phase 35 — Lead-quality gate audit log ─────────────────────────
+      const gateOutcome = qualityGate.leadQuality === 'reject' ? 'rejected' : 'accepted'
+      console.log(
+        `[LeadQualityGate] ${gateOutcome}` +
+        ` @${norm.username || 'unknown'}` +
+        ` reason=${qualityGate.leadQualityReason}` +
+        ` final=${qualityGate.finalScore}`,
+      )
     } catch (dbErr) {
       if (dbErr.code === 'P2002') {
         stats.reasons.duplicate++
@@ -624,6 +695,15 @@ async function processRawItems(rawItems) {
   console.log('[LeadAcquisition] Top NG cities: ', topN(stats.topCities))
   console.log('[LeadAcquisition] Top pain tags: ', topN(stats.topPainTags, 8))
   console.log('[LeadAcquisition] Top angles:    ', topN(stats.topAngles))
+  // ── Phase 35 — Pain Signal Classifier summary ────────────────────────────
+  console.log(
+    `[LeadAcquisition] Pain/Buyer:    painLeads=${stats.painSignalLeads}` +
+    ` buyerReady=${stats.buyerReadyLeads} hotBuyers=${stats.hotBuyerLeads}` +
+    ` rejectedLowQuality=${stats.rejectedLowQuality}`,
+  )
+  console.log('[LeadAcquisition] Top pain phrases:  ', topN(stats.topPainPhrases, 8))
+  console.log('[LeadAcquisition] Top buyer phrases: ', topN(stats.topBuyerPhrases, 8))
+  console.log('[LeadAcquisition] Recommended action:', topN(stats.actionBreakdown))
   console.log('[LeadAcquisition] ──────────────────────────────────────')
 
   return stats
@@ -777,6 +857,114 @@ async function getAcquisitionStats() {
       prisma.scrapedLead.count({ where: { leadHeatScore: { gte: 70 } } }),
     ])
 
+  // ── Phase 35 — Pain Signal Classifier counters + breakdowns ──────────────
+  // Defensive: each query may fail if the migration hasn't run. We swallow
+  // errors and return zeros so the dashboard still renders.
+  let painSignalLeads     = 0
+  let buyerReadyLeads     = 0
+  let hotBuyerLeads       = 0
+  let rejectedLowQuality  = 0
+  let topPainPhrases      = []
+  let topBuyerPhrases     = []
+  let actionBreakdown     = []
+  let qualityBreakdown    = []
+  let stageBreakdown      = []
+  try {
+    [painSignalLeads, buyerReadyLeads, hotBuyerLeads, rejectedLowQuality] = await Promise.all([
+      prisma.scrapedLead.count({ where: { painSignalScore:     { gte: 25 } } }),
+      prisma.scrapedLead.count({ where: { buyerReadinessScore: { gte: 45 } } }),
+      prisma.scrapedLead.count({ where: { leadQuality: 'hot' } }),
+      prisma.scrapedLead.count({ where: { leadQuality: 'reject' } }),
+    ])
+
+    const [actionGroups, qualityGroups, stageGroups] = await Promise.all([
+      prisma.scrapedLead.groupBy({
+        by: ['recommendedAction'],
+        where: { recommendedAction: { not: null } },
+        _count: { _all: true },
+        orderBy: { _count: { recommendedAction: 'desc' } },
+        take: 10,
+      }),
+      prisma.scrapedLead.groupBy({
+        by: ['leadQuality'],
+        where: { leadQuality: { not: null } },
+        _count: { _all: true },
+        orderBy: { _count: { leadQuality: 'desc' } },
+        take: 10,
+      }),
+      prisma.scrapedLead.groupBy({
+        by: ['buyingStage'],
+        where: { buyingStage: { not: null } },
+        _count: { _all: true },
+        orderBy: { _count: { buyingStage: 'desc' } },
+        take: 10,
+      }),
+    ])
+
+    actionBreakdown = actionGroups.map(g => ({
+      action: g.recommendedAction, count: g._count._all,
+    }))
+    qualityBreakdown = qualityGroups.map(g => ({
+      quality: g.leadQuality, count: g._count._all,
+    }))
+    stageBreakdown = stageGroups.map(g => ({
+      stage: g.buyingStage, count: g._count._all,
+    }))
+
+    // Top pain / buyer phrases — aggregated from JSON columns. We pull the
+    // most-recent N rows and tally in memory; cheaper than a DB-side jsonb
+    // unnest and works on any Postgres version.
+    const [recentPain, recentBuyer] = await Promise.all([
+      prisma.scrapedLead.findMany({
+        where: {
+          matchedPainSignals: { not: null },
+          createdAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) },
+        },
+        select: { matchedPainSignals: true },
+        orderBy: { createdAt: 'desc' },
+        take: 500,
+      }),
+      prisma.scrapedLead.findMany({
+        where: {
+          matchedBuyerSignals: { not: null },
+          createdAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) },
+        },
+        select: { matchedBuyerSignals: true },
+        orderBy: { createdAt: 'desc' },
+        take: 500,
+      }),
+    ])
+
+    const painTally  = {}
+    const buyerTally = {}
+    for (const row of recentPain) {
+      const list = Array.isArray(row.matchedPainSignals) ? row.matchedPainSignals : []
+      for (const sig of list) {
+        const key = sig?.phrase || sig?.tag
+        if (!key) continue
+        painTally[key] = (painTally[key] || 0) + 1
+      }
+    }
+    for (const row of recentBuyer) {
+      const list = Array.isArray(row.matchedBuyerSignals) ? row.matchedBuyerSignals : []
+      for (const sig of list) {
+        const key = sig?.phrase || sig?.tag
+        if (!key) continue
+        buyerTally[key] = (buyerTally[key] || 0) + 1
+      }
+    }
+    topPainPhrases = Object.entries(painTally)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([phrase, count]) => ({ phrase, count }))
+    topBuyerPhrases = Object.entries(buyerTally)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([phrase, count]) => ({ phrase, count }))
+  } catch (err) {
+    console.warn('[LeadAcquisition] Pain-signal breakdowns unavailable:', err.message)
+  }
+
   // ── MAIE breakdowns — groupBy aggregations for the dashboard ─────────────
   // All wrapped in a defensive try block: if these columns don't exist yet
   // (i.e. migration hasn't been run), we still return the headline counters.
@@ -884,6 +1072,16 @@ async function getAcquisitionStats() {
     cityBreakdown,
     rejectionBreakdown,
     painBreakdownByConcern,
+    // ── Phase 35 — Pain Signal Classifier counters + breakdowns ──────────
+    painSignalLeads,
+    buyerReadyLeads,
+    hotBuyerLeads,
+    rejectedLowQuality,
+    topPainPhrases,
+    topBuyerPhrases,
+    actionBreakdown,
+    qualityBreakdown,
+    stageBreakdown,
     acquisitionStatus,
     // Back-compat for any older consumer — derived strictly from `running`,
     // never inferred from a lingering pendingRunId.

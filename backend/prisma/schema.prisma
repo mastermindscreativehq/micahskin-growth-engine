@@ -776,6 +776,18 @@ model ScrapedLead {
   aiSummary          String?
   outreachAngle      String?
 
+  // ── Phase 35 — Pain Signal Classifier fields ────────────────────────────
+  painSignalScore       Int?
+  buyerReadinessScore   Int?
+  emotionalPainLevel    Int?
+  problemAwarenessLevel String?
+  buyingStage           String?
+  matchedPainSignals    Json?
+  matchedBuyerSignals   Json?
+  leadQuality           String?
+  leadQualityReason     String?
+  recommendedAction     String?
+
   @@index([platform])
   @@index([processed])
   @@index([intentScore])
@@ -784,6 +796,11 @@ model ScrapedLead {
   @@index([leadSegment])
   @@index([nigeriaConfidence])
   @@index([rejectionReason])
+  @@index([leadQuality])
+  @@index([buyingStage])
+  @@index([recommendedAction])
+  @@index([painSignalScore])
+  @@index([buyerReadinessScore])
   @@map("scraped_leads")
 }
 
