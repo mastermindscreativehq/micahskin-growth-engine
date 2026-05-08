@@ -97,13 +97,15 @@ router.post('/follow-ups/resume', (req, res) => {
 })
 
 // POST /api/admin/acquisition/trigger — manual one-off scrape cycle
+// Body / query: { country: 'NG' | 'GH' | 'KE' | 'ZA' }  (default NG)
 router.post('/acquisition/trigger', async (req, res) => {
   try {
+    const country = req.body?.country || req.query?.country || 'NG'
     // Fire-and-forget — cycle is async, client gets immediate ack
-    runAcquisitionCycle().catch(err =>
+    runAcquisitionCycle({ country }).catch(err =>
       console.error('[Admin] Acquisition trigger error:', err.message)
     )
-    res.json({ success: true, message: 'Acquisition cycle triggered' })
+    res.json({ success: true, message: `Acquisition cycle triggered (country=${country})`, country })
   } catch (err) {
     console.error('[Admin] POST /acquisition/trigger:', err.message)
     res.status(500).json({ success: false, message: err.message })

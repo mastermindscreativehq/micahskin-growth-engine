@@ -2,18 +2,15 @@
 
 /**
  * leadAcquisitionService.js
- * Phase 32 — Lead Acquisition Engine
- * Phase 35 — Pain-point-first Nigerian discovery (was hashtag-first)
+ * Phase 37 — Strict Africa-first, manual-only buyer-intent acquisition.
  *
- * Every 6 hours:
- *   1. Pick the next un-scraped pain-point batch (24h reuse block)
- *   2. Trigger Apify TikTok scraper with that batch (≤150 items per run)
- *   3. Poll until complete (on next tick)
- *   4. Filter for pain / intent signals
- *   5. Score 0–100 and classify concern type
- *   6. Store in scraped_leads table
- *   7. Inject scoring >= 50 into the leads table
- *   8. Queue scoring >= 70 for manual outreach (appears in Command Center hot queue)
+ *   - No automatic / interval / startup scraping.
+ *   - Operator triggers ONE cycle at a time via POST /api/admin/acquisition/trigger.
+ *   - Country selector (Nigeria default — Ghana / Kenya / South Africa supported).
+ *   - Strict pain-point + buyer-intent batches built per country.
+ *   - Hard geo filtering: foreign-language / non-African signals are rejected.
+ *   - Inject only when buyerReadiness >= 45 OR painSignal >= 35.
+ *   - Apify caps: ≤ 3 videos / query, ≤ 10 comments / video, stop after 15 accepted leads.
  */
 
 const prisma = require('../lib/prisma')
@@ -22,118 +19,80 @@ const {
   getTiktokRunStatus,
   fetchTiktokItems,
   normaliseTiktokItem,
-  // Phase 36 — chained comments scraper
   triggerTiktokCommentsScrape,
   normaliseTiktokCommentItem,
 } = require('./tiktokScraperService')
 const {
   getNextPainBatch,
   getRecentBatchSnapshot,
+  getCountryProfile,
+  listSupportedCountries,
+  DEFAULT_COUNTRY,
 } = require('../config/painPointQueries')
 
-// ── Phase 33 — MAIE intelligence services ─────────────────────────────────────
 const nigeriaSignal       = require('./nigeriaSignalService')
 const leadPsychology      = require('./leadPsychologyService')
 const leadHeatEngine      = require('./leadHeatEngine')
 const leadSegmentation    = require('./leadSegmentationService')
 const outreachIntelligence = require('./outreachIntelligenceService')
 
-// ── Phase 34 — MCE (read MAIE outputs, never modify them) ─────────────────────
 const mceRouter         = require('./mce/conversationRouter')
 const mceWhatsAppBridge = require('./mce/whatsappBridgeService')
 
-// ── Phase 35 — Pain Signal Classifier + buyer readiness + quality gate ───────
 const painSignalClassifier = require('./painSignalClassifierService')
 const buyerReadiness       = require('./buyerReadinessService')
 const leadQualityGate      = require('./leadQualityGateService')
 
-// ── Phase 36 — Outreach queue counts ─────────────────────────────────────────
 const { getOutreachCounts } = require('./outreachQueueService')
 
-// Toggleable behaviour — when MAIE_REJECT_NON_NIGERIAN=true, leads with
-// nigeriaConfidence < 18 are auto-rejected even if heat is high. Default is
-// false so we don't suddenly reject existing global English-language traffic.
-const REJECT_NON_NIGERIAN =
-  String(process.env.MAIE_REJECT_NON_NIGERIAN || '').toLowerCase() === 'true'
+// ── Phase 37 — Manual-mode + Africa-first config ────────────────────────────
 
-// ── Phase 35 — Credit-protection config ───────────────────────────────────────
-//
-// Resolved once on module load so every cycle uses the same numbers and the
-// dashboard can advertise them. Defaults are deliberately conservative — the
-// goal is to stop burning Apify credits, not to maximise throughput.
+const MAX_VIDEOS_PER_QUERY  = 3
+const MAX_COMMENTS_PER_VIDEO = 10
+const MAX_ACCEPTED_LEADS    = 15
 
-const INTERVAL_HOURS_DEFAULT = 6
-const MAX_ITEMS_DEFAULT      = 100
-const MAX_ITEMS_HARD_CEILING = 150
+// Inject thresholds: lead enters Outreach Queue ONLY when one of these fires.
+const INJECT_BUYER_THRESHOLD = 45  // buyerReadinessScore
+const INJECT_PAIN_THRESHOLD  = 35  // painSignalScore
 
-function _resolveIntervalHours() {
-  const raw = Number(process.env.LEAD_ACQUISITION_INTERVAL_HOURS)
-  if (!Number.isFinite(raw) || raw <= 0) return INTERVAL_HOURS_DEFAULT
-  // Clamp 1h..24h — anything outside that range is misconfiguration.
-  return Math.min(24, Math.max(1, Math.round(raw)))
-}
-
-function _resolveMaxItems() {
-  const raw = Number(process.env.APIFY_MAX_ITEMS_PER_RUN)
-  if (!Number.isFinite(raw) || raw <= 0) return MAX_ITEMS_DEFAULT
-  return Math.min(MAX_ITEMS_HARD_CEILING, Math.max(30, Math.round(raw)))
-}
-
-function _resolveAcquisitionMode() {
-  const raw = String(process.env.ACQUISITION_MODE || 'pain_point_first').toLowerCase().trim()
-  return raw === 'hashtag_backup' ? 'hashtag_backup' : 'pain_point_first'
-}
-
-const INTERVAL_HOURS    = _resolveIntervalHours()
-const INTERVAL_MS       = INTERVAL_HOURS * 60 * 60 * 1000
-const MAX_ITEMS_PER_RUN = _resolveMaxItems()
-const ACQUISITION_MODE  = _resolveAcquisitionMode()
-const CREDITS_PROTECTION_ACTIVE =
-  INTERVAL_HOURS >= INTERVAL_HOURS_DEFAULT && MAX_ITEMS_PER_RUN <= MAX_ITEMS_HARD_CEILING
+// African / NG-friendly country codes (treated as in-scope).
+const AFRICAN_COUNTRY_CODES = new Set(['NG', 'GH', 'KE', 'ZA'])
+// Hard-reject countries detected by nigeriaSignalService.
+const HARD_REJECT_COUNTRIES = new Set(['US', 'UK', 'IN', 'PH', 'CA'])
 
 console.log(
-  `[LeadAcquisition] Config — mode=${ACQUISITION_MODE}` +
-  ` intervalHours=${INTERVAL_HOURS}` +
-  ` maxItemsPerRun=${MAX_ITEMS_PER_RUN}` +
-  ` creditsProtection=${CREDITS_PROTECTION_ACTIVE ? 'active' : 'relaxed'}`,
+  `[LeadAcquisition] Phase 37 — manual mode only.` +
+  ` videos/query<=${MAX_VIDEOS_PER_QUERY}` +
+  ` comments/video<=${MAX_COMMENTS_PER_VIDEO}` +
+  ` accept-stop=${MAX_ACCEPTED_LEADS}`,
 )
 
-// ── In-memory run state ───────────────────────────────────────────────────────
-//
-// Explicit state machine — replaces the old "_pendingRunId ? running : idle"
-// inference, which left the dashboard stuck on "Scrape in progress…" any time
-// an Apify run hung past the 30-min poll window.
+// ── In-memory run state ─────────────────────────────────────────────────────
 
 const STATE = {
-  state:             'idle',   // 'idle' | 'running' | 'completed' | 'failed'
-  running:           false,    // strict: true only while a real run is in flight
+  state:             'idle',
+  running:           false,
   pendingRunId:      null,
-  runStartedAt:      null,     // Date | null
-  lastRunAt:         null,     // Date | null — when the most recent run started
-  lastRunFinishedAt: null,     // Date | null — when it ended (any terminal status)
-  lastStatus:        null,     // last terminal Apify status string
-  lastStale:         false,    // true if the last reset was a failsafe-timeout reset
-  // ── Phase 35 — batch + cycle visibility ────────────────────────────────────
-  lastBatch:         null,     // { mode, batch:[], phrases:[], key, ranAt }
-  itemsThisCycle:    0,        // raw items fetched in the current/most-recent run
-  nextRunAt:         null,     // Date — when scheduler will fire next
-  // ── Phase 36 — comment-first chained run state ─────────────────────────────
-  stage:             'video',  // 'video' | 'comments' — which actor we're polling
-  commentsRunId:     null,     // Apify runId for the chained comments actor
-  pendingPostUrls:   [],       // post URLs collected from the video stage
+  runStartedAt:      null,
+  lastRunAt:         null,
+  lastRunFinishedAt: null,
+  lastStatus:        null,
+  lastStale:         false,
+  lastBatch:         null,
+  itemsThisCycle:    0,
+  // Manual mode — no scheduled next-run. Always null until UI re-triggers.
+  nextRunAt:         null,
+  stage:             'video',
+  commentsRunId:     null,
+  pendingPostUrls:   [],
+  selectedCountry:   DEFAULT_COUNTRY,
+  acceptedThisCycle: 0,   // hard stop at MAX_ACCEPTED_LEADS
+  acceptanceCapReached: false,
+  // Phase 37 — last-run verification summary (filter pass/reject reasons)
+  lastVerification:  null,
 }
 
-// Failsafe — anything still flagged "running" beyond this is treated as stale
-// and force-reset to idle, regardless of whether Apify ever reports back.
-const STALE_TIMEOUT_MS = 15 * 60 * 1000   // 15 min
-
-function _refreshNextRunAt() {
-  if (STATE.lastRunAt) {
-    STATE.nextRunAt = new Date(STATE.lastRunAt.getTime() + INTERVAL_MS)
-  } else {
-    STATE.nextRunAt = new Date(Date.now() + INTERVAL_MS)
-  }
-}
+const STALE_TIMEOUT_MS = 15 * 60 * 1000
 
 function _resetIdle({ stale = false } = {}) {
   STATE.state             = 'idle'
@@ -145,7 +104,6 @@ function _resetIdle({ stale = false } = {}) {
   STATE.stage             = 'video'
   STATE.commentsRunId     = null
   STATE.pendingPostUrls   = []
-  _refreshNextRunAt()
 }
 
 function _markCompleted() {
@@ -159,7 +117,6 @@ function _markCompleted() {
   STATE.stage             = 'video'
   STATE.commentsRunId     = null
   STATE.pendingPostUrls   = []
-  _refreshNextRunAt()
 }
 
 function _markFailed(status) {
@@ -173,7 +130,6 @@ function _markFailed(status) {
   STATE.stage             = 'video'
   STATE.commentsRunId     = null
   STATE.pendingPostUrls   = []
-  _refreshNextRunAt()
 }
 
 function _checkStale() {
@@ -190,48 +146,12 @@ function _checkStale() {
   return false
 }
 
-// ── Pain / intent patterns ────────────────────────────────────────────────────
-
-const PAIN_PATTERNS = [
-  /what\s+can\s+i\s+(use|do|try)/i,
-  /please\s+help/i,
-  /pls\s+help/i,
-  /help\s+me/i,
-  /i\s+need\s+help/i,
-  /can\s+(anyone|someone|you)\s+(help|recommend|suggest)/i,
-  /this\s+is\s+(exactly\s+)?my\s+(problem|issue|situation|struggle)/i,
-  /i'?ve\s+tried\s+everything/i,
-  /tried\s+everything/i,
-  /nothing\s+works/i,
-  /any\s+solution\??/i,
-  /this\s+is\s+me\b/i,
-  /same\s+(problem|issue|struggle|thing)/i,
-  /how\s+do\s+i\s+(get\s+rid|fix|treat|clear)/i,
-  /how\s+to\s+(get\s+rid\s+of|fix|treat|remove|clear)/i,
-  /what\s+product/i,
-  /any\s+(good\s+)?(product|remedy|cure|treatment|cream|serum|routine)/i,
-  /recommend\s+(something|a|any)/i,
-  /been\s+dealing\s+with/i,
-  /struggling\s+with/i,
-  /so\s+(embarrassing|insecure|frustrated|annoying)/i,
-  /makes?\s+me\s+(feel|look)\s+so/i,
-  /hate\s+my\s+(skin|face|knuckle|spots?)/i,
-  /need\s+(help|something|a\s+solution|a\s+product)/i,
-  /best\s+product\s+for/i,
-  /what\s+should\s+i\s+(use|do|try)/i,
-  /please\s+what/i,
-  /how\s+do\s+you\s+(treat|get\s+rid\s+of)/i,
-  /so\s+tired\s+of/i,
-  /so\s+done\s+with\s+(this|it)/i,
-  /been\s+struggling/i,
-  /does\s+(this|anyone|anything)\s+work/i,
-  /what\s+worked\s+for/i,
-]
+// ── Spam / praise rejection patterns ────────────────────────────────────────
 
 const REJECT_PATTERNS = [
-  /^[\p{Emoji}\s\p{P}]{1,15}$/u,    // emoji-/punctuation-only
-  /^(\s*#\w+\s*)+$/,                 // hashtag-only comment
-  /^@\w+(\s+@\w+)*\s*$/,             // pure @-mentions
+  /^[\p{Emoji}\s\p{P}]{1,15}$/u,
+  /^(\s*#\w+\s*)+$/,
+  /^@\w+(\s+@\w+)*\s*$/,
   /follow\s+(me|back|us|for\s+follow)/i,
   /follow\s*4\s*follow/i,
   /check\s+(my|out\s+my)\s+(profile|page|bio)/i,
@@ -245,88 +165,51 @@ const REJECT_PATTERNS = [
   /free\s+shipping/i,
   /visit\s+my/i,
   /link\s+in\s+(bio|description)/i,
-  /^.{0,7}$/,                        // too short
-  // Generic praise / engagement-bait that has no buyer or pain signal
+  /^.{0,7}$/,
   /^(love\s+(it|this|u|you)!*|nice|wow|cute|beautiful|amazing|gorgeous|stunning|so\s+pretty|❤️*|👏+|🔥+|💯+|preach|facts|true|exactly|same(\s+here)?|me\s+too)\s*\.*\!*$/i,
   /^(first|second|early|here\s+early|notification\s+squad)\s*\!*$/i,
   /^(👇|☝️|✨)+$/u,
 ]
 
-const HIGH_URGENCY_PATTERNS = [
-  /been\s+dealing\s+with\s+(this|it)\s+(for\s+)?(year|month)/i,
-  /tried\s+everything/i,
-  /nothing\s+works/i,
-  /so\s+(done|tired)\s+with/i,
-  /desperate/i,
-  /please\s+help/i,
-  /i\s+need\s+help/i,
-  /help\s+me\s+please/i,
-  /been\s+struggling\s+(for|since)/i,
+// Strong non-English / non-African language markers — reject outright.
+// (Cyrillic, CJK, Devanagari, Arabic non-Latin scripts.)
+const NON_ENGLISH_SCRIPT = /[\p{Script=Cyrillic}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Devanagari}\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Thai}]/u
+
+// Non-African / non-NG geo signals that should override anything else.
+const NON_AFRICAN_REGION_PATTERNS = [
+  /\b(usa|america|nyc|los\s*angeles|texas|florida|california|chicago|atlanta|miami)\b/i,
+  /\b(london|manchester|britain|england|scotland)\b/i,
+  /\b(canada|toronto|vancouver|montreal)\b/i,
+  /\b(india|mumbai|delhi|bangalore|kolkata|chennai|hyderabad)\b/i,
+  /\b(philippines|manila|filipino|filipina|pinoy|pinay)\b/i,
+  /\b(australia|sydney|melbourne|brisbane)\b/i,
+  /\b(china|beijing|shanghai|chinese)\b/i,
+  /\b(japan|tokyo|osaka|japanese)\b/i,
+  /\b(korea|seoul|korean)\b/i,
+  /\b(europe|german|french|paris|berlin|amsterdam|madrid)\b/i,
 ]
 
-const CONCERN_MAP = [
-  ['acne',              /\b(acne|pimple|breakout|blackhead|whitehead|blemish|zit|cystic)\b/i],
-  ['hyperpigmentation', /\b(dark\s+spot|hyperpigmentation|discoloration|uneven\s+(skin|tone)|melanin|dark\s+patch|post[-\s]?acne)\b/i],
-  ['stretch_marks',     /\b(stretch\s+mark|stretchmark|pregnancy\s+mark|striae)\b/i],
-  ['oily_skin',         /\b(oily\s+skin|oiliness|greasy\s+(skin|face)|shiny\s+face|excess\s+oil|sebum|oily\s+face)\b/i],
-  ['knuckle_darkening', /\b(dark(en(ed|ing)?)?\s+knuckle|knuckle\s+dark|black\s+knuckle)\b/i],
-  ['general',           /\b(skin|complexion|skin\s+tone|glow|clear\s+skin|skincare)\b/i],
+// African positive signals — locations that BOOST relevance.
+const AFRICAN_BOOST_PATTERNS = [
+  /\bnigeria\b/i, /\bnaija\b/i, /\b9ja\b/i, /\bnigerian\b/i,
+  /\blagos\b/i, /\babuja\b/i, /\bport\s*harcourt\b/i, /\bibadan\b/i, /\blekki\b/i,
+  /\bnaira\b/i, /\bngn\b/i, /₦/,
+  /\bghana\b/i, /\baccra\b/i, /\bghanaian\b/i,
+  /\bkenya\b/i, /\bnairobi\b/i, /\bkenyan\b/i,
+  /\bsouth\s*africa\b/i, /\bjohannesburg\b/i, /\bcape\s*town\b/i, /\bdurban\b/i,
+  /\bafrican\s+skin\b/i, /\bblack\s+skin\b/i, /\bmelanin\b/i, /\bmelanin\s+skin\b/i,
 ]
 
-// ── Scoring ───────────────────────────────────────────────────────────────────
-
-function filterComment(text) {
-  if (!text || typeof text !== 'string') return false
-  const t = text.trim()
-  if (REJECT_PATTERNS.some(p => p.test(t))) return false
-  return PAIN_PATTERNS.some(p => p.test(t))
+function isLikelyAfricanContext(text) {
+  return AFRICAN_BOOST_PATTERNS.some(p => p.test(text))
 }
 
-function scoreComment(text) {
-  if (!text) return 0
-  let score = 0
-
-  const painCount = PAIN_PATTERNS.filter(p => p.test(text)).length
-  if (painCount > 0) {
-    score += 30
-    score += Math.min((painCount - 1) * 8, 24)   // up to +24 for multi-signal
-  }
-
-  const [concern] = detectConcern(text)
-  if (concern && concern !== 'general') score += 15
-  else if (concern === 'general')       score += 5
-
-  if (HIGH_URGENCY_PATTERNS.some(p => p.test(text))) score += 15
-
-  if (text.length > 80)  score += 8
-  if (text.length > 160) score += 4
-
-  return Math.min(score, 100)
+function hasForeignSignal(text) {
+  return NON_ENGLISH_SCRIPT.test(text) || NON_AFRICAN_REGION_PATTERNS.some(p => p.test(text))
 }
 
-function detectConcern(text) {
-  for (const [type, pattern] of CONCERN_MAP) {
-    if (pattern.test(text)) return [type]
-  }
-  return [null]
-}
+// ── Lead injection ──────────────────────────────────────────────────────────
 
-function detectUrgency(text, score) {
-  if (score >= 70 || HIGH_URGENCY_PATTERNS.some(p => p.test(text))) return 'high'
-  if (score >= 40) return 'medium'
-  return 'low'
-}
-
-// ── Lead injection ────────────────────────────────────────────────────────────
-
-/**
- * Inject a scraped item into the main `leads` table.
- * Accepts the persisted ScrapedLead row plus the MAIE outreach copy generated
- * during scoring. MAIE-derived fields slot into existing Lead columns
- * (suggestedReply / primaryConcern / urgencyLevel / academyIntentScore etc.) so
- * downstream flows (diagnosis engine, conversion engine, conversation brain)
- * keep working unchanged.
- */
 async function injectToLead(scrapedLead, outreach = null) {
   const username   = scrapedLead.username || 'unknown'
   const concern    = scrapedLead.concernType || 'general'
@@ -339,7 +222,6 @@ async function injectToLead(scrapedLead, outreach = null) {
     ? Math.round(Math.max(60, heat))
     : Math.round(heat * 0.4)
 
-  // Phase 36 — priority is hot|warm|low based on relaxed thresholds
   const priority =
     leadHeatEngine.isHot(heat)  ? 'high'
     : leadHeatEngine.isWarm(heat) ? 'medium'
@@ -373,56 +255,70 @@ async function injectToLead(scrapedLead, outreach = null) {
   return lead.id
 }
 
-// ── Batch processor ───────────────────────────────────────────────────────────
+// ── Pain / urgency labels (preserved for back-compat) ───────────────────────
 
-/**
- * processRawItems
- *
- * @param {object[]} rawItems
- * @param {object} [opts]
- * @param {(item:any)=>any} [opts.normaliser]   Defaults to normaliseTiktokItem (video shape).
- *                                             Pass normaliseTiktokCommentItem for comment items.
- * @param {boolean} [opts.defaultIsComment]    Stamped onto every persisted row.
- *                                             Default: false (treat as creator caption).
- */
+const HIGH_URGENCY_PATTERNS = [
+  /been\s+dealing\s+with\s+(this|it)\s+(for\s+)?(year|month)/i,
+  /tried\s+everything/i,
+  /nothing\s+works/i,
+  /so\s+(done|tired)\s+with/i,
+  /desperate/i,
+  /please\s+help/i,
+  /i\s+need\s+help/i,
+  /help\s+me\s+please/i,
+  /been\s+struggling\s+(for|since)/i,
+]
+
+// ── Batch processor ─────────────────────────────────────────────────────────
+
 async function processRawItems(rawItems, opts = {}) {
   const normaliser       = opts.normaliser || normaliseTiktokItem
   const defaultIsComment = Boolean(opts.defaultIsComment)
+  const country          = opts.country || STATE.selectedCountry || DEFAULT_COUNTRY
   const stats = {
     total:      rawItems.length,
     normalised: 0,
-    stored:     0,   // saved to scraped_leads
-    nigerian:   0,   // nigeriaConfidence >= 30
-    accepted:   0,   // passed all gates → injected into leads
+    stored:     0,
+    nigerian:   0,
+    accepted:   0,
     injected:   0,
-    queued:     0,   // heat >= 70 → outreachQueued
+    queued:     0,
     rejected:   0,
-    captionsRejected: 0,  // Phase 36 — captions skipped for lacking buyer intent
+    captionsRejected: 0,
+    cappedByAcceptStop: 0,
     reasons: {
-      norm_failed:    0,  // normaliseTiktokItem returned null / empty text
+      norm_failed:    0,
       duplicate:      0,
-      spam:           0,  // legacy spam filter
-      fake_profile:   0,  // MAIE authenticity floor
-      low_intent:     0,  // MAIE pain+buyer floor
+      spam:           0,
+      foreign_geo:    0,   // Phase 37 — non-African / non-English script
+      non_african:    0,   // Phase 37 — soft non-NG/non-African profile
+      below_intent:   0,   // Phase 37 — buyer<45 AND pain<35
+      fake_profile:   0,
+      low_intent:     0,
       non_nigerian:   0,
-      low_heat:       0,  // heat < 50 — stored, not injected
+      low_heat:       0,
     },
-    // Aggregations for the cycle summary log
+    accepted_samples: [],   // sample of accepted leads w/ pass reasons
+    rejected_samples: [],   // sample of rejected items w/ reject reasons
     topSegments: {},
     topCities:   {},
     topPainTags: {},
     topAngles:   {},
-    // ── Phase 35 — pain signal + buyer readiness aggregations ─────────────
-    painSignalLeads:  0,   // painSignalScore >= 25
-    buyerReadyLeads:  0,   // buyerReadinessScore >= 45
-    hotBuyerLeads:    0,   // leadQuality === 'hot'
-    rejectedLowQuality: 0, // leadQuality === 'reject' from quality gate
+    painSignalLeads:  0,
+    buyerReadyLeads:  0,
+    hotBuyerLeads:    0,
+    rejectedLowQuality: 0,
     topPainPhrases:   {},
-    topBuyerPhrases: {},
+    topBuyerPhrases:  {},
     actionBreakdown:  {},
   }
 
   for (const raw of rawItems) {
+    if (STATE.acceptedThisCycle >= MAX_ACCEPTED_LEADS) {
+      STATE.acceptanceCapReached = true
+      stats.cappedByAcceptStop++
+      continue
+    }
     const norm = normaliser(raw)
     if (!norm || !norm.text?.trim()) {
       stats.reasons.norm_failed++
@@ -431,22 +327,30 @@ async function processRawItems(rawItems, opts = {}) {
     }
     stats.normalised++
 
-    // Phase 36 — fast spam pre-filter. Drops hashtag-only, follower-farming,
-    // emoji-only, link-spam, and generic-praise rows before any scoring.
     if (REJECT_PATTERNS.some(p => p.test(norm.text))) {
       stats.reasons.spam++
       stats.rejected++
-      console.log(`[LeadAcquisition] SPAM filtered @${norm.username || 'unknown'} text="${norm.text.slice(0, 60)}"`)
       continue
     }
 
-    // Phase 36 — distinguish commenters from creators. Caption-only items
-    // (isComment=false) only proceed when they carry obvious buyer intent —
-    // we don't want to keep ingesting creator promotional captions.
+    // Phase 37 — Hard geo filter. Reject anything carrying non-African region
+    // signals or non-English scripts unless an African signal also fires.
+    if (hasForeignSignal(norm.text) && !isLikelyAfricanContext(norm.text)) {
+      stats.reasons.foreign_geo++
+      stats.rejected++
+      if (stats.rejected_samples.length < 5) {
+        stats.rejected_samples.push({
+          username: norm.username,
+          text:     norm.text.slice(0, 140),
+          reason:   'foreign_geo',
+        })
+      }
+      continue
+    }
+
     const isComment =
       typeof norm.isComment === 'boolean' ? norm.isComment : defaultIsComment
 
-    // ── Duplicate check (must run before any expensive work) ───────────────
     let isDup = false
     if (norm.externalId) {
       const exists = await prisma.scrapedLead.findUnique({
@@ -461,46 +365,38 @@ async function processRawItems(rawItems, opts = {}) {
       continue
     }
 
-    // ── Phase 33 — MAIE intelligence pipeline ───────────────────────────────
     const corpus = norm.text
 
     const ngResult = nigeriaSignal.detect(corpus, {
       username: norm.username,
       hashtag:  norm.hashtag,
     })
-    console.log(
-      `[NigeriaDetector] @${norm.username || 'unknown'}` +
-      ` confidence=${ngResult.nigeriaConfidence}` +
-      ` city=${ngResult.detectedCity || '—'}` +
-      ` lang=${ngResult.detectedLanguage || '—'}` +
-      ` signals=${ngResult.locationSignals.length}`,
-    )
     if (ngResult.nigeriaConfidence >= 30) stats.nigerian++
 
-    const psychResult = leadPsychology.analyze(corpus)
-    console.log(
-      `[Psychology] @${norm.username || 'unknown'}` +
-      ` pain=${psychResult.painScore}` +
-      ` urgency=${psychResult.urgencyScore}` +
-      ` buyer=${psychResult.buyerIntentScore}` +
-      ` emotion=${psychResult.emotionalIntensity}` +
-      ` auth=${psychResult.authenticityScore}`,
-    )
+    // Phase 37 — soft geo gate: if nigeriaSignalService detected a non-African
+    // country (US/UK/IN/PH/CA), drop the lead unless African boost present.
+    if (
+      ngResult.detectedCountry &&
+      HARD_REJECT_COUNTRIES.has(ngResult.detectedCountry) &&
+      !isLikelyAfricanContext(corpus)
+    ) {
+      stats.reasons.non_african++
+      stats.rejected++
+      if (stats.rejected_samples.length < 5) {
+        stats.rejected_samples.push({
+          username: norm.username,
+          text:     corpus.slice(0, 140),
+          reason:   `non_african(${ngResult.detectedCountry})`,
+        })
+      }
+      continue
+    }
 
+    const psychResult = leadPsychology.analyze(corpus)
     const segmentResult = leadSegmentation.classify(corpus, {
       username: norm.username,
       hashtag:  norm.hashtag,
     })
-    console.log(
-      `[Segmentation] @${norm.username || 'unknown'}` +
-      ` segment=${segmentResult.segment}` +
-      ` confidence=${segmentResult.segmentConfidence}` +
-      ` secondary=[${segmentResult.secondarySegments.join(',')}]`,
-    )
-
-    // ── Phase 35 — Pain Signal Classifier ────────────────────────────────
-    // Runs after MAIE psychology/segmentation, before the heat decision and
-    // persistence. Pure functions, no I/O — adds ~1ms per item.
     const painClassification = painSignalClassifier.classify(corpus)
     const buyerResult = buyerReadiness.evaluate(corpus, {
       painClassification,
@@ -512,13 +408,6 @@ async function processRawItems(rawItems, opts = {}) {
       nigeriaSignal:  ngResult,
       segmentation:   segmentResult,
     })
-    console.log(
-      `[PainSignal] @${norm.username || 'unknown'}` +
-      ` score=${painClassification.painSignalScore}` +
-      ` buyer=${buyerResult.buyerReadinessScore}` +
-      ` quality=${qualityGate.leadQuality}` +
-      ` action=${qualityGate.recommendedAction}`,
-    )
 
     const heatResult = leadHeatEngine.evaluate({
       nigeria:      ngResult,
@@ -526,17 +415,9 @@ async function processRawItems(rawItems, opts = {}) {
       segmentation: segmentResult,
       engagement:   { likes: raw?.diggCount || raw?.likes, comments: raw?.commentCount },
       duplicate:    false,
-      rejectNonNigerian: REJECT_NON_NIGERIAN,
+      rejectNonNigerian: false,
     })
-    console.log(
-      `[LeadHeat] @${norm.username || 'unknown'}` +
-      ` heat=${heatResult.leadHeatScore}` +
-      ` reject=${heatResult.rejectionReason || 'none'}` +
-      ` ${heatResult.rejectionDetail || ''}`,
-    )
 
-    // Outreach copy — generated for everyone we'll persist (lets the dashboard
-    // surface a suggestedReply even on stored-only items).
     const outreach = outreachIntelligence.generate({
       text:         corpus,
       nigeria:      ngResult,
@@ -546,15 +427,9 @@ async function processRawItems(rawItems, opts = {}) {
       externalId:   norm.externalId,
       painCategory: leadSegmentation.mapToConcernType(segmentResult.segment),
     })
-    console.log(
-      `[OutreachAI] @${norm.username || 'unknown'}` +
-      ` angle=${outreach.outreachAngle}` +
-      ` summary="${outreach.aiSummary}"`,
-    )
 
-    // ── Legacy compatibility — keep intentScore + concernType populated ─────
     const legacyConcern  = leadSegmentation.mapToConcernType(segmentResult.segment)
-    const legacyIntent   = scoreComment(corpus)
+    const legacyIntent   = Math.round(heatResult.leadHeatScore || 0)
     const urgencyLabel   = (() => {
       if ((psychResult.urgencyScore ?? 0) >= 30 || heatResult.leadHeatScore >= 70) return 'high'
       if (heatResult.leadHeatScore >= 40) return 'medium'
@@ -567,10 +442,6 @@ async function processRawItems(rawItems, opts = {}) {
         : typeof v === 'object' ? (v.name || v.title || v.uniqueId || v.id || null)
         : String(v)
 
-    // ── Phase 36 — caption guard ────────────────────────────────────────────
-    // Creator captions almost never carry buyer pain; reject unless a hard
-    // buyer/pain signal (≥ 35 either way OR explicit price/location/recommend
-    // ask) fires. Comments bypass this gate.
     if (!isComment) {
       const hardBuyer =
         (psychResult.buyerIntentScore ?? 0) >= 35 ||
@@ -581,15 +452,10 @@ async function processRawItems(rawItems, opts = {}) {
       if (!hardBuyer) {
         stats.captionsRejected++
         stats.rejected++
-        console.log(
-          `[LeadAcquisition] CAPTION skipped @${norm.username || 'unknown'}` +
-          ` pain=${psychResult.painScore} buy=${psychResult.buyerIntentScore}`,
-        )
         continue
       }
     }
 
-    // ── Persist scraped item with the full MAIE payload ─────────────────────
     let saved
     try {
       saved = await prisma.scrapedLead.create({
@@ -601,20 +467,17 @@ async function processRawItems(rawItems, opts = {}) {
           hashtag:      safeStr(norm.hashtag),
           externalId:   norm.externalId || null,
           postedAt:     norm.postedAt,
-          // Phase 36 — comment vs caption + multi-CTA pack
           isComment:    isComment,
           sourceVideoUrl: safeStr(norm.sourceVideoUrl || norm.videoUrl),
           whatsappCta:  outreach.whatsappCta || null,
           consultCta:   outreach.consultCta  || null,
           academyCta:   outreach.academyCta  || null,
           ctaType:      outreach.ctaType     || null,
-          // legacy back-compat fields
           concernType:  legacyConcern,
           intentScore:  legacyIntent,
           urgencyLevel: urgencyLabel,
           processed:    false,
 
-          // MAIE fields
           nigeriaConfidence:  ngResult.nigeriaConfidence,
           countryConfidence:  ngResult.countryConfidence,
           detectedCity:       ngResult.detectedCity,
@@ -637,7 +500,6 @@ async function processRawItems(rawItems, opts = {}) {
           aiSummary:          outreach.aiSummary,
           outreachAngle:      outreach.outreachAngle,
 
-          // ── Phase 35 — Pain Signal Classifier persistence ────────────────
           painSignalScore:       Math.round(painClassification.painSignalScore),
           buyerReadinessScore:   Math.round(buyerResult.buyerReadinessScore),
           emotionalPainLevel:    Math.round(painClassification.emotionalPainLevel),
@@ -652,7 +514,6 @@ async function processRawItems(rawItems, opts = {}) {
       })
       stats.stored++
 
-      // Aggregations for cycle summary
       stats.topSegments[segmentResult.segment] =
         (stats.topSegments[segmentResult.segment] || 0) + 1
       if (ngResult.detectedCity) {
@@ -665,7 +526,6 @@ async function processRawItems(rawItems, opts = {}) {
       stats.topAngles[outreach.outreachAngle] =
         (stats.topAngles[outreach.outreachAngle] || 0) + 1
 
-      // ── Phase 35 — Pain Signal aggregations ────────────────────────────
       if (painClassification.painSignalScore >= 25) stats.painSignalLeads++
       if (buyerResult.buyerReadinessScore   >= 45) stats.buyerReadyLeads++
       if (qualityGate.leadQuality === 'hot')        stats.hotBuyerLeads++
@@ -679,15 +539,6 @@ async function processRawItems(rawItems, opts = {}) {
       }
       stats.actionBreakdown[qualityGate.recommendedAction] =
         (stats.actionBreakdown[qualityGate.recommendedAction] || 0) + 1
-
-      // ── Phase 35 — Lead-quality gate audit log ─────────────────────────
-      const gateOutcome = qualityGate.leadQuality === 'reject' ? 'rejected' : 'accepted'
-      console.log(
-        `[LeadQualityGate] ${gateOutcome}` +
-        ` @${norm.username || 'unknown'}` +
-        ` reason=${qualityGate.leadQualityReason}` +
-        ` final=${qualityGate.finalScore}`,
-      )
     } catch (dbErr) {
       if (dbErr.code === 'P2002') {
         stats.reasons.duplicate++
@@ -697,36 +548,42 @@ async function processRawItems(rawItems, opts = {}) {
       throw dbErr
     }
 
-    // ── Decide: inject vs. store-only vs. rejected ──────────────────────────
-    if (heatResult.rejectionReason) {
+    // ── Phase 37 — Outreach-queue gate ────────────────────────────────────
+    // Inject into the leads table ONLY when buyerReadiness>=45 OR painSignal>=35.
+    // Anything else stays in scraped_leads silently — keeps the queue uncluttered.
+    const buyer = Math.round(buyerResult.buyerReadinessScore)
+    const pain  = Math.round(painClassification.painSignalScore)
+    const passesGate = buyer >= INJECT_BUYER_THRESHOLD || pain >= INJECT_PAIN_THRESHOLD
+
+    if (heatResult.rejectionReason || !passesGate) {
       const r = heatResult.rejectionReason
-      // Map the heat-engine reasons into our stats bucket; unknown reasons bucket as low_heat.
       if      (r === 'fake_profile') stats.reasons.fake_profile++
       else if (r === 'low_intent')   stats.reasons.low_intent++
       else if (r === 'non_nigerian') stats.reasons.non_nigerian++
       else if (r === 'low_heat')     stats.reasons.low_heat++
-      else                            stats.reasons.low_heat++
-
-      // low_heat is a "stored, not injected" outcome — not a hard reject for
-      // counter purposes (matches the legacy `stored_only` semantics).
-      if (r !== 'low_heat') stats.rejected++
+      else if (!passesGate) {
+        stats.reasons.below_intent++
+        if (stats.rejected_samples.length < 5) {
+          stats.rejected_samples.push({
+            username: norm.username,
+            text:     corpus.slice(0, 140),
+            reason:   `below_intent(buyer=${buyer},pain=${pain})`,
+          })
+        }
+      }
+      if (r && r !== 'low_heat') stats.rejected++
       continue
     }
 
-    // ── Inject into leads table ─────────────────────────────────────────────
     stats.accepted++
     try {
       const leadId = await injectToLead({ ...saved }, outreach)
       const isHot  = leadHeatEngine.isHot(heatResult.leadHeatScore)
       await prisma.scrapedLead.update({
         where: { id: saved.id },
-        data:  { processed: true, injectedLeadId: leadId, outreachQueued: isHot },
+        data:  { processed: true, injectedLeadId: leadId, outreachQueued: true },
       })
 
-      // ── Phase 34 — MCE: assign route + generate WhatsApp CTA ─────────────
-      // Reads MAIE outputs from `saved`. Never writes back to MAIE fields.
-      // Failure here is logged, never throws upstream — MAIE pipeline is
-      // unaffected if MCE breaks.
       try {
         const newLead = await prisma.lead.findUnique({ where: { id: leadId } })
         if (newLead) {
@@ -739,7 +596,6 @@ async function processRawItems(rawItems, opts = {}) {
               detectedCity:       saved.detectedCity,
             },
           })
-          // Refresh after router writes funnelType/budgetSignal/etc.
           const refreshed = await prisma.lead.findUnique({ where: { id: leadId } })
           if (refreshed) {
             await mceWhatsAppBridge.generateAndStoreCta(refreshed)
@@ -750,22 +606,43 @@ async function processRawItems(rawItems, opts = {}) {
       }
 
       stats.injected++
+      STATE.acceptedThisCycle++
+
+      if (stats.accepted_samples.length < MAX_ACCEPTED_LEADS) {
+        stats.accepted_samples.push({
+          username: norm.username,
+          text:     corpus.slice(0, 140),
+          buyer,
+          pain,
+          heat:     Math.round(heatResult.leadHeatScore),
+          city:     ngResult.detectedCity,
+          country:  ngResult.detectedCountry,
+          quality:  qualityGate.leadQuality,
+          isHot,
+        })
+      }
+
       if (isHot) {
         stats.queued++
         console.log(
           `[LeadAcquisition] HOT injected — @${norm.username || 'unknown'}` +
-          ` heat=${heatResult.leadHeatScore}` +
+          ` heat=${Math.round(heatResult.leadHeatScore)}` +
+          ` buyer=${buyer} pain=${pain}` +
           ` segment=${segmentResult.segment}` +
           ` ng=${ngResult.nigeriaConfidence}` +
           ` city=${ngResult.detectedCity || '—'}`,
         )
+      }
+
+      if (STATE.acceptedThisCycle >= MAX_ACCEPTED_LEADS) {
+        STATE.acceptanceCapReached = true
+        console.log(`[LeadAcquisition] Reached MAX_ACCEPTED_LEADS=${MAX_ACCEPTED_LEADS}; stopping further processing.`)
       }
     } catch (err) {
       console.error(`[LeadAcquisition] Inject failed for @${norm.username}:`, err.message)
     }
   }
 
-  // ── End-of-cycle summary ─────────────────────────────────────────────────
   const topN = (obj, n = 5) =>
     Object.entries(obj)
       .sort((a, b) => b[1] - a[1])
@@ -775,17 +652,15 @@ async function processRawItems(rawItems, opts = {}) {
 
   console.log('[LeadAcquisition] ─────────── Cycle Summary ───────────')
   console.log(
-    `[LeadAcquisition] total=${stats.total} normalised=${stats.normalised}` +
+    `[LeadAcquisition] country=${country} total=${stats.total} normalised=${stats.normalised}` +
     ` stored=${stats.stored} nigerian=${stats.nigerian}` +
     ` accepted=${stats.accepted} injected=${stats.injected} queued=${stats.queued}` +
-    ` rejected=${stats.rejected}`,
+    ` rejected=${stats.rejected} cappedByAcceptStop=${stats.cappedByAcceptStop}`,
   )
   console.log('[LeadAcquisition] Rejections:    ', stats.reasons)
   console.log('[LeadAcquisition] Top segments:  ', topN(stats.topSegments))
   console.log('[LeadAcquisition] Top NG cities: ', topN(stats.topCities))
   console.log('[LeadAcquisition] Top pain tags: ', topN(stats.topPainTags, 8))
-  console.log('[LeadAcquisition] Top angles:    ', topN(stats.topAngles))
-  // ── Phase 35 — Pain Signal Classifier summary ────────────────────────────
   console.log(
     `[LeadAcquisition] Pain/Buyer:    painLeads=${stats.painSignalLeads}` +
     ` buyerReady=${stats.buyerReadyLeads} hotBuyers=${stats.hotBuyerLeads}` +
@@ -799,22 +674,24 @@ async function processRawItems(rawItems, opts = {}) {
   return stats
 }
 
-// ── Scheduler cycle ───────────────────────────────────────────────────────────
+// ── Manual cycle ────────────────────────────────────────────────────────────
 
-// Phase 36 — toggle for the chained comments actor. Default ON.
-// Aggressive caps per operator rule: max 5 videos × 15 comments = 75/cycle.
 const COMMENT_FIRST_ENABLED = String(process.env.TIKTOK_COMMENT_FIRST ?? 'true').toLowerCase() !== 'false'
-const MAX_VIDEOS_FOR_COMMENTS = Math.max(1, Math.min(8, Number(process.env.TIKTOK_VIDEOS_FOR_COMMENTS) || 5))
 
-async function runAcquisitionCycle() {
+async function runAcquisitionCycle(opts = {}) {
   if (!process.env.APIFY_API_TOKEN) {
     console.log('[LeadAcquisition] APIFY_API_TOKEN not set — skipping')
-    return
+    _markFailed('NO_APIFY_TOKEN')
+    return { success: false, error: 'APIFY_API_TOKEN not configured' }
   }
 
+  const country = opts.country
+    ? getCountryProfile(opts.country).code
+    : STATE.selectedCountry || DEFAULT_COUNTRY
+  STATE.selectedCountry = country
+
   try {
-    // Failsafe runs first so a stuck run never blocks a fresh trigger
-    if (_checkStale()) return
+    if (_checkStale()) return { success: false, error: 'stale_run_reset' }
 
     if (STATE.running && STATE.pendingRunId) {
       const { status, defaultDatasetId } = await getTiktokRunStatus(STATE.pendingRunId)
@@ -826,174 +703,176 @@ async function runAcquisitionCycle() {
         )
         const rawItems = await fetchTiktokItems(defaultDatasetId)
         STATE.itemsThisCycle = rawItems.length
-        console.log(
-          `[LeadAcquisition] Raw item count from dataset: ${rawItems.length}` +
-          ` (stage=${STATE.stage} cap=${MAX_ITEMS_PER_RUN})`,
-        )
 
         if (STATE.stage === 'video') {
-          // Phase 36 — chain to comments actor: collect post URLs from videos.
-          // Captions are still processed (rare buyer-intent captions surface),
-          // but the bulk of accepted leads now come from the comments stage.
           const captionStats = await processRawItems(rawItems, {
             normaliser:       normaliseTiktokItem,
             defaultIsComment: false,
+            country:          STATE.selectedCountry,
           })
-          console.log(
-            `[LeadAcquisition] Caption pass — stored=${captionStats.stored}` +
-            ` accepted=${captionStats.accepted} captionsRejected=${captionStats.captionsRejected}`,
-          )
+
+          if (STATE.acceptanceCapReached) {
+            console.log('[LeadAcquisition] Acceptance cap reached during caption pass — skipping comments stage.')
+            STATE.lastVerification = _buildVerification(captionStats, null)
+            _markCompleted()
+            return { success: true, stats: captionStats }
+          }
 
           const postUrls = []
           for (const raw of rawItems) {
             const n = normaliseTiktokItem(raw)
             if (n?.videoUrl) postUrls.push(n.videoUrl)
           }
-          const uniqueUrls = [...new Set(postUrls)].slice(0, MAX_VIDEOS_FOR_COMMENTS)
+          const uniqueUrls = [...new Set(postUrls)].slice(0, MAX_VIDEOS_PER_QUERY)
 
           if (COMMENT_FIRST_ENABLED && uniqueUrls.length > 0) {
             try {
               const cmt = await triggerTiktokCommentsScrape(uniqueUrls, {
-                commentsPerPost: Number(process.env.APIFY_COMMENTS_PER_VIDEO) || 15,
+                commentsPerPost: MAX_COMMENTS_PER_VIDEO,
               })
               STATE.stage           = 'comments'
               STATE.pendingRunId    = cmt.runId
               STATE.commentsRunId   = cmt.runId
               STATE.runStartedAt    = new Date()
               STATE.pendingPostUrls = uniqueUrls
-              console.log(
-                `[LeadAcquisition] Comments stage queued — runId=${cmt.runId}` +
-                ` videoCount=${uniqueUrls.length} commentsPerPost=${cmt.commentsPerPost}`,
-              )
-              return
+              STATE.lastVerification = _buildVerification(captionStats, null)
+              return { success: true, partial: true, captions: captionStats }
             } catch (err) {
               console.error('[LeadAcquisition] Comments trigger failed:', err.message)
-              // fall through and complete on caption pass alone
             }
-          } else {
-            console.log(
-              `[LeadAcquisition] Comments stage skipped — enabled=${COMMENT_FIRST_ENABLED}` +
-              ` urls=${uniqueUrls.length}`,
-            )
           }
+          STATE.lastVerification = _buildVerification(captionStats, null)
           _markCompleted()
-          return
+          return { success: true, stats: captionStats }
         }
 
         if (STATE.stage === 'comments') {
           const commentStats = await processRawItems(rawItems, {
             normaliser:       normaliseTiktokCommentItem,
             defaultIsComment: true,
+            country:          STATE.selectedCountry,
           })
-          console.log(
-            `[LeadAcquisition] Comments pass — stored=${commentStats.stored}` +
-            ` accepted=${commentStats.accepted} injected=${commentStats.injected}` +
-            ` queued=${commentStats.queued} rejected=${commentStats.rejected}`,
-          )
+          STATE.lastVerification = _buildVerification(STATE.lastVerification?.captions || null, commentStats)
           _markCompleted()
-          return
+          return { success: true, stats: commentStats }
         }
 
       } else if (status === 'SUCCEEDED' && !defaultDatasetId) {
         console.warn(`[LeadAcquisition] Run SUCCEEDED but defaultDatasetId is missing — runId=${STATE.pendingRunId}`)
         _markFailed('SUCCEEDED_NO_DATASET')
-
+        return { success: false, error: 'SUCCEEDED_NO_DATASET' }
       } else if (['FAILED', 'TIMED-OUT', 'ABORTED'].includes(status)) {
         console.warn(`[LeadAcquisition] Run ended with status=${status} runId=${STATE.pendingRunId}`)
         _markFailed(status)
+        return { success: false, error: status }
       }
-      // RUNNING / READY — wait for next tick (stale check above guards the upper bound)
-      return
+      return { success: true, stillRunning: true }
     }
 
-    // ── No pending run — trigger a new cycle ──────────────────────────────────
-    //
-    // Phase 35 — pain-point-first by default. Hashtag pool stays available as a
-    // backup channel by setting ACQUISITION_MODE=hashtag_backup.
+    // Trigger a fresh manual run
+    const painPicked = getNextPainBatch({ country: STATE.selectedCountry })
+    const triggerArg = painPicked.batch
+    const modeLabel  = `pain_point_first_${painPicked.country}`
+    console.log(
+      `[LeadAcquisition] Manual cycle triggered — country=${painPicked.country} (${painPicked.countryLabel})` +
+      ` batch (${painPicked.batch.length}): [${painPicked.phrases.join(' | ')}]` +
+      (painPicked.forced ? ' (forced — all batches recently used)' : ''),
+    )
 
-    let triggerArg, modeLabel, painPicked
-    if (ACQUISITION_MODE === 'hashtag_backup') {
-      triggerArg = 'priority'           // delegate batch selection to hashtag config
-      modeLabel  = 'hashtag_backup'
-      console.log('[LeadAcquisition] Mode=hashtag_backup — using rotating hashtag pool')
-    } else {
-      painPicked = getNextPainBatch()
-      triggerArg = painPicked.batch
-      modeLabel  = 'pain_point_first'
-      console.log(
-        `[LeadAcquisition] Mode=pain_point_first — batch (${painPicked.batch.length}):` +
-        ` [${painPicked.phrases.join(' | ')}]` +
-        (painPicked.forced ? ' (forced — all batches recently used)' : ''),
-      )
-    }
-
+    const totalItems = MAX_VIDEOS_PER_QUERY * Math.max(1, triggerArg.length)
     const { runId, hashtags, maxItems, runMode } = await triggerTiktokHashtagScrape(
       triggerArg,
-      { maxItems: MAX_ITEMS_PER_RUN, modeLabel },
+      { maxItems: totalItems, perTagItems: MAX_VIDEOS_PER_QUERY, modeLabel },
     )
 
     const now = new Date()
-    STATE.state          = 'running'
-    STATE.running        = true
-    STATE.stage          = 'video'
-    STATE.commentsRunId  = null
+    STATE.state           = 'running'
+    STATE.running         = true
+    STATE.stage           = 'video'
+    STATE.commentsRunId   = null
     STATE.pendingPostUrls = []
-    STATE.pendingRunId   = runId
-    STATE.runStartedAt   = now
-    STATE.lastRunAt      = now
-    STATE.lastStale      = false
-    STATE.itemsThisCycle = 0
-    STATE.lastBatch      = {
+    STATE.pendingRunId    = runId
+    STATE.runStartedAt    = now
+    STATE.lastRunAt       = now
+    STATE.lastStale       = false
+    STATE.itemsThisCycle  = 0
+    STATE.acceptedThisCycle    = 0
+    STATE.acceptanceCapReached = false
+    STATE.lastVerification     = null
+    STATE.lastBatch       = {
       mode:     modeLabel,
-      runMode,                                     // resolved by scraper (e.g. 'priority' fallback)
+      runMode,
+      country:  painPicked.country,
+      countryLabel: painPicked.countryLabel,
       hashtags: hashtags || [],
-      phrases:  painPicked ? painPicked.phrases : (hashtags || []),
-      key:      painPicked ? painPicked.key : null,
+      phrases:  painPicked.phrases,
+      key:      painPicked.key,
       maxItems,
       ranAt:    now.toISOString(),
     }
-    STATE.nextRunAt = new Date(now.getTime() + INTERVAL_MS)
+    STATE.nextRunAt = null
     console.log(
       `[LeadAcquisition] Run queued — runId=${runId}` +
-      ` mode=${modeLabel} maxItems=${maxItems}` +
-      ` nextRunAt=${STATE.nextRunAt.toISOString()}`,
+      ` mode=${modeLabel} maxItems=${maxItems}`,
     )
+    return { success: true, runId, country: painPicked.country }
 
   } catch (err) {
     console.error('[LeadAcquisition] Cycle error:', err.message)
     _markFailed('CYCLE_ERROR')
+    return { success: false, error: err.message }
   }
 }
 
+function _buildVerification(captionStats, commentStats) {
+  return {
+    capturedAt:   new Date().toISOString(),
+    country:      STATE.selectedCountry,
+    captions:     captionStats || null,
+    comments:     commentStats || null,
+    accepted:     (captionStats?.accepted || 0) + (commentStats?.accepted || 0),
+    rejected:     (captionStats?.rejected || 0) + (commentStats?.rejected || 0),
+    accepted_samples: [
+      ...(captionStats?.accepted_samples || []),
+      ...(commentStats?.accepted_samples || []),
+    ],
+    rejected_samples: [
+      ...(captionStats?.rejected_samples || []),
+      ...(commentStats?.rejected_samples || []),
+    ],
+    reasons: {
+      ...(captionStats?.reasons || {}),
+      ...(commentStats?.reasons || {}),
+    },
+    cappedByAcceptStop: Boolean(STATE.acceptanceCapReached),
+  }
+}
+
+// ── Manual mode startup (no-op) ─────────────────────────────────────────────
+//
+// Phase 37 — auto-scrape interval, startup auto-trigger, and 6-hour scheduler
+// are all removed. The function is preserved so callers in index.js still
+// work, but it intentionally does nothing other than log.
+
 function startLeadAcquisitionEngine() {
-  // First cycle after 3 minutes (let server boot + other services start)
-  const firstRunAt = new Date(Date.now() + 3 * 60 * 1000)
-  STATE.nextRunAt = firstRunAt
-
-  setTimeout(runAcquisitionCycle, 3 * 60 * 1000)
-  setInterval(runAcquisitionCycle, INTERVAL_MS)
-
   console.log(
-    `[LeadAcquisition] Engine started — ${INTERVAL_HOURS}-hour cycle,` +
-    ` first run in 3 min (mode=${ACQUISITION_MODE}, maxItems=${MAX_ITEMS_PER_RUN})`,
+    '[LeadAcquisition] Manual Mode Enabled — automatic scraping is disabled.' +
+    ' Operator triggers runs from the Command Center "Run Now" button or' +
+    ' POST /api/admin/acquisition/trigger.',
   )
 }
 
-// ── Stats (used by Command Center) ───────────────────────────────────────────
+// ── Stats ───────────────────────────────────────────────────────────────────
 
 async function getAcquisitionStats() {
-  // Run the failsafe on read too — if the page is loaded after a stuck run
-  // exceeded the 15-min window, we collapse it to idle before reporting state.
   _checkStale()
 
   const now   = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
-  // Headline counters
   const [scrapedToday, highIntentToday, pendingOutreach, processedTotal, totalScraped, nigerianTotal, highHeatTotal] =
     await Promise.all([
       prisma.scrapedLead.count({ where: { createdAt: { gte: today } } }),
-      // Use leadHeatScore when present, fall back to legacy intentScore for back-compat
       prisma.scrapedLead.count({
         where: {
           createdAt: { gte: today },
@@ -1010,18 +889,10 @@ async function getAcquisitionStats() {
       prisma.scrapedLead.count({ where: { leadHeatScore: { gte: 70 } } }),
     ])
 
-  // ── Phase 35 — Pain Signal Classifier counters + breakdowns ──────────────
-  // Defensive: each query may fail if the migration hasn't run. We swallow
-  // errors and return zeros so the dashboard still renders.
   let painSignalLeads     = 0
   let buyerReadyLeads     = 0
   let hotBuyerLeads       = 0
   let rejectedLowQuality  = 0
-  let topPainPhrases      = []
-  let topBuyerPhrases     = []
-  let actionBreakdown     = []
-  let qualityBreakdown    = []
-  let stageBreakdown      = []
   try {
     [painSignalLeads, buyerReadyLeads, hotBuyerLeads, rejectedLowQuality] = await Promise.all([
       prisma.scrapedLead.count({ where: { painSignalScore:     { gte: 25 } } }),
@@ -1029,163 +900,8 @@ async function getAcquisitionStats() {
       prisma.scrapedLead.count({ where: { leadQuality: 'hot' } }),
       prisma.scrapedLead.count({ where: { leadQuality: 'reject' } }),
     ])
-
-    const [actionGroups, qualityGroups, stageGroups] = await Promise.all([
-      prisma.scrapedLead.groupBy({
-        by: ['recommendedAction'],
-        where: { recommendedAction: { not: null } },
-        _count: { _all: true },
-        orderBy: { _count: { recommendedAction: 'desc' } },
-        take: 10,
-      }),
-      prisma.scrapedLead.groupBy({
-        by: ['leadQuality'],
-        where: { leadQuality: { not: null } },
-        _count: { _all: true },
-        orderBy: { _count: { leadQuality: 'desc' } },
-        take: 10,
-      }),
-      prisma.scrapedLead.groupBy({
-        by: ['buyingStage'],
-        where: { buyingStage: { not: null } },
-        _count: { _all: true },
-        orderBy: { _count: { buyingStage: 'desc' } },
-        take: 10,
-      }),
-    ])
-
-    actionBreakdown = actionGroups.map(g => ({
-      action: g.recommendedAction, count: g._count._all,
-    }))
-    qualityBreakdown = qualityGroups.map(g => ({
-      quality: g.leadQuality, count: g._count._all,
-    }))
-    stageBreakdown = stageGroups.map(g => ({
-      stage: g.buyingStage, count: g._count._all,
-    }))
-
-    // Top pain / buyer phrases — aggregated from JSON columns. We pull the
-    // most-recent N rows and tally in memory; cheaper than a DB-side jsonb
-    // unnest and works on any Postgres version.
-    const [recentPain, recentBuyer] = await Promise.all([
-      prisma.scrapedLead.findMany({
-        where: {
-          matchedPainSignals: { not: null },
-          createdAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) },
-        },
-        select: { matchedPainSignals: true },
-        orderBy: { createdAt: 'desc' },
-        take: 500,
-      }),
-      prisma.scrapedLead.findMany({
-        where: {
-          matchedBuyerSignals: { not: null },
-          createdAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) },
-        },
-        select: { matchedBuyerSignals: true },
-        orderBy: { createdAt: 'desc' },
-        take: 500,
-      }),
-    ])
-
-    const painTally  = {}
-    const buyerTally = {}
-    for (const row of recentPain) {
-      const list = Array.isArray(row.matchedPainSignals) ? row.matchedPainSignals : []
-      for (const sig of list) {
-        const key = sig?.phrase || sig?.tag
-        if (!key) continue
-        painTally[key] = (painTally[key] || 0) + 1
-      }
-    }
-    for (const row of recentBuyer) {
-      const list = Array.isArray(row.matchedBuyerSignals) ? row.matchedBuyerSignals : []
-      for (const sig of list) {
-        const key = sig?.phrase || sig?.tag
-        if (!key) continue
-        buyerTally[key] = (buyerTally[key] || 0) + 1
-      }
-    }
-    topPainPhrases = Object.entries(painTally)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([phrase, count]) => ({ phrase, count }))
-    topBuyerPhrases = Object.entries(buyerTally)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([phrase, count]) => ({ phrase, count }))
   } catch (err) {
-    console.warn('[LeadAcquisition] Pain-signal breakdowns unavailable:', err.message)
-  }
-
-  // ── MAIE breakdowns — groupBy aggregations for the dashboard ─────────────
-  // All wrapped in a defensive try block: if these columns don't exist yet
-  // (i.e. migration hasn't been run), we still return the headline counters.
-  let segmentBreakdown = []
-  let cityBreakdown    = []
-  let rejectionBreakdown = []
-  let painBreakdownByConcern = []
-  let academyLeadCount = 0
-  let consultLeadCount = 0
-  try {
-    const [segGroups, cityGroups, rejGroups, concernGroups] = await Promise.all([
-      prisma.scrapedLead.groupBy({
-        by: ['leadSegment'],
-        where: { leadSegment: { not: null } },
-        _count: { _all: true },
-        orderBy: { _count: { leadSegment: 'desc' } },
-        take: 12,
-      }),
-      prisma.scrapedLead.groupBy({
-        by: ['detectedCity'],
-        where: { detectedCity: { not: null } },
-        _count: { _all: true },
-        orderBy: { _count: { detectedCity: 'desc' } },
-        take: 10,
-      }),
-      prisma.scrapedLead.groupBy({
-        by: ['rejectionReason'],
-        where: { rejectionReason: { not: null }, createdAt: { gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) } },
-        _count: { _all: true },
-        orderBy: { _count: { rejectionReason: 'desc' } },
-        take: 10,
-      }),
-      prisma.scrapedLead.groupBy({
-        by: ['concernType'],
-        where: { concernType: { not: null }, leadHeatScore: { gte: 50 } },
-        _count: { _all: true },
-        orderBy: { _count: { concernType: 'desc' } },
-        take: 10,
-      }),
-    ])
-
-    segmentBreakdown = segGroups.map(g => ({
-      segment: g.leadSegment,
-      count:   g._count._all,
-    }))
-    cityBreakdown = cityGroups.map(g => ({
-      city:  g.detectedCity,
-      count: g._count._all,
-    }))
-    rejectionBreakdown = rejGroups.map(g => ({
-      reason: g.rejectionReason,
-      count:  g._count._all,
-    }))
-    painBreakdownByConcern = concernGroups.map(g => ({
-      concern: g.concernType,
-      count:   g._count._all,
-    }))
-
-    // Funnel tallies — count leads in academy / consult buckets
-    academyLeadCount = segmentBreakdown
-      .filter(s => ['academy', 'reseller', 'entrepreneur', 'skincare_business'].includes(s.segment))
-      .reduce((sum, s) => sum + s.count, 0)
-    consultLeadCount = segmentBreakdown
-      .filter(s => s.segment === 'consultation')
-      .reduce((sum, s) => sum + s.count, 0)
-  } catch (err) {
-    // Most likely the migration hasn't run yet. Log once and return defaults.
-    console.warn('[LeadAcquisition] MAIE breakdowns unavailable:', err.message)
+    console.warn('[LeadAcquisition] Pain-signal counters unavailable:', err.message)
   }
 
   const acquisitionStatus = {
@@ -1198,18 +914,25 @@ async function getAcquisitionStats() {
     lastStatus:        STATE.lastStatus,
     stale:             STATE.lastStale,
 
-    // ── Phase 35 — pain-point + credit-protection visibility ───────────────
-    mode:                ACQUISITION_MODE,         // 'pain_point_first' | 'hashtag_backup'
-    intervalHours:       INTERVAL_HOURS,           // e.g. 6
-    maxItemsPerRun:      MAX_ITEMS_PER_RUN,        // e.g. 100
-    creditsProtection:   CREDITS_PROTECTION_ACTIVE ? 'active' : 'relaxed',
-    nextRunAt:           STATE.nextRunAt ? STATE.nextRunAt.toISOString() : null,
+    // Phase 37 — manual mode visibility
+    mode:                'manual',
+    manualMode:          true,
+    selectedCountry:     STATE.selectedCountry,
+    countryLabel:        getCountryProfile(STATE.selectedCountry).label,
+    supportedCountries:  listSupportedCountries(),
+    maxVideosPerQuery:   MAX_VIDEOS_PER_QUERY,
+    maxCommentsPerVideo: MAX_COMMENTS_PER_VIDEO,
+    maxAcceptedLeads:    MAX_ACCEPTED_LEADS,
+    injectThreshold:     { buyer: INJECT_BUYER_THRESHOLD, pain: INJECT_PAIN_THRESHOLD },
+    nextRunAt:           null,
     itemsThisCycle:      STATE.itemsThisCycle ?? 0,
+    acceptedThisCycle:   STATE.acceptedThisCycle ?? 0,
+    acceptanceCapReached: Boolean(STATE.acceptanceCapReached),
     lastBatch:           STATE.lastBatch,
+    lastVerification:    STATE.lastVerification,
     recentBatchesBlocked: getRecentBatchSnapshot().length,
   }
 
-  // ── Phase 36 — outreach queue conversion counts ──────────────────────────
   let outreachCounts = {
     readyToReply: 0, replied: 0, converted: 0, skipped: 0,
     pendingByTemperature: { hot: 0, warm: 0, cold: 0 },
@@ -1231,31 +954,14 @@ async function getAcquisitionStats() {
     pendingOutreach,
     processedTotal,
     totalScraped,
-    // Phase 36 — Conversion-focused headline
     outreachCounts,
-    // ── Phase 33 — MAIE headline counters ─────────────────────────────────
     nigerianTotal,
     highHeatTotal,
-    academyLeadCount,
-    consultLeadCount,
-    // ── Phase 33 — MAIE breakdowns ────────────────────────────────────────
-    segmentBreakdown,
-    cityBreakdown,
-    rejectionBreakdown,
-    painBreakdownByConcern,
-    // ── Phase 35 — Pain Signal Classifier counters + breakdowns ──────────
     painSignalLeads,
     buyerReadyLeads,
     hotBuyerLeads,
     rejectedLowQuality,
-    topPainPhrases,
-    topBuyerPhrases,
-    actionBreakdown,
-    qualityBreakdown,
-    stageBreakdown,
     acquisitionStatus,
-    // Back-compat for any older consumer — derived strictly from `running`,
-    // never inferred from a lingering pendingRunId.
     engineStatus: acquisitionStatus.running ? 'running' : 'idle',
   }
 }

@@ -15,15 +15,15 @@ const APIFY_BASE = 'https://api.apify.com/v2'
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
-// Phase 35 — Apify credit cap. Default 100, hard ceiling 150 even when env
-// var is configured higher. Anything below 30 is widened to 30 to keep batches
-// useful.
-const MAX_ITEMS_HARD_CEILING = 150
-const MAX_ITEMS_DEFAULT      = 100
+// Phase 37 — strict Apify credit caps. Manual mode + Africa-first means we
+// keep batches small. Default budget = 3 videos × 10-tag batch = 30 items.
+const MAX_ITEMS_HARD_CEILING = 60
+const MAX_ITEMS_DEFAULT      = 30
+const PER_TAG_HARD_CEILING   = 3   // ≤ 3 videos per query / hashtag
 function _resolveMaxItems(override) {
   const raw = Number(override ?? process.env.APIFY_MAX_ITEMS_PER_RUN ?? MAX_ITEMS_DEFAULT)
   if (!Number.isFinite(raw) || raw <= 0) return MAX_ITEMS_DEFAULT
-  return Math.min(MAX_ITEMS_HARD_CEILING, Math.max(30, Math.round(raw)))
+  return Math.min(MAX_ITEMS_HARD_CEILING, Math.max(10, Math.round(raw)))
 }
 
 /**
@@ -54,9 +54,10 @@ async function triggerTiktokHashtagScrape(hashtagsOrMode = 'priority', opts = {}
 
   const actorId   = process.env.APIFY_TIKTOK_ACTOR_ID || 'clockworks/tiktok-hashtag-scraper'
   const maxItems  = _resolveMaxItems(opts.maxItems)
-  // Spread item budget across the batch so the actor doesn't burn credits on
-  // a single hashtag. Never go below 5 items per page.
-  const perPage   = Math.max(5, Math.floor(maxItems / Math.max(1, selectedHashtags.length)))
+  // Phase 37 — strict per-tag cap (≤ 3 videos per query). The actor receives
+  // a small `resultsPerPage` to avoid burning credits on a single hashtag.
+  const perTagCap = Math.max(1, Math.min(PER_TAG_HARD_CEILING, Number(opts.perTagItems) || PER_TAG_HARD_CEILING))
+  const perPage   = perTagCap
 
   // ── Pre-run diagnostic log ──────────────────────────────────────────────────
   console.log('[TikTok Scraper] ─────────────────────────────────────────')
@@ -307,16 +308,16 @@ function _err(msg, status) {
 // Default actor: clockworks/tiktok-comments-scraper. Takes a list of TikTok
 // post URLs and returns top-level comments. Override via APIFY_TIKTOK_COMMENTS_ACTOR_ID.
 
-// Phase 36 — aggressive credit caps. Operator's rule: no more than
-// 5 videos per cycle × 15 comments per video = 75 comments / cycle max.
+// Phase 37 — strict caps. Operator's rule: ≤ 3 videos × ≤ 10 comments per
+// video = 30 comments per cycle max.
 const COMMENTS_ACTOR_DEFAULT     = 'clockworks/tiktok-comments-scraper'
-const COMMENTS_PER_VIDEO_DEFAULT = 15
-const COMMENTS_HARD_CEILING      = 15
+const COMMENTS_PER_VIDEO_DEFAULT = 10
+const COMMENTS_HARD_CEILING      = 10
 
 function _resolveCommentsPerVideo(override) {
   const raw = Number(override ?? process.env.APIFY_COMMENTS_PER_VIDEO ?? COMMENTS_PER_VIDEO_DEFAULT)
   if (!Number.isFinite(raw) || raw <= 0) return COMMENTS_PER_VIDEO_DEFAULT
-  return Math.min(COMMENTS_HARD_CEILING, Math.max(5, Math.round(raw)))
+  return Math.min(COMMENTS_HARD_CEILING, Math.max(3, Math.round(raw)))
 }
 
 /**
@@ -336,10 +337,12 @@ async function triggerTiktokCommentsScrape(postUrls, opts = {}) {
     throw _err('triggerTiktokCommentsScrape requires a non-empty postUrls array', 400)
   }
 
+  // Phase 37 — operator-enforced cap: at most 3 videos per cycle.
+  const VIDEO_HARD_CAP = 3
   const cleanedUrls = postUrls
     .map(u => (typeof u === 'string' ? u.trim() : ''))
     .filter(u => u && /^https?:\/\/(www\.)?tiktok\.com\//i.test(u))
-    .slice(0, 25)
+    .slice(0, VIDEO_HARD_CAP)
 
   if (cleanedUrls.length === 0) {
     throw _err('No valid TikTok post URLs after cleaning', 400)

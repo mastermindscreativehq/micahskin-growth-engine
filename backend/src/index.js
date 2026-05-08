@@ -54,7 +54,9 @@ function startBackgroundServices() {
   safeStartService('Academy Onboarding Service', startAcademyOnboarding)
   safeStartService('Academy Experience Service', startAcademyExperience)
   safeStartService('Auto Follow-Up Conversion Engine', startAutoFollowUpService)
-  safeStartService('Lead Acquisition Engine', startLeadAcquisitionEngine)
+  // Phase 37 — Lead Acquisition Engine is manual-mode only. The startup hook is
+  // kept (it logs the mode) but performs no scheduling or auto-trigger.
+  safeStartService('Lead Acquisition Engine (manual mode)', startLeadAcquisitionEngine)
   safeStartService('MCE Follow-Up Engine', startMceFollowUpService)
 }
 

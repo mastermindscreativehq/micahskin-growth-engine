@@ -297,11 +297,14 @@ function MAIEBreakdownCard({ title, items, keyField, barColor, emptyLabel }) {
 function LeadSourcesSection({ leadSources, onRefresh }) {
   const [acquiring, setAcquiring] = useState(false)
   const [triggered, setTriggered] = useState(false)
+  const [country, setCountry] = useState(
+    leadSources?.acquisitionStatus?.selectedCountry || 'NG'
+  )
 
   const trigger = async () => {
     setAcquiring(true)
     try {
-      await triggerAcquisitionRun()
+      await triggerAcquisitionRun(country)
       setTriggered(true)
       setTimeout(() => setTriggered(false), 6000)
       onRefresh()
@@ -317,30 +320,40 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
     state: 'idle', running: false, pendingRunId: null,
     runStartedAt: null, lastRunAt: null, lastRunFinishedAt: null,
     lastStatus: null, stale: false,
-    mode: 'pain_point_first', intervalHours: 6, maxItemsPerRun: 100,
-    creditsProtection: 'active', nextRunAt: null, itemsThisCycle: 0,
-    lastBatch: null, recentBatchesBlocked: 0,
+    mode: 'manual', manualMode: true,
+    selectedCountry: 'NG', countryLabel: 'Nigeria',
+    supportedCountries: [
+      { code: 'NG', label: 'Nigeria' }, { code: 'GH', label: 'Ghana' },
+      { code: 'KE', label: 'Kenya' },   { code: 'ZA', label: 'South Africa' },
+    ],
+    maxVideosPerQuery: 3, maxCommentsPerVideo: 10, maxAcceptedLeads: 15,
+    injectThreshold: { buyer: 45, pain: 35 },
+    nextRunAt: null, itemsThisCycle: 0, acceptedThisCycle: 0,
+    acceptanceCapReached: false,
+    lastBatch: null, lastVerification: null, recentBatchesBlocked: 0,
   }
   const isRunning = status.running === true || !!status.pendingRunId
 
-  // ── Phase 35 — Acquisition mode + credit protection display ──────────────
-  const mode             = status.mode            || 'pain_point_first'
-  const intervalHours    = status.intervalHours   || 6
-  const maxItemsPerRun   = status.maxItemsPerRun  || 100
-  const creditsProtect   = status.creditsProtection || 'active'
+  // ── Phase 37 — Manual mode + Africa-first display ────────────────────────
+  const supportedCountries = status.supportedCountries?.length
+    ? status.supportedCountries
+    : [
+        { code: 'NG', label: 'Nigeria' }, { code: 'GH', label: 'Ghana' },
+        { code: 'KE', label: 'Kenya' },   { code: 'ZA', label: 'South Africa' },
+      ]
+  const maxVideos        = status.maxVideosPerQuery   ?? 3
+  const maxComments      = status.maxCommentsPerVideo ?? 10
+  const maxAccepted      = status.maxAcceptedLeads    ?? 15
+  const injectBuyer      = status.injectThreshold?.buyer ?? 45
+  const injectPain       = status.injectThreshold?.pain  ?? 35
   const itemsThisCycle   = status.itemsThisCycle ?? 0
+  const acceptedThisCycle = status.acceptedThisCycle ?? 0
   const recentBlocked    = status.recentBatchesBlocked ?? 0
   const lastBatch        = status.lastBatch
   const lastBatchPhrases = lastBatch?.phrases?.length
     ? lastBatch.phrases
     : (lastBatch?.hashtags || [])
-  const modeLabel        = mode === 'pain_point_first' ? 'Pain-point first' : 'Hashtag backup'
-  const modeBadgeClass   = mode === 'pain_point_first'
-    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-    : 'bg-amber-50 text-amber-700 border-amber-200'
-  const creditsBadgeClass = creditsProtect === 'active'
-    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-    : 'bg-rose-50 text-rose-700 border-rose-200'
+  const lastVerif        = status.lastVerification
 
   const dotClass = isRunning
     ? 'bg-amber-400 animate-pulse'
@@ -371,8 +384,8 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
   ]
 
   return (
-    <SectionBox title="Lead Sources — TikTok Acquisition" color="teal">
-      <div className="flex items-center justify-between mb-4">
+    <SectionBox title="Lead Sources — Africa-First Buyer Intent" color="teal">
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <span className={`h-2.5 w-2.5 rounded-full shrink-0 transition-colors ${dotClass}`} />
           <span className="text-xs font-semibold text-gray-700">{stateLabel}</span>
@@ -380,14 +393,27 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
             {(leadSources?.totalScraped ?? 0).toLocaleString()} total scraped
           </span>
         </div>
-        <button
-          type="button"
-          onClick={trigger}
-          disabled={acquiring || isRunning}
-          className="shrink-0 rounded-lg border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
-        >
-          {acquiring ? '…' : '▶ Run Now'}
-        </button>
+        <div className="flex items-center gap-2">
+          <label className="text-[11px] text-gray-500 font-semibold">Country:</label>
+          <select
+            value={country}
+            onChange={(e) => setCountry(e.target.value)}
+            disabled={isRunning || acquiring}
+            className="rounded-lg border border-gray-200 bg-white text-gray-700 px-2 py-1 text-xs font-semibold disabled:opacity-50"
+          >
+            {supportedCountries.map(c => (
+              <option key={c.code} value={c.code}>{c.label}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={trigger}
+            disabled={acquiring || isRunning}
+            className="shrink-0 rounded-lg border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
+          >
+            {acquiring ? '…' : '▶ Run Now'}
+          </button>
+        </div>
       </div>
 
       <div className="mb-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-gray-500 sm:grid-cols-4">
@@ -397,39 +423,87 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
         <span>Total injected: <span className="text-gray-700 tabular-nums">{(leadSources?.processedTotal ?? 0).toLocaleString()}</span></span>
       </div>
 
-      {/* ── Phase 35 — Acquisition mode + credit protection panel ─────────── */}
-      <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+      {/* ── Phase 37 — Manual-mode panel ────────────────────────────────── */}
+      <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3">
         <div className="flex flex-wrap items-center gap-2 mb-2">
-          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${modeBadgeClass}`}>
-            Mode: {modeLabel}
+          <span className="inline-flex items-center rounded-full border border-emerald-300 bg-white text-emerald-700 px-2 py-0.5 text-[11px] font-bold">
+            Manual Mode Enabled
           </span>
           <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold">
-            Runs every {intervalHours} hours
+            Country: {status.countryLabel || 'Nigeria'}
           </span>
           <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums">
-            Max {maxItemsPerRun} items / run
+            ≤ {maxVideos} videos / query
           </span>
-          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${creditsBadgeClass}`}>
-            Credits protection: {creditsProtect}
+          <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums">
+            ≤ {maxComments} comments / video
+          </span>
+          <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums">
+            Stop after {maxAccepted} accepted
+          </span>
+          <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums">
+            Inject if buyer ≥ {injectBuyer} OR pain ≥ {injectPain}
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-gray-500 sm:grid-cols-4">
-          <span>Next run: <span className="text-gray-700 tabular-nums">{status.nextRunAt ? fmtDT(status.nextRunAt) : '—'}</span></span>
-          <span>Items this cycle: <span className="text-gray-700 tabular-nums">{itemsThisCycle}</span></span>
-          <span>24h blocked batches: <span className="text-gray-700 tabular-nums">{recentBlocked}</span></span>
-          <span>Hashtag fallback: <span className="text-gray-700">{mode === 'pain_point_first' ? 'backup only' : 'active'}</span></span>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-emerald-800/80 sm:grid-cols-4">
+          <span>Items this cycle: <span className="text-emerald-900 tabular-nums">{itemsThisCycle}</span></span>
+          <span>Accepted this cycle: <span className="text-emerald-900 tabular-nums">{acceptedThisCycle}</span></span>
+          <span>24h blocked batches: <span className="text-emerald-900 tabular-nums">{recentBlocked}</span></span>
+          <span>Acceptance cap reached: <span className="text-emerald-900">{status.acceptanceCapReached ? 'yes' : 'no'}</span></span>
         </div>
 
-        <div className="mt-2 text-[11px] text-gray-500">
+        <div className="mt-2 text-[11px] text-emerald-800/80">
           Last query batch:{' '}
           {lastBatchPhrases.length === 0 ? (
-            <span className="text-gray-400">— (no run yet)</span>
+            <span className="text-emerald-700/60">— (no run yet)</span>
           ) : (
-            <span className="text-gray-700">{lastBatchPhrases.slice(0, 10).join(' · ')}</span>
+            <span className="text-emerald-900">{lastBatchPhrases.slice(0, 10).join(' · ')}</span>
           )}
         </div>
       </div>
+
+      {/* ── Phase 37 — Last-run verification (accepted/rejected samples) ── */}
+      {lastVerif && (lastVerif.accepted_samples?.length || lastVerif.rejected_samples?.length) ? (
+        <div className="mb-4 rounded-lg border border-gray-200 bg-white px-3 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+              Last-run verification
+            </span>
+            <span className="text-[10px] text-gray-400 tabular-nums">
+              accepted={lastVerif.accepted ?? 0} · rejected={lastVerif.rejected ?? 0}
+            </span>
+          </div>
+          {lastVerif.accepted_samples?.length > 0 && (
+            <div className="mb-2">
+              <div className="text-[11px] font-semibold text-emerald-700 mb-1">Accepted (passed filters)</div>
+              <ul className="space-y-1">
+                {lastVerif.accepted_samples.slice(0, 6).map((s, i) => (
+                  <li key={i} className="text-[11px] text-gray-700 leading-snug">
+                    <span className="font-mono text-emerald-700">@{s.username || 'unknown'}</span>{' '}
+                    <span className="tabular-nums text-gray-500">[buyer={s.buyer} pain={s.pain} heat={s.heat}{s.city ? ` ${s.city}` : ''}{s.country ? ` ${s.country}` : ''}{s.isHot ? ' HOT' : ''}]</span>{' '}
+                    <span className="text-gray-600">"{s.text}"</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {lastVerif.rejected_samples?.length > 0 && (
+            <div>
+              <div className="text-[11px] font-semibold text-rose-700 mb-1">Rejected (filter reasons)</div>
+              <ul className="space-y-1">
+                {lastVerif.rejected_samples.slice(0, 6).map((s, i) => (
+                  <li key={i} className="text-[11px] text-gray-700 leading-snug">
+                    <span className="font-mono text-rose-700">@{s.username || 'unknown'}</span>{' '}
+                    <span className="tabular-nums text-gray-500">[{s.reason}]</span>{' '}
+                    <span className="text-gray-600">"{s.text}"</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {status.stale && (
         <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
@@ -453,163 +527,56 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
         ▸ Open the <span className="font-semibold text-brand-600">Outreach Queue</span> tab to reply.
       </p>
 
-      {/* ── Phase 36 — Detailed analytics collapsed by default ─────────────── */}
-      <details className="mt-5 group">
-        <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600 select-none">
-          ▾ Show detailed acquisition analytics
-        </summary>
-
-      {/* ── Phase 33 — MAIE Intelligence Panels ───────────────────────────── */}
+      {/* ── Phase 37 — Conversion-focused tiles only ──────────────────────── */}
       <div className="mt-5 pt-5 border-t border-dashed border-gray-200">
         <div className="flex items-center gap-2 mb-3">
           <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">
-            MAIE Intelligence
-          </span>
-          <span className="rounded-full bg-emerald-50 text-emerald-600 px-2 py-0.5 text-[9px] font-semibold">
-            Acquisition Intelligence Engine
+            Conversion Focus
           </span>
         </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <MAIEStatCard
-            label="Nigerian Leads"
+            label="Ready to reply"
+            value={(oc.readyToReply ?? 0).toLocaleString()}
+            color="amber"
+            sub="awaiting first DM"
+          />
+          <MAIEStatCard
+            label="Nigerian leads"
             value={(leadSources?.nigerianTotal ?? 0).toLocaleString()}
             color="emerald"
             sub="confidence ≥ 30"
           />
           <MAIEStatCard
-            label="High Heat (≥70)"
-            value={(leadSources?.highHeatTotal ?? 0).toLocaleString()}
-            color="rose"
-            sub="all-time"
-          />
-          <MAIEStatCard
-            label="Academy Funnel"
-            value={(leadSources?.academyLeadCount ?? 0).toLocaleString()}
-            color="violet"
-            sub="reseller / business"
-          />
-          <MAIEStatCard
-            label="Consult Funnel"
-            value={(leadSources?.consultLeadCount ?? 0).toLocaleString()}
-            color="sky"
-            sub="seeking expert"
-          />
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <MAIEBreakdownCard
-            title="Lead Segments"
-            items={leadSources?.segmentBreakdown}
-            keyField="segment"
-            barColor="bg-teal-400"
-            emptyLabel="Run a cycle to populate segments"
-          />
-          <MAIEBreakdownCard
-            title="Top Nigerian Cities"
-            items={leadSources?.cityBreakdown}
-            keyField="city"
-            barColor="bg-emerald-400"
-            emptyLabel="No city signals detected yet"
-          />
-          <MAIEBreakdownCard
-            title="Rejection Reasons (last 7d)"
-            items={leadSources?.rejectionBreakdown}
-            keyField="reason"
-            barColor="bg-rose-400"
-            emptyLabel="No rejections recorded"
-          />
-          <MAIEBreakdownCard
-            title="Pain Categories — Hot Leads"
-            items={leadSources?.painBreakdownByConcern}
-            keyField="concern"
-            barColor="bg-amber-400"
-            emptyLabel="No high-heat leads yet"
-          />
-        </div>
-      </div>
-
-      <p className="mt-4 text-[11px] text-gray-400 leading-snug">
-        MAIE: TikTok scrape → Nigeria detect → psychology score → heat engine → segmentation → outreach.
-        Hot leads (heat ≥ 70) auto-queued for outreach.
-      </p>
-
-      {/* ── Phase 35 — Pain Signal Classifier ─────────────────────────── */}
-      <div className="mt-5 pt-5 border-t border-dashed border-gray-200">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600">
-            Pain Signal Classifier
-          </span>
-          <span className="rounded-full bg-rose-50 text-rose-600 px-2 py-0.5 text-[9px] font-semibold">
-            Buyer Readiness Engine
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
-          <MAIEStatCard
-            label="Pain Signal Leads"
-            value={(leadSources?.painSignalLeads ?? 0).toLocaleString()}
-            color="rose"
-            sub="painScore ≥ 25"
-          />
-          <MAIEStatCard
-            label="Buyer Ready Leads"
+            label="Buyer intent"
             value={(leadSources?.buyerReadyLeads ?? 0).toLocaleString()}
-            color="emerald"
-            sub="readiness ≥ 45"
+            color="teal"
+            sub={`readiness ≥ ${injectBuyer}`}
           />
           <MAIEStatCard
-            label="Hot Buyer Leads"
-            value={(leadSources?.hotBuyerLeads ?? 0).toLocaleString()}
-            color="amber"
-            sub="quality = hot"
+            label="WhatsApp CTA clicks"
+            value={(leadSources?.outreachCounts?.whatsappClicks ?? 0).toLocaleString()}
+            color="sky"
+            sub="from outreach replies"
           />
           <MAIEStatCard
-            label="Rejected Low Quality"
-            value={(leadSources?.rejectedLowQuality ?? 0).toLocaleString()}
-            color="gray"
-            sub="spam / fake / generic"
+            label="Replied"
+            value={(oc.replied ?? 0).toLocaleString()}
+            color="indigo"
+            sub="lead responded"
+          />
+          <MAIEStatCard
+            label="Converted"
+            value={(oc.converted ?? 0).toLocaleString()}
+            color="violet"
+            sub="paid / academy"
           />
         </div>
-
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <MAIEBreakdownCard
-            title="Top Pain Phrases (last 30d)"
-            items={leadSources?.topPainPhrases}
-            keyField="phrase"
-            barColor="bg-rose-400"
-            emptyLabel="No pain phrases captured yet"
-          />
-          <MAIEBreakdownCard
-            title="Top Buyer Phrases (last 30d)"
-            items={leadSources?.topBuyerPhrases}
-            keyField="phrase"
-            barColor="bg-emerald-400"
-            emptyLabel="No buyer phrases captured yet"
-          />
-          <MAIEBreakdownCard
-            title="Recommended Actions"
-            items={leadSources?.actionBreakdown}
-            keyField="action"
-            barColor="bg-violet-400"
-            emptyLabel="Run a cycle to populate actions"
-          />
-          <MAIEBreakdownCard
-            title="Buying Stage"
-            items={leadSources?.stageBreakdown}
-            keyField="stage"
-            barColor="bg-sky-400"
-            emptyLabel="No buying-stage data yet"
-          />
-        </div>
-
-        <p className="mt-4 text-[11px] text-gray-400 leading-snug">
-          Phase 35: classifies emotional desperation + buying intent — final score combines
-          pain (35%), buyer readiness (35%), emotional pain (20%), Nigeria confidence (10%).
-          Hot ≥ 60 routes to outreach; reject filters spam, emoji-only, brand promo.
+        <p className="mt-3 text-[11px] text-gray-500 leading-snug">
+          Phase 37 — strict Africa-first manual mode. Only leads with buyer intent ≥ {injectBuyer} or
+          pain signal ≥ {injectPain} reach the Outreach Queue; everything else is stored silently.
         </p>
       </div>
-      </details>
     </SectionBox>
   )
 }

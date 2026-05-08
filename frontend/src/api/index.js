@@ -564,8 +564,12 @@ export async function fetchAcquisitionStats() {
   return protectedFetch(`${BASE_URL}/api/admin/acquisition/stats`)
 }
 
-export async function triggerAcquisitionRun() {
-  return protectedFetch(`${BASE_URL}/api/admin/acquisition/trigger`, { method: 'POST' })
+export async function triggerAcquisitionRun(country = 'NG') {
+  return protectedFetch(`${BASE_URL}/api/admin/acquisition/trigger`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ country }),
+  })
 }
 
 // ── Phase 36 — Human-Assisted Outreach Queue ─────────────────────────────────

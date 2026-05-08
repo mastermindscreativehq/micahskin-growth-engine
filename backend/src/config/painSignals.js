@@ -64,18 +64,18 @@ const PAIN_SIGNALS = [
 // straight to a quote / purchase moment.
 
 const BUYER_SIGNALS = [
-  // Pricing
-  { tag: 'how_much',           weight: 32, phrase: 'how much',
+  // Pricing — operator-mandated heavy buyer signal.
+  { tag: 'how_much',           weight: 46, phrase: 'how much',
     pattern: /\bhow\s+much\b/i },
-  { tag: 'whats_the_price',    weight: 30, phrase: "what's the price",
+  { tag: 'whats_the_price',    weight: 42, phrase: "what's the price",
     pattern: /\b(what'?s|what\s+is)\s+(the\s+)?(price|cost|pricing)\b/i },
   { tag: 'price_question',     weight: 24, phrase: 'price?',
     pattern: /\b(price|cost|pricing)\s*\??$/im },
 
-  // Where to buy / shipping
-  { tag: 'where_can_i_buy',    weight: 32, phrase: 'where can I buy',
+  // Where to buy / shipping — operator-mandated heavy buyer signal.
+  { tag: 'where_can_i_buy',    weight: 46, phrase: 'where can I buy',
     pattern: /\bwhere\s+(can|do|to)\s+(i|you)\s+(buy|get|order|find)\b/i },
-  { tag: 'how_do_i_order',     weight: 30, phrase: 'how do I order',
+  { tag: 'how_do_i_order',     weight: 40, phrase: 'how do I order',
     pattern: /\bhow\s+(do|can|to)\s+(i|you)?\s*(order|purchase|buy|get)\b/i },
   { tag: 'do_you_ship_ng',     weight: 30, phrase: 'do you ship to Nigeria',
     pattern: /\bdo\s+you\s+ship\s+(to\s+)?(nigeria|naija|lagos|abuja)\b/i },
@@ -129,6 +129,26 @@ const BUYER_SIGNALS = [
     pattern: /\bwhat\s+(cream|product|soap|serum|routine)\s+(works|worked|is\s+good)\s+for\b/i },
   { tag: 'does_it_work',       weight: 16, phrase: 'does this really work',
     pattern: /\bdoes\s+(this|it|that)\s+(really|actually)?\s*work\b/i },
+
+  // Phase 37 — operator-mandated high-intent boosts. Each of these phrases is
+  // strong enough on its own to clear the buyer-intent gate (45) per operator
+  // directive ("Increase scoring heavily" for these explicit hand-raises).
+  { tag: 'what_can_i_use',     weight: 46, phrase: 'what can I use',
+    pattern: /\bwhat\s+can\s+i\s+(use|do|try|get|buy)\b/i },
+  { tag: 'help_me_please',     weight: 46, phrase: 'help me please',
+    pattern: /\b(help|please\s+help|pls\s+help|abeg\s+help|biko\s+help)\s+me\b/i },
+  { tag: 'can_this_remove',    weight: 46, phrase: 'can this remove',
+    pattern: /\bcan\s+(this|it|that)\s+(remove|fix|clear|treat|cure|fade|lighten)\b/i },
+  { tag: 'i_need_help',        weight: 46, phrase: 'I need help',
+    pattern: /\bi\s+(really\s+)?need\s+(help|advice|recommendation)\b/i },
+  { tag: 'how_do_i_fix',       weight: 40, phrase: 'how do I fix',
+    pattern: /\bhow\s+(do|can|to)\s+(i|you)?\s*(fix|treat|remove|get\s+rid\s+of|clear|fade|lighten)\b/i },
+  { tag: 'what_worked_for_you',weight: 36, phrase: 'what worked for you',
+    pattern: /\bwhat\s+(worked|works|did\s+you\s+use)\s+for\s+(you|u|your)\b/i },
+  { tag: 'cream_for',          weight: 32, phrase: 'cream for',
+    pattern: /\b(cream|soap|serum|product|routine)\s+for\s+(dark|hyper|acne|stretch|uneven|melanin|black|african|nigerian|naija|lagos|abuja)\b/i },
+  { tag: 'tried_everything_buy', weight: 36, phrase: "I've tried everything",
+    pattern: /\b(i'?ve|i\s+have)\s+tried\s+everything\b/i },
 ]
 
 // ── PROBLEM-AWARE — they can name their concern, even without buyer intent ───

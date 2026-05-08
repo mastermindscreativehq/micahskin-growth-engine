@@ -2,57 +2,81 @@
 
 /**
  * painPointQueries.js
- * Phase 35 — Pain-point-first Nigerian skincare lead discovery.
+ * Phase 37 — Strict Africa-first, manual-only buyer-intent discovery.
  *
- * Replaces hashtag-first scraping with intent-led queries: each batch is built
- * from a Nigerian pain-point query plus a Nigerian location modifier. Hashtags
- * stay available as a backup channel (see micahskinTikTokHashtags.js).
+ * Replaces broad / global hashtag discovery with a country-aware pain-point +
+ * buyer-intent batch generator. Operator picks a country (Nigeria / Ghana /
+ * Kenya / South Africa) and we build a 10-tag batch from:
  *
- * The Apify TikTok actor only accepts hashtag-shaped tokens, so each query is
- * converted to its canonical hashtag form (lowercase + alphanumeric only)
- * before being sent. The original phrases are preserved alongside the canonical
- * form so the dashboard can display the human-readable batch.
+ *   COUNTRY × PAIN × BUYER_INTENT
+ *
+ * The Apify TikTok actor only accepts hashtag-shaped tokens, so each phrase is
+ * canonicalised (lowercase + alphanumeric only) before being sent. The
+ * human-readable phrase pool is preserved for dashboards / logs.
  */
 
-// ── Source phrases (kept verbatim for dashboard / logs) ──────────────────────
+// ── Country-aware lexicons ───────────────────────────────────────────────────
 
-const PRIMARY_PAIN_POINTS = [
+const COUNTRY_PROFILES = {
+  NG: {
+    label:       'Nigeria',
+    locations:   ['nigeria', 'lagos', 'abuja', 'port harcourt', 'naija', 'lekki', 'ibadan', 'benin', 'enugu'],
+    languageHints: ['nigerian', 'naija', '9ja'],
+  },
+  GH: {
+    label:       'Ghana',
+    locations:   ['ghana', 'accra', 'kumasi', 'ghanaian'],
+    languageHints: ['ghanaian'],
+  },
+  KE: {
+    label:       'Kenya',
+    locations:   ['kenya', 'nairobi', 'mombasa', 'kenyan'],
+    languageHints: ['kenyan'],
+  },
+  ZA: {
+    label:       'South Africa',
+    locations:   ['south africa', 'johannesburg', 'cape town', 'durban', 'south african'],
+    languageHints: ['south african'],
+  },
+}
+
+const SUPPORTED_COUNTRIES = Object.keys(COUNTRY_PROFILES)
+const DEFAULT_COUNTRY     = 'NG'
+
+// Pain phrases — operator-defined, strictly skin-darkening / texture concerns.
+const PAIN_TERMS = [
   'dark knuckles',
   'dark underarms',
-  'dark spots',
-  'acne scars',
   'hyperpigmentation',
   'stretch marks',
+  'acne scars',
   'uneven skin tone',
-  'pimples',
-  'black spots on face',
-  'skin bleaching damage',
-  'face cream reaction',
-  'body cream reaction',
-  'clear skin journey',
-  'how to remove dark spots',
-  'best cream for dark spots Nigeria',
-  'skincare plug Nigeria',
-  'organic skincare Nigeria',
-  'skin care vendor Nigeria',
-  'start skincare business Nigeria',
+  'body acne',
+  'strawberry legs',
+  'dark inner thighs',
+  'dark spots',
+  'melasma',
+  'pimples scars',
+  'black knees',
+  'black elbows',
 ]
 
-const NG_LOCATION_MODIFIERS = [
-  'Nigeria',
-  'Lagos',
-  'Abuja',
-  'Port Harcourt',
-  'Ibadan',
-  'Lekki',
-  'Benin',
-  'Enugu',
-  'Nigerian',
-  'Naija',
+// Buyer-intent terms — collapse the funnel toward purchase / consult.
+const BUYER_INTENT_TERMS = [
+  'what can i use',
+  'help me',
+  'recommend',
+  'how do i fix',
+  'what worked',
+  'where can i buy',
+  'how much',
+  'routine',
+  'treatment',
+  'cream for',
+  'soap for',
 ]
 
-// Pidgin / colloquial markers — not hashtag-shaped, but used by the
-// psychology + Nigeria-signal services for relevance scoring on scraped text.
+// Soft Pidgin / colloquial markers — used only for relevance scoring.
 const NG_PIDGIN_MARKERS = [
   'my face dark',
   'nothing works',
@@ -62,7 +86,7 @@ const NG_PIDGIN_MARKERS = [
   'where can I buy',
 ]
 
-// ── Hashtag canonicalisation ──────────────────────────────────────────────────
+// ── Hashtag canonicalisation ─────────────────────────────────────────────────
 
 function toHashtag(s) {
   return String(s || '')
@@ -70,40 +94,75 @@ function toHashtag(s) {
     .replace(/[^a-z0-9]/g, '')
 }
 
-const PAIN_HASHTAGS = [
-  ...new Set(PRIMARY_PAIN_POINTS.map(toHashtag).filter(h => h.length >= 4)),
-]
+function _hashtagsFor(phrases) {
+  return [...new Set(phrases.map(toHashtag).filter(h => h.length >= 4))]
+}
 
-const LOCATION_HASHTAGS = [
-  ...new Set(
-    NG_LOCATION_MODIFIERS
-      .filter(s => /^[a-zA-Z]/.test(s))
-      .map(toHashtag)
-      .filter(h => h.length >= 4),
-  ),
-]
+// Shared lookup: hashtag → phrase, for dashboards / logs.
+const _hashtagToPhrase = (() => {
+  const m = new Map()
+  for (const p of PAIN_TERMS)         { const h = toHashtag(p); if (h && !m.has(h)) m.set(h, p) }
+  for (const p of BUYER_INTENT_TERMS) { const h = toHashtag(p); if (h && !m.has(h)) m.set(h, p) }
+  for (const profile of Object.values(COUNTRY_PROFILES)) {
+    for (const loc of profile.locations) { const h = toHashtag(loc); if (h && !m.has(h)) m.set(h, loc) }
+  }
+  return m
+})()
+
+function _phraseForHashtag(h) {
+  return _hashtagToPhrase.get(h) || h
+}
+
+// ── Country-aware combinations ───────────────────────────────────────────────
+//
+// Build EXAMPLE_QUERIES like "dark knuckles nigeria", "hyperpigmentation lagos"
+// per country. Captures both pure pain terms, pain+location combos, and
+// buyer-intent + pain phrases.
+
+function buildCombinationsForCountry(country) {
+  const profile = COUNTRY_PROFILES[country] || COUNTRY_PROFILES[DEFAULT_COUNTRY]
+
+  const combos = []
+  // Pain-only (canonicalises to e.g. darkknuckles)
+  for (const pain of PAIN_TERMS) combos.push(pain)
+  // Pain + primary country / city
+  for (const pain of PAIN_TERMS) {
+    for (const loc of profile.locations.slice(0, 3)) {
+      combos.push(`${pain} ${loc}`)
+    }
+  }
+  // Buyer intent + pain
+  for (const intent of BUYER_INTENT_TERMS.slice(0, 6)) {
+    for (const pain of PAIN_TERMS.slice(0, 6)) {
+      combos.push(`${intent} ${pain}`)
+    }
+  }
+  // Country-only pivots ("african skin", "melanin skin")
+  combos.push('african skin', 'melanin skin', 'black skin')
+  return combos
+}
 
 // ── Batch shape ──────────────────────────────────────────────────────────────
 //
-// Each Apify run gets a 10-tag batch: 7 pain hashtags + 3 location modifiers.
-// Pain dominates so the actor surfaces problem-language posts; locations bias
-// toward Nigerian audiences without overspending the batch on geo signal.
+// Each manual run gets a 10-tag batch: 6 pain hashtags + 3 country/location
+// hashtags + 1 buyer-intent hashtag. Pain dominates so the actor surfaces
+// problem-language posts; locations lock the audience to the chosen country.
 
-const BATCH_SIZE     = 10
-const PAIN_PER_BATCH = 7
-const LOC_PER_BATCH  = BATCH_SIZE - PAIN_PER_BATCH
+const BATCH_SIZE      = 10
+const PAIN_PER_BATCH  = 6
+const LOC_PER_BATCH   = 3
+const INTENT_PER_BATCH = BATCH_SIZE - PAIN_PER_BATCH - LOC_PER_BATCH
 
-// ── Rotation memory (24h reuse block) ────────────────────────────────────────
-//
-// In-memory ledger of recently used batches. Keyed by sorted-canonical batch
-// string. Entries auto-expire after BLOCK_MS so the rotation doesn't grow
-// unbounded for long-running processes.
+// ── Rotation memory (per-country, 24h reuse block) ───────────────────────────
 
-const _recentBatches = new Map()  // key → lastUsedAtMs
+const _recentBatches = new Map()   // key → lastUsedAtMs
 const BLOCK_MS = 24 * 60 * 60 * 1000
 
-let _painCursor = 0
-let _locCursor  = 0
+const _cursors = {} // { [country]: { pain, loc, intent } }
+function _cursorFor(country) {
+  if (!_cursors[country]) _cursors[country] = { pain: 0, loc: 0, intent: 0 }
+  return _cursors[country]
+}
 
 function _canon(arr) {
   return [...arr].sort().join('|')
@@ -125,84 +184,89 @@ function _markUsed(key) {
 
 function _pick(pool, cursorRef, n) {
   const out = []
+  if (pool.length === 0) return out
   for (let i = 0; i < n; i++) out.push(pool[(cursorRef.value + i) % pool.length])
   cursorRef.value = (cursorRef.value + n) % pool.length
   return out
 }
 
+function _normaliseCountry(country) {
+  const c = String(country || '').trim().toUpperCase()
+  if (!c) return DEFAULT_COUNTRY
+  // Allow long names too — "nigeria" → NG
+  if (SUPPORTED_COUNTRIES.includes(c)) return c
+  for (const [code, profile] of Object.entries(COUNTRY_PROFILES)) {
+    if (profile.label.toUpperCase() === c) return code
+  }
+  return DEFAULT_COUNTRY
+}
+
 /**
  * getNextPainBatch
  *
- * Returns the next pain-point batch that has NOT been scraped within the last
- * 24 hours. If every cursor offset yields a recently used batch, falls back to
- * the next cursor-rotated batch and overwrites the oldest reservation — this
- * guarantees we always make progress, even when the rotation pool is small.
+ * Returns a country-aware Africa-first batch that has NOT been scraped within
+ * the last 24h. Manual mode — the rotation block protects against operator
+ * accidentally re-running the same batch back to back.
  */
-function getNextPainBatch() {
+function getNextPainBatch({ country = DEFAULT_COUNTRY } = {}) {
+  const code     = _normaliseCountry(country)
+  const profile  = COUNTRY_PROFILES[code]
+
+  const painPool   = _hashtagsFor(PAIN_TERMS)
+  const locPool    = _hashtagsFor(profile.locations)
+  const intentPool = _hashtagsFor(BUYER_INTENT_TERMS)
+
+  const cursors  = _cursorFor(code)
+  const painRef  = { value: cursors.pain }
+  const locRef   = { value: cursors.loc }
+  const intentRef = { value: cursors.intent }
+
   const totalCombos = Math.max(
     1,
-    Math.floor(PAIN_HASHTAGS.length / Math.max(1, PAIN_PER_BATCH)),
+    Math.floor(painPool.length / Math.max(1, PAIN_PER_BATCH)),
   )
 
-  const painRef = { value: _painCursor }
-  const locRef  = { value: _locCursor }
-
   for (let attempt = 0; attempt <= totalCombos; attempt++) {
-    const pain = _pick(PAIN_HASHTAGS,    painRef, PAIN_PER_BATCH)
-    const loc  = _pick(LOCATION_HASHTAGS, locRef,  LOC_PER_BATCH)
-    const batch = [...pain, ...loc]
-    const key = _canon(batch)
+    const pain   = _pick(painPool,   painRef,   PAIN_PER_BATCH)
+    const loc    = _pick(locPool,    locRef,    LOC_PER_BATCH)
+    const intent = _pick(intentPool, intentRef, INTENT_PER_BATCH)
+    const batch  = [...pain, ...loc, ...intent].filter(Boolean)
+    const key    = `${code}|${_canon(batch)}`
     if (!_wasUsedRecently(key)) {
-      _painCursor = painRef.value
-      _locCursor  = locRef.value
+      cursors.pain   = painRef.value
+      cursors.loc    = locRef.value
+      cursors.intent = intentRef.value
       _markUsed(key)
       return {
-        mode:     'pain_point_first',
+        mode:    'pain_point_first',
+        country: code,
+        countryLabel: profile.label,
         batch,
         key,
-        // Map canonical hashtags back to human-readable source phrases for the
-        // dashboard. `null` for any hashtag that doesn't have a 1:1 phrase
-        // (e.g. when two phrases collide on the same canonical form).
-        phrases:  batch.map(h => _phraseForHashtag(h)),
+        phrases: batch.map(h => _phraseForHashtag(h)),
       }
     }
   }
 
-  // Fallthrough — every offset was recently used. Force-rotate by advancing
-  // the cursor and overwriting the LRU reservation.
-  const pain = _pick(PAIN_HASHTAGS,    painRef, PAIN_PER_BATCH)
-  const loc  = _pick(LOCATION_HASHTAGS, locRef,  LOC_PER_BATCH)
-  const batch = [...pain, ...loc]
-  _painCursor = painRef.value
-  _locCursor  = locRef.value
-  const key = _canon(batch)
+  // Force-rotate fallback — overwrite the LRU reservation.
+  const pain   = _pick(painPool,   painRef,   PAIN_PER_BATCH)
+  const loc    = _pick(locPool,    locRef,    LOC_PER_BATCH)
+  const intent = _pick(intentPool, intentRef, INTENT_PER_BATCH)
+  const batch  = [...pain, ...loc, ...intent].filter(Boolean)
+  cursors.pain   = painRef.value
+  cursors.loc    = locRef.value
+  cursors.intent = intentRef.value
+  const key = `${code}|${_canon(batch)}`
   _markUsed(key)
   return {
     mode:    'pain_point_first',
+    country: code,
+    countryLabel: profile.label,
     batch,
     key,
     phrases: batch.map(h => _phraseForHashtag(h)),
     forced:  true,
   }
-}
-
-// Reverse lookup so the dashboard can show "dark knuckles" rather than
-// "darkknuckles". Build once on module load.
-const _hashtagToPhrase = (() => {
-  const m = new Map()
-  for (const phrase of PRIMARY_PAIN_POINTS) {
-    const h = toHashtag(phrase)
-    if (h && !m.has(h)) m.set(h, phrase)
-  }
-  for (const loc of NG_LOCATION_MODIFIERS) {
-    const h = toHashtag(loc)
-    if (h && !m.has(h)) m.set(h, loc)
-  }
-  return m
-})()
-
-function _phraseForHashtag(h) {
-  return _hashtagToPhrase.get(h) || h
 }
 
 function getRecentBatchSnapshot() {
@@ -211,20 +275,32 @@ function getRecentBatchSnapshot() {
     .sort((a, b) => (a.lastUsedAt < b.lastUsedAt ? 1 : -1))
 }
 
+function getCountryProfile(country) {
+  const code = _normaliseCountry(country)
+  return { code, ...COUNTRY_PROFILES[code] }
+}
+
+function listSupportedCountries() {
+  return SUPPORTED_COUNTRIES.map(code => ({ code, label: COUNTRY_PROFILES[code].label }))
+}
+
 module.exports = {
-  PRIMARY_PAIN_POINTS,
-  NG_LOCATION_MODIFIERS,
+  PAIN_TERMS,
+  BUYER_INTENT_TERMS,
   NG_PIDGIN_MARKERS,
-  PAIN_HASHTAGS,
-  LOCATION_HASHTAGS,
+  COUNTRY_PROFILES,
+  SUPPORTED_COUNTRIES,
+  DEFAULT_COUNTRY,
   BATCH_SIZE,
   toHashtag,
   getNextPainBatch,
   getRecentBatchSnapshot,
+  getCountryProfile,
+  listSupportedCountries,
+  buildCombinationsForCountry,
   // Test/debug helpers
   _resetRotation: () => {
     _recentBatches.clear()
-    _painCursor = 0
-    _locCursor  = 0
+    for (const k of Object.keys(_cursors)) delete _cursors[k]
   },
 }
