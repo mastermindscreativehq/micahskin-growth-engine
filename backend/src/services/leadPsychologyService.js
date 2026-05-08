@@ -74,6 +74,30 @@ const BUYER_LEXICON = [
   { tag: 'abeg_help',           weight: 18, pattern: /\babeg\s+(pls\s+)?(help|recommend|share|drop)\b/i },
   { tag: 'biko_send',           weight: 18, pattern: /\bbiko\s+(send|share|drop|help|recommend)\b/i },
   { tag: 'i_wan_buy',           weight: 26, pattern: /\bi\s+wan(t)?\s+(buy|order|use)\b/i },
+  // ── Phase 36 — general English buyer/curiosity patterns ─────────────────
+  // Mid weights — a single hit puts us into cold (with the buyer-floor rule
+  // in leadHeatEngine), and two hits push into warm.
+  { tag: 'what_can_i_use',      weight: 30, pattern: /\bwhat\s+(can|should|do|to)\s+(i|we|you)\s+(use|do|try|get)\b/i },
+  { tag: 'can_i_use',           weight: 26, pattern: /\bcan\s+(i|we|you)\s+(use|try|do|apply)\b/i },
+  { tag: 'how_do_i',            weight: 28, pattern: /\bhow\s+(do|can|to)\s+(i|we|you)\s+(use|treat|fix|remove|get\s+rid|prevent|stop)\b/i },
+  { tag: 'does_it_work',        weight: 20, pattern: /\bdoes\s+(it|this|that|.+)\s+(really\s+)?work\b/i },
+  { tag: 'any_recommendations', weight: 26, pattern: /\bany\s+(recommendation|suggestion|advice|tip|product|solution)/i },
+  { tag: 'works_for',           weight: 24, pattern: /\b(what|which)\s+(works|worked|helps|helped)\s+for\s+(you|your|my|me)\b/i },
+  { tag: 'better_for',          weight: 20, pattern: /\b(is|whats|what'?s)\s+(better|good|best|effective)\s+for\b/i },
+  { tag: 'should_i_use',        weight: 24, pattern: /\bshould\s+i\s+(use|try|apply|combine)\b/i },
+  // Active-ingredient mentions (any one is a strong product-research signal)
+  { tag: 'mentions_ingredient', weight: 28, pattern: /\b(niacinamide|azelaic|retinol|tretinoin|hydroquinone|alpha\s*arbutin|hyaluronic|vitamin\s*c|salicylic|mandelic|glycolic|kojic|ceramide|adapalene|benzoyl)\b/i },
+  // "What is X" / "what about X" — research questions
+  { tag: 'what_is_x',           weight: 24, pattern: /\b(what\s+is|what\s+about|how\s+about)\s+\w/i },
+  { tag: 'how_many_times',      weight: 22, pattern: /\bhow\s+(many|often|much)\s+(times|days|weeks)/i },
+  // Pain-adjacent product context
+  { tag: 'going_broke',         weight: 24, pattern: /\b(going|im|i\s+am)\s+broke\b/i },
+  { tag: 'creams_dont_work',    weight: 22, pattern: /\b(cream|product|serum)s?\s+(don'?t|do\s+not|won'?t|dont)\s+work\b/i },
+  { tag: 'why_dont',            weight: 18, pattern: /\bwhy\s+(don'?t|doesn'?t|dont)\b/i },
+  // "Does X help with Y" — high-quality consult prompt
+  { tag: 'help_with',           weight: 20, pattern: /\b(help|good|work)\s+with\s+my\s+(dark|uneven|spots|acne|skin|face|knuckles|underarms|stretch)/i },
+  // Concern keyword on its own (curiosity bias)
+  { tag: 'concern_keyword',     weight: 14, pattern: /\b(dark\s+spots?|hyperpigmentation|stretch\s*marks?|acne\s+scars?|uneven\s+(tone|skin)|melasma|dark\s+(knuckles?|underarms?|patches?))\b/i },
 ]
 
 const EMOTION_LEXICON = [

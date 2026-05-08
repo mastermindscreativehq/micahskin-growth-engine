@@ -302,9 +302,164 @@ function _err(msg, status) {
   return e
 }
 
+// ── Phase 36 — Comments scraper (chained 2nd-stage actor) ───────────────────
+//
+// Default actor: clockworks/tiktok-comments-scraper. Takes a list of TikTok
+// post URLs and returns top-level comments. Override via APIFY_TIKTOK_COMMENTS_ACTOR_ID.
+
+// Phase 36 — aggressive credit caps. Operator's rule: no more than
+// 5 videos per cycle × 15 comments per video = 75 comments / cycle max.
+const COMMENTS_ACTOR_DEFAULT     = 'clockworks/tiktok-comments-scraper'
+const COMMENTS_PER_VIDEO_DEFAULT = 15
+const COMMENTS_HARD_CEILING      = 15
+
+function _resolveCommentsPerVideo(override) {
+  const raw = Number(override ?? process.env.APIFY_COMMENTS_PER_VIDEO ?? COMMENTS_PER_VIDEO_DEFAULT)
+  if (!Number.isFinite(raw) || raw <= 0) return COMMENTS_PER_VIDEO_DEFAULT
+  return Math.min(COMMENTS_HARD_CEILING, Math.max(5, Math.round(raw)))
+}
+
+/**
+ * triggerTiktokCommentsScrape
+ * Runs the comments actor against a list of TikTok post URLs.
+ *
+ * @param {string[]} postUrls   Up to 25 TikTok post URLs.
+ * @param {object}   [opts]
+ * @param {number}   [opts.commentsPerPost]  Per-post comment cap (default 30, ceiling 60).
+ * @returns {{ runId, status, postUrls, commentsPerPost, actorId }}
+ */
+async function triggerTiktokCommentsScrape(postUrls, opts = {}) {
+  const token = process.env.APIFY_API_TOKEN
+  if (!token) throw _err('APIFY_API_TOKEN not configured', 500)
+
+  if (!Array.isArray(postUrls) || postUrls.length === 0) {
+    throw _err('triggerTiktokCommentsScrape requires a non-empty postUrls array', 400)
+  }
+
+  const cleanedUrls = postUrls
+    .map(u => (typeof u === 'string' ? u.trim() : ''))
+    .filter(u => u && /^https?:\/\/(www\.)?tiktok\.com\//i.test(u))
+    .slice(0, 25)
+
+  if (cleanedUrls.length === 0) {
+    throw _err('No valid TikTok post URLs after cleaning', 400)
+  }
+
+  const actorId         = process.env.APIFY_TIKTOK_COMMENTS_ACTOR_ID || COMMENTS_ACTOR_DEFAULT
+  const commentsPerPost = _resolveCommentsPerVideo(opts.commentsPerPost)
+
+  console.log('[TikTok Comments] ─────────────────────────────────────────')
+  console.log(`[TikTok Comments] Actor ID         : ${actorId}`)
+  console.log(`[TikTok Comments] Post URL count   : ${cleanedUrls.length}`)
+  console.log(`[TikTok Comments] Comments per post: ${commentsPerPost}`)
+  console.log('[TikTok Comments] ─────────────────────────────────────────')
+
+  const url = `${APIFY_BASE}/acts/${encodeURIComponent(actorId)}/runs?token=${encodeURIComponent(token)}`
+
+  // The clockworks comments actor accepts both `postURLs` and `postUrls`
+  // depending on version — we pass both to be safe.
+  const input = {
+    postURLs:        cleanedUrls,
+    postUrls:        cleanedUrls,
+    commentsPerPost,
+    maxComments:     commentsPerPost * cleanedUrls.length,
+  }
+
+  let result
+  try {
+    const res = await fetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(input),
+    })
+    if (!res.ok) {
+      const body = await res.text()
+      throw _err(`Apify (comments actor) returned ${res.status}: ${body}`, 502)
+    }
+    result = await res.json()
+  } catch (fetchErr) {
+    if (fetchErr.status) throw fetchErr
+    throw _err(`Failed to reach Apify comments actor: ${fetchErr.message}`, 502)
+  }
+
+  const run = result.data
+  console.log(`[TikTok Comments] Run started — ID: ${run.id}, status: ${run.status}`)
+  return {
+    runId:           run.id,
+    status:          run.status,
+    postUrls:        cleanedUrls,
+    commentsPerPost,
+    actorId,
+  }
+}
+
+/**
+ * normaliseTiktokCommentItem
+ * Maps a comments-actor item to the shape downstream pipeline expects.
+ * Returns null when the row is unusable.
+ */
+function normaliseTiktokCommentItem(item) {
+  // Comment ID as the unique key — videos may surface the same commenter twice
+  // across posts, but a single comment is unique.
+  const externalId = String(
+    item.cid || item.commentId || item.id || item.uniqueId || ''
+  )
+  if (!externalId) return null
+
+  const text =
+    (typeof item.text === 'string' && item.text) ||
+    (typeof item.comment === 'string' && item.comment) ||
+    (typeof item.commentText === 'string' && item.commentText) ||
+    ''
+
+  if (!text.trim()) return null
+
+  // Commenter username — separate from the video's creator
+  const username = _toSafeString(
+    item.uniqueId ||
+    item.user?.uniqueId ||
+    item.user?.nickname ||
+    item.author?.uniqueId ||
+    item.author?.nickname ||
+    item.username ||
+    item.userName ||
+    null,
+  )
+
+  // The video URL the comment was posted under
+  const sourceVideoUrl = _toSafeString(
+    item.videoWebUrl ||
+    item.postUrl ||
+    item.videoUrl ||
+    item.webVideoUrl ||
+    item.video?.webVideoUrl ||
+    null,
+  )
+
+  const postedAt =
+    item.createTime ? new Date(Number(item.createTime) * 1000)
+    : item.createTimeISO ? new Date(item.createTimeISO)
+    : item.createdAt ? new Date(item.createdAt)
+    : null
+
+  return {
+    externalId,
+    username,
+    text,
+    sourceVideoUrl,
+    videoUrl: sourceVideoUrl,
+    postedAt,
+    hashtag: null,
+    isComment: true,
+  }
+}
+
 module.exports = {
   triggerTiktokHashtagScrape,
   getTiktokRunStatus,
   fetchTiktokItems,
   normaliseTiktokItem,
+  // Phase 36 — comment-first scraping
+  triggerTiktokCommentsScrape,
+  normaliseTiktokCommentItem,
 }

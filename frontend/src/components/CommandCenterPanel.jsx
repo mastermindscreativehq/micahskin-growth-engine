@@ -358,11 +358,16 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
         ? 'Last run completed'
         : 'Engine idle'
 
+  // ── Phase 36 — Conversion-focused headline ───────────────────────────────
+  const oc = leadSources?.outreachCounts || {
+    readyToReply: 0, replied: 0, converted: 0, skipped: 0,
+    pendingByTemperature: { hot: 0, warm: 0, cold: 0 },
+  }
   const stats = [
-    { label: 'Scraped Today',     value: leadSources?.scrapedToday   ?? 0, color: 'teal'   },
-    { label: 'High Intent Today', value: leadSources?.highIntentToday ?? 0, color: 'violet' },
-    { label: 'Pending Outreach',  value: leadSources?.pendingOutreach ?? 0, color: 'amber'  },
-    { label: 'Total Injected',    value: leadSources?.processedTotal  ?? 0, color: 'indigo' },
+    { label: 'Ready to reply', value: oc.readyToReply, color: 'amber'   },
+    { label: 'Replied',        value: oc.replied,      color: 'teal'    },
+    { label: 'Converted',      value: oc.converted,    color: 'violet'  },
+    { label: 'Hot pending',    value: oc.pendingByTemperature?.hot ?? 0, color: 'indigo' },
   ]
 
   return (
@@ -443,6 +448,16 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
           <RevStat key={label} label={label} value={value} color={color} />
         ))}
       </div>
+
+      <p className="mt-3 text-[11px] text-gray-500 leading-snug">
+        ▸ Open the <span className="font-semibold text-brand-600">Outreach Queue</span> tab to reply.
+      </p>
+
+      {/* ── Phase 36 — Detailed analytics collapsed by default ─────────────── */}
+      <details className="mt-5 group">
+        <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-gray-400 hover:text-gray-600 select-none">
+          ▾ Show detailed acquisition analytics
+        </summary>
 
       {/* ── Phase 33 — MAIE Intelligence Panels ───────────────────────────── */}
       <div className="mt-5 pt-5 border-t border-dashed border-gray-200">
@@ -591,9 +606,10 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
         <p className="mt-4 text-[11px] text-gray-400 leading-snug">
           Phase 35: classifies emotional desperation + buying intent — final score combines
           pain (35%), buyer readiness (35%), emotional pain (20%), Nigeria confidence (10%).
-          Hot ≥ 70 routes to outreach; reject filters spam, emoji-only, brand promo.
+          Hot ≥ 60 routes to outreach; reject filters spam, emoji-only, brand promo.
         </p>
       </div>
+      </details>
     </SectionBox>
   )
 }

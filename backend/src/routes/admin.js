@@ -13,6 +13,11 @@ const {
   runAcquisitionCycle,
   getAcquisitionStats,
 } = require('../services/leadAcquisitionService')
+const {
+  listOutreachQueue,
+  updateOutreachStatus,
+  getOutreachCounts,
+} = require('../services/outreachQueueService')
 
 const router = Router()
 router.use(requireAuth)
@@ -113,6 +118,41 @@ router.get('/acquisition/stats', async (req, res) => {
   } catch (err) {
     console.error('[Admin] GET /acquisition/stats:', err.message)
     res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+// ── Phase 36 — Human-Assisted Outreach Queue ──────────────────────────────
+// GET /api/admin/outreach-queue?status=pending&temperature=all&commentsOnly=true&limit=100
+router.get('/outreach-queue', async (req, res) => {
+  try {
+    const { status, temperature, commentsOnly, limit, minScore } = req.query
+    const items = await listOutreachQueue({
+      status,
+      temperature,
+      commentsOnly: commentsOnly === undefined ? true : commentsOnly !== 'false',
+      limit:        limit ? Number(limit) : undefined,
+      minScore:     minScore !== undefined ? Number(minScore) : undefined,
+    })
+    const counts = await getOutreachCounts()
+    res.json({ success: true, data: { items, counts } })
+  } catch (err) {
+    console.error('[Admin] GET /outreach-queue:', err.message)
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+// PATCH /api/admin/outreach-queue/:id  body: { status, operator? }
+router.patch('/outreach-queue/:id', async (req, res) => {
+  try {
+    const updated = await updateOutreachStatus(req.params.id, {
+      status:   req.body?.status,
+      operator: req.body?.operator || req.session?.user?.email || null,
+    })
+    res.json({ success: true, data: updated })
+  } catch (err) {
+    const code = err.status || 500
+    console.error('[Admin] PATCH /outreach-queue:', err.message)
+    res.status(code).json({ success: false, message: err.message })
   }
 })
 

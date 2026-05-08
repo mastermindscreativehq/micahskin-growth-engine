@@ -23,10 +23,16 @@
  * Pure function — no I/O.
  */
 
-const HOT_THRESHOLD       = 70      // >= 70 → outreach queue (high heat)
-const INJECT_THRESHOLD    = 50      // >= 50 → injected as Lead
-const MIN_AUTHENTICITY    = 35      // < 35  → fake_profile reject
-const MIN_PAIN_OR_BUYER   = 18      // both painScore AND buyerIntentScore below → low_intent
+// ── Phase 36 — relaxed thresholds for human-assisted conversion ─────────────
+//   hot  ≥ 60   (was 70) — outreach queue, priority high
+//   warm ≥ 35   (was 50) — injected, priority low
+//   cold ≥ 15            — stored only, surfaced in queue, no Lead row
+const HOT_THRESHOLD       = 60
+const WARM_THRESHOLD      = 35
+const COLD_THRESHOLD      = 15
+const INJECT_THRESHOLD    = WARM_THRESHOLD
+const MIN_AUTHENTICITY    = 25      // <25  → fake_profile reject (was 35)
+const MIN_PAIN_OR_BUYER   = 5       // Phase 36 — buyer-only intent qualifies (was 10/18)
 const MIN_NIGERIA_HARD    = 18      // strict mode reject threshold
 
 // Weighted composition — must sum to 1.0 across positive weights.
@@ -157,10 +163,21 @@ function evaluate({
   const engagementBoost = _engagementBoost(engagement)
   const { score: rawScore, breakdown } = _composite(ng, psych, engagementBoost)
 
+  // Phase 36 — buyer-only floor.
+  // User directive: "Buying intent alone can qualify." The weighted composite
+  // drowns buyer-only signals when NG/pain are zero (e.g. global English
+  // commenters asking product questions). Lift the score so a clear buyer
+  // signal always reaches at least cold.
+  let score = rawScore
+  const buyerOnlyFloor = Math.round((Number(psych?.buyerIntentScore) || 0) * 0.6)
+  if (buyerOnlyFloor > score) {
+    breakdown.buyer_only_floor = buyerOnlyFloor
+    score = buyerOnlyFloor
+  }
+
   // Business / consult intent bonus — ensures academy/reseller/consult leads
   // with NG signal but no pain/buyer lexicon hits still cross the inject
   // threshold.
-  let score = rawScore
   if (isBusinessIntent || isConsultIntent) {
     const intentBonus = Math.min(35, 15 + (ng.nigeriaConfidence ?? 0) * 0.25)
     score = Math.max(0, Math.min(100, score + intentBonus))
@@ -168,10 +185,13 @@ function evaluate({
       Math.round(intentBonus * 100) / 100
   }
 
-  // Soft non-Nigerian: low NG confidence + low heat → reject as non_nigerian.
-  // Authoritative when the heat itself is uninspiring; if heat is high we keep
-  // them (e.g. a non-Nigerian buyer in our market is still a buyer).
-  if ((ng.nigeriaConfidence ?? 0) < 12 && score < 45) {
+  // Soft non-Nigerian: low NG confidence + no buyer/pain signal → reject as
+  // non_nigerian. Phase 36 — buyer-intent leads survive this gate even if
+  // they're non-Nigerian (operator can decide whether to engage globally).
+  const hasBuyerOrPainSignal =
+    (psych.buyerIntentScore ?? 0) >= MIN_PAIN_OR_BUYER ||
+    (psych.painScore        ?? 0) >= MIN_PAIN_OR_BUYER
+  if ((ng.nigeriaConfidence ?? 0) < 12 && score < 45 && !hasBuyerOrPainSignal) {
     return {
       leadHeatScore: score,
       rejectionReason: 'non_nigerian',
@@ -198,13 +218,26 @@ function evaluate({
   }
 }
 
-function isHot(score) {
-  return Number(score) >= HOT_THRESHOLD
+function isHot(score)  { return Number(score) >= HOT_THRESHOLD  }
+function isWarm(score) { return Number(score) >= WARM_THRESHOLD && Number(score) < HOT_THRESHOLD }
+function isCold(score) { return Number(score) >= COLD_THRESHOLD && Number(score) < WARM_THRESHOLD }
+
+function temperatureLabel(score) {
+  const n = Number(score) || 0
+  if (n >= HOT_THRESHOLD)  return 'hot'
+  if (n >= WARM_THRESHOLD) return 'warm'
+  if (n >= COLD_THRESHOLD) return 'cold'
+  return 'reject'
 }
 
 module.exports = {
   evaluate,
   isHot,
+  isWarm,
+  isCold,
+  temperatureLabel,
   HOT_THRESHOLD,
+  WARM_THRESHOLD,
+  COLD_THRESHOLD,
   INJECT_THRESHOLD,
 }

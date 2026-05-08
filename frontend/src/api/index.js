@@ -568,6 +568,33 @@ export async function triggerAcquisitionRun() {
   return protectedFetch(`${BASE_URL}/api/admin/acquisition/trigger`, { method: 'POST' })
 }
 
+// ── Phase 36 — Human-Assisted Outreach Queue ─────────────────────────────────
+
+export async function fetchOutreachQueue({
+  status = 'pending',
+  temperature = 'all',
+  commentsOnly = true,
+  limit = 100,
+  minScore,
+} = {}) {
+  const params = new URLSearchParams({
+    status,
+    temperature,
+    commentsOnly: commentsOnly ? 'true' : 'false',
+    limit: String(limit),
+  })
+  if (minScore !== undefined) params.set('minScore', String(minScore))
+  return protectedFetch(`${BASE_URL}/api/admin/outreach-queue?${params.toString()}`)
+}
+
+export async function updateOutreachStatus(id, status) {
+  return protectedFetch(`${BASE_URL}/api/admin/outreach-queue/${encodeURIComponent(id)}`, {
+    method:  'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ status }),
+  })
+}
+
 // ── MICAHSKIN Conversion Engine (Phase 34 — MCE) ─────────────────────────────
 
 /**

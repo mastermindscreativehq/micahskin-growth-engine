@@ -788,6 +788,19 @@ model ScrapedLead {
   leadQualityReason     String?
   recommendedAction     String?
 
+  // ── Phase 36 — Human-Assisted Outreach Queue ────────────────────────────
+  // Distinguishes commenters from creators, captures the source video, and
+  // stores all four CTA variants so the operator can copy whichever fits.
+  isComment       Boolean @default(true)        // commenter (true) vs creator caption (false)
+  sourceVideoUrl  String?                       // video the comment was posted under
+  whatsappCta     String?                       // WhatsApp opener line
+  consultCta      String?                       // free-diagnosis / consult CTA
+  academyCta      String?                       // academy / reseller CTA (when applicable)
+  ctaType         String?                       // chosen primary CTA: product|consult|academy|reseller|nurture
+  outreachStatus  String  @default("pending")   // pending|replied|converted|skipped
+  outreachStatusUpdatedAt DateTime?
+  outreachOperator String?                      // optional who-marked-it audit
+
   @@index([platform])
   @@index([processed])
   @@index([intentScore])
@@ -801,6 +814,8 @@ model ScrapedLead {
   @@index([recommendedAction])
   @@index([painSignalScore])
   @@index([buyerReadinessScore])
+  @@index([isComment])
+  @@index([outreachStatus])
   @@map("scraped_leads")
 }
 

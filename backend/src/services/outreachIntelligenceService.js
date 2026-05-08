@@ -25,6 +25,11 @@
 
 const { isProductSegment, isAcademySegment, isConsultSegment } = require('./leadSegmentationService')
 
+// Phase 36 — brand WhatsApp number (mirrors WHATSAPP_LINK used elsewhere)
+const WHATSAPP_NUMBER  = String(process.env.WHATSAPP_NUMBER || '+2348140468759').replace(/[^\d+]/g, '')
+const CONSULT_LINK     = process.env.CONSULT_LINK || 'https://wa.me/' + WHATSAPP_NUMBER.replace(/^\+/, '')
+const ACADEMY_LINK     = process.env.ACADEMY_LINK || 'https://micahskin.com/academy'
+
 // ── Angle selection ──────────────────────────────────────────────────────────
 
 function pickAngle({ psychology, segmentation, nigeria }) {
@@ -159,7 +164,7 @@ function _summary({ name, segmentation, nigeria, psychology }) {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-function generate({ text, nigeria, psychology, segmentation, username, externalId } = {}) {
+function generate({ text, nigeria, psychology, segmentation, username, externalId, painCategory } = {}) {
   const angle = pickAngle({ psychology, segmentation, nigeria })
   const name  = _firstName(username)
   const ctx   = { name, segment: segmentation?.segment, city: nigeria?.detectedCity }
@@ -184,12 +189,50 @@ function generate({ text, nigeria, psychology, segmentation, username, externalI
 
   const aiSummary = _summary({ name, segmentation, nigeria, psychology })
 
+  // ── Phase 36 — Multi-CTA pack ────────────────────────────────────────────
+  // Always emits a soft empathetic reply, a WhatsApp CTA, and a consult CTA.
+  // Academy CTA is only included when reseller / business intent fires.
+  const rawConcern = (painCategory || segmentation?.segment || 'general').replace(/_/g, ' ')
+  // For unspecified concerns ("general"), use a friendlier phrase so the
+  // operator's reply doesn't read awkwardly.
+  const concernLabel = (rawConcern === 'general' || rawConcern === 'this concern')
+    ? 'Most skin concerns'
+    : rawConcern.charAt(0).toUpperCase() + rawConcern.slice(1)
+
+  const empatheticReply = _render(_pick(FIRST_LINE.soft_empathy, seed), ctx)
+
+  const consultCta =
+    `${concernLabel} can actually improve with the right routine. ` +
+    `We've helped several melanin-skin clients with this. ` +
+    `Message us on WhatsApp here: ${CONSULT_LINK}`
+
+  const whatsappCta =
+    `Hi ${name} — I saw your comment and we've helped ` +
+    `Nigerian clients with the exact same issue. Tap here to chat: ${CONSULT_LINK}`
+
+  const academyCta = isAcademySegment(seg)
+    ? `${name} — if you're building a skincare brand or selling, our academy ` +
+      `walks you through the full system. Details: ${ACADEMY_LINK}`
+    : null
+
+  // Primary CTA type picked from segment routing — what the operator should
+  // copy first.
+  let ctaType = 'product'
+  if (isAcademySegment(seg))      ctaType = (seg === 'reseller' ? 'reseller' : 'academy')
+  else if (isConsultSegment(seg)) ctaType = 'consult'
+
   return {
     outreachAngle: angle,
     suggestedReply,
     whatsappHook,
     academyHook,
     aiSummary,
+    // Phase 36 — multi-CTA pack
+    empatheticReply,
+    consultCta,
+    whatsappCta,
+    academyCta,
+    ctaType,
   }
 }
 

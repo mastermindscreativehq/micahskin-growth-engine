@@ -22,6 +22,9 @@ const {
   getTiktokRunStatus,
   fetchTiktokItems,
   normaliseTiktokItem,
+  // Phase 36 — chained comments scraper
+  triggerTiktokCommentsScrape,
+  normaliseTiktokCommentItem,
 } = require('./tiktokScraperService')
 const {
   getNextPainBatch,
@@ -43,6 +46,9 @@ const mceWhatsAppBridge = require('./mce/whatsappBridgeService')
 const painSignalClassifier = require('./painSignalClassifierService')
 const buyerReadiness       = require('./buyerReadinessService')
 const leadQualityGate      = require('./leadQualityGateService')
+
+// ── Phase 36 — Outreach queue counts ─────────────────────────────────────────
+const { getOutreachCounts } = require('./outreachQueueService')
 
 // Toggleable behaviour — when MAIE_REJECT_NON_NIGERIAN=true, leads with
 // nigeriaConfidence < 18 are auto-rejected even if heat is high. Default is
@@ -111,6 +117,10 @@ const STATE = {
   lastBatch:         null,     // { mode, batch:[], phrases:[], key, ranAt }
   itemsThisCycle:    0,        // raw items fetched in the current/most-recent run
   nextRunAt:         null,     // Date — when scheduler will fire next
+  // ── Phase 36 — comment-first chained run state ─────────────────────────────
+  stage:             'video',  // 'video' | 'comments' — which actor we're polling
+  commentsRunId:     null,     // Apify runId for the chained comments actor
+  pendingPostUrls:   [],       // post URLs collected from the video stage
 }
 
 // Failsafe — anything still flagged "running" beyond this is treated as stale
@@ -132,6 +142,9 @@ function _resetIdle({ stale = false } = {}) {
   STATE.runStartedAt      = null
   STATE.lastRunFinishedAt = new Date()
   STATE.lastStale         = stale
+  STATE.stage             = 'video'
+  STATE.commentsRunId     = null
+  STATE.pendingPostUrls   = []
   _refreshNextRunAt()
 }
 
@@ -143,6 +156,9 @@ function _markCompleted() {
   STATE.lastRunFinishedAt = new Date()
   STATE.lastStatus        = 'SUCCEEDED'
   STATE.lastStale         = false
+  STATE.stage             = 'video'
+  STATE.commentsRunId     = null
+  STATE.pendingPostUrls   = []
   _refreshNextRunAt()
 }
 
@@ -154,6 +170,9 @@ function _markFailed(status) {
   STATE.lastRunFinishedAt = new Date()
   STATE.lastStatus        = status || 'FAILED'
   STATE.lastStale         = false
+  STATE.stage             = 'video'
+  STATE.commentsRunId     = null
+  STATE.pendingPostUrls   = []
   _refreshNextRunAt()
 }
 
@@ -210,9 +229,12 @@ const PAIN_PATTERNS = [
 ]
 
 const REJECT_PATTERNS = [
-  /^[\p{Emoji}\s]{1,10}$/u,         // emoji-only or near-empty
-  /follow\s+(me|back|us)/i,
-  /check\s+(my|out\s+my)\s+profile/i,
+  /^[\p{Emoji}\s\p{P}]{1,15}$/u,    // emoji-/punctuation-only
+  /^(\s*#\w+\s*)+$/,                 // hashtag-only comment
+  /^@\w+(\s+@\w+)*\s*$/,             // pure @-mentions
+  /follow\s+(me|back|us|for\s+follow)/i,
+  /follow\s*4\s*follow/i,
+  /check\s+(my|out\s+my)\s+(profile|page|bio)/i,
   /shop\s+now/i,
   /click\s+(the\s+)?link/i,
   /\bhttps?:\/\//,
@@ -224,6 +246,10 @@ const REJECT_PATTERNS = [
   /visit\s+my/i,
   /link\s+in\s+(bio|description)/i,
   /^.{0,7}$/,                        // too short
+  // Generic praise / engagement-bait that has no buyer or pain signal
+  /^(love\s+(it|this|u|you)!*|nice|wow|cute|beautiful|amazing|gorgeous|stunning|so\s+pretty|❤️*|👏+|🔥+|💯+|preach|facts|true|exactly|same(\s+here)?|me\s+too)\s*\.*\!*$/i,
+  /^(first|second|early|here\s+early|notification\s+squad)\s*\!*$/i,
+  /^(👇|☝️|✨)+$/u,
 ]
 
 const HIGH_URGENCY_PATTERNS = [
@@ -313,6 +339,12 @@ async function injectToLead(scrapedLead, outreach = null) {
     ? Math.round(Math.max(60, heat))
     : Math.round(heat * 0.4)
 
+  // Phase 36 — priority is hot|warm|low based on relaxed thresholds
+  const priority =
+    leadHeatEngine.isHot(heat)  ? 'high'
+    : leadHeatEngine.isWarm(heat) ? 'medium'
+    : 'low'
+
   const lead = await prisma.lead.create({
     data: {
       fullName:           `@${username} (TikTok)`,
@@ -322,7 +354,7 @@ async function injectToLead(scrapedLead, outreach = null) {
       message:            scrapedLead.comment,
       handle:             username,
       status:             'new',
-      priority:           heat >= leadHeatEngine.HOT_THRESHOLD ? 'high' : 'low',
+      priority,
       productIntentScore: productScore,
       consultIntentScore: consultScore,
       academyIntentScore: academyScore,
@@ -343,7 +375,19 @@ async function injectToLead(scrapedLead, outreach = null) {
 
 // ── Batch processor ───────────────────────────────────────────────────────────
 
-async function processRawItems(rawItems) {
+/**
+ * processRawItems
+ *
+ * @param {object[]} rawItems
+ * @param {object} [opts]
+ * @param {(item:any)=>any} [opts.normaliser]   Defaults to normaliseTiktokItem (video shape).
+ *                                             Pass normaliseTiktokCommentItem for comment items.
+ * @param {boolean} [opts.defaultIsComment]    Stamped onto every persisted row.
+ *                                             Default: false (treat as creator caption).
+ */
+async function processRawItems(rawItems, opts = {}) {
+  const normaliser       = opts.normaliser || normaliseTiktokItem
+  const defaultIsComment = Boolean(opts.defaultIsComment)
   const stats = {
     total:      rawItems.length,
     normalised: 0,
@@ -353,6 +397,7 @@ async function processRawItems(rawItems) {
     injected:   0,
     queued:     0,   // heat >= 70 → outreachQueued
     rejected:   0,
+    captionsRejected: 0,  // Phase 36 — captions skipped for lacking buyer intent
     reasons: {
       norm_failed:    0,  // normaliseTiktokItem returned null / empty text
       duplicate:      0,
@@ -378,13 +423,28 @@ async function processRawItems(rawItems) {
   }
 
   for (const raw of rawItems) {
-    const norm = normaliseTiktokItem(raw)
+    const norm = normaliser(raw)
     if (!norm || !norm.text?.trim()) {
       stats.reasons.norm_failed++
       stats.rejected++
       continue
     }
     stats.normalised++
+
+    // Phase 36 — fast spam pre-filter. Drops hashtag-only, follower-farming,
+    // emoji-only, link-spam, and generic-praise rows before any scoring.
+    if (REJECT_PATTERNS.some(p => p.test(norm.text))) {
+      stats.reasons.spam++
+      stats.rejected++
+      console.log(`[LeadAcquisition] SPAM filtered @${norm.username || 'unknown'} text="${norm.text.slice(0, 60)}"`)
+      continue
+    }
+
+    // Phase 36 — distinguish commenters from creators. Caption-only items
+    // (isComment=false) only proceed when they carry obvious buyer intent —
+    // we don't want to keep ingesting creator promotional captions.
+    const isComment =
+      typeof norm.isComment === 'boolean' ? norm.isComment : defaultIsComment
 
     // ── Duplicate check (must run before any expensive work) ───────────────
     let isDup = false
@@ -484,6 +544,7 @@ async function processRawItems(rawItems) {
       segmentation: segmentResult,
       username:     norm.username,
       externalId:   norm.externalId,
+      painCategory: leadSegmentation.mapToConcernType(segmentResult.segment),
     })
     console.log(
       `[OutreachAI] @${norm.username || 'unknown'}` +
@@ -506,6 +567,28 @@ async function processRawItems(rawItems) {
         : typeof v === 'object' ? (v.name || v.title || v.uniqueId || v.id || null)
         : String(v)
 
+    // ── Phase 36 — caption guard ────────────────────────────────────────────
+    // Creator captions almost never carry buyer pain; reject unless a hard
+    // buyer/pain signal (≥ 35 either way OR explicit price/location/recommend
+    // ask) fires. Comments bypass this gate.
+    if (!isComment) {
+      const hardBuyer =
+        (psychResult.buyerIntentScore ?? 0) >= 35 ||
+        (psychResult.painScore ?? 0)        >= 40 ||
+        Boolean(buyerResult.hasPriceQuestion) ||
+        Boolean(buyerResult.hasLocationQuestion) ||
+        Boolean(buyerResult.hasRecommendAsk)
+      if (!hardBuyer) {
+        stats.captionsRejected++
+        stats.rejected++
+        console.log(
+          `[LeadAcquisition] CAPTION skipped @${norm.username || 'unknown'}` +
+          ` pain=${psychResult.painScore} buy=${psychResult.buyerIntentScore}`,
+        )
+        continue
+      }
+    }
+
     // ── Persist scraped item with the full MAIE payload ─────────────────────
     let saved
     try {
@@ -518,6 +601,13 @@ async function processRawItems(rawItems) {
           hashtag:      safeStr(norm.hashtag),
           externalId:   norm.externalId || null,
           postedAt:     norm.postedAt,
+          // Phase 36 — comment vs caption + multi-CTA pack
+          isComment:    isComment,
+          sourceVideoUrl: safeStr(norm.sourceVideoUrl || norm.videoUrl),
+          whatsappCta:  outreach.whatsappCta || null,
+          consultCta:   outreach.consultCta  || null,
+          academyCta:   outreach.academyCta  || null,
+          ctaType:      outreach.ctaType     || null,
           // legacy back-compat fields
           concernType:  legacyConcern,
           intentScore:  legacyIntent,
@@ -711,6 +801,11 @@ async function processRawItems(rawItems) {
 
 // ── Scheduler cycle ───────────────────────────────────────────────────────────
 
+// Phase 36 — toggle for the chained comments actor. Default ON.
+// Aggressive caps per operator rule: max 5 videos × 15 comments = 75/cycle.
+const COMMENT_FIRST_ENABLED = String(process.env.TIKTOK_COMMENT_FIRST ?? 'true').toLowerCase() !== 'false'
+const MAX_VIDEOS_FOR_COMMENTS = Math.max(1, Math.min(8, Number(process.env.TIKTOK_VIDEOS_FOR_COMMENTS) || 5))
+
 async function runAcquisitionCycle() {
   if (!process.env.APIFY_API_TOKEN) {
     console.log('[LeadAcquisition] APIFY_API_TOKEN not set — skipping')
@@ -726,23 +821,78 @@ async function runAcquisitionCycle() {
 
       if (status === 'SUCCEEDED' && defaultDatasetId) {
         console.log(
-          `[LeadAcquisition] Run SUCCEEDED — runId=${STATE.pendingRunId}` +
+          `[LeadAcquisition] ${STATE.stage} stage SUCCEEDED — runId=${STATE.pendingRunId}` +
           ` defaultDatasetId=${defaultDatasetId}`,
         )
         const rawItems = await fetchTiktokItems(defaultDatasetId)
         STATE.itemsThisCycle = rawItems.length
         console.log(
           `[LeadAcquisition] Raw item count from dataset: ${rawItems.length}` +
-          ` (cap=${MAX_ITEMS_PER_RUN})`,
+          ` (stage=${STATE.stage} cap=${MAX_ITEMS_PER_RUN})`,
         )
-        const result = await processRawItems(rawItems)
-        console.log(
-          `[LeadAcquisition] Cycle complete — fetched=${rawItems.length}` +
-          ` stored=${result.stored} accepted=${result.accepted}` +
-          ` injected=${result.injected} queued=${result.queued}` +
-          ` rejected=${result.rejected}`,
-        )
-        _markCompleted()
+
+        if (STATE.stage === 'video') {
+          // Phase 36 — chain to comments actor: collect post URLs from videos.
+          // Captions are still processed (rare buyer-intent captions surface),
+          // but the bulk of accepted leads now come from the comments stage.
+          const captionStats = await processRawItems(rawItems, {
+            normaliser:       normaliseTiktokItem,
+            defaultIsComment: false,
+          })
+          console.log(
+            `[LeadAcquisition] Caption pass — stored=${captionStats.stored}` +
+            ` accepted=${captionStats.accepted} captionsRejected=${captionStats.captionsRejected}`,
+          )
+
+          const postUrls = []
+          for (const raw of rawItems) {
+            const n = normaliseTiktokItem(raw)
+            if (n?.videoUrl) postUrls.push(n.videoUrl)
+          }
+          const uniqueUrls = [...new Set(postUrls)].slice(0, MAX_VIDEOS_FOR_COMMENTS)
+
+          if (COMMENT_FIRST_ENABLED && uniqueUrls.length > 0) {
+            try {
+              const cmt = await triggerTiktokCommentsScrape(uniqueUrls, {
+                commentsPerPost: Number(process.env.APIFY_COMMENTS_PER_VIDEO) || 15,
+              })
+              STATE.stage           = 'comments'
+              STATE.pendingRunId    = cmt.runId
+              STATE.commentsRunId   = cmt.runId
+              STATE.runStartedAt    = new Date()
+              STATE.pendingPostUrls = uniqueUrls
+              console.log(
+                `[LeadAcquisition] Comments stage queued — runId=${cmt.runId}` +
+                ` videoCount=${uniqueUrls.length} commentsPerPost=${cmt.commentsPerPost}`,
+              )
+              return
+            } catch (err) {
+              console.error('[LeadAcquisition] Comments trigger failed:', err.message)
+              // fall through and complete on caption pass alone
+            }
+          } else {
+            console.log(
+              `[LeadAcquisition] Comments stage skipped — enabled=${COMMENT_FIRST_ENABLED}` +
+              ` urls=${uniqueUrls.length}`,
+            )
+          }
+          _markCompleted()
+          return
+        }
+
+        if (STATE.stage === 'comments') {
+          const commentStats = await processRawItems(rawItems, {
+            normaliser:       normaliseTiktokCommentItem,
+            defaultIsComment: true,
+          })
+          console.log(
+            `[LeadAcquisition] Comments pass — stored=${commentStats.stored}` +
+            ` accepted=${commentStats.accepted} injected=${commentStats.injected}` +
+            ` queued=${commentStats.queued} rejected=${commentStats.rejected}`,
+          )
+          _markCompleted()
+          return
+        }
 
       } else if (status === 'SUCCEEDED' && !defaultDatasetId) {
         console.warn(`[LeadAcquisition] Run SUCCEEDED but defaultDatasetId is missing — runId=${STATE.pendingRunId}`)
@@ -785,6 +935,9 @@ async function runAcquisitionCycle() {
     const now = new Date()
     STATE.state          = 'running'
     STATE.running        = true
+    STATE.stage          = 'video'
+    STATE.commentsRunId  = null
+    STATE.pendingPostUrls = []
     STATE.pendingRunId   = runId
     STATE.runStartedAt   = now
     STATE.lastRunAt      = now
@@ -1056,12 +1209,30 @@ async function getAcquisitionStats() {
     recentBatchesBlocked: getRecentBatchSnapshot().length,
   }
 
+  // ── Phase 36 — outreach queue conversion counts ──────────────────────────
+  let outreachCounts = {
+    readyToReply: 0, replied: 0, converted: 0, skipped: 0,
+    pendingByTemperature: { hot: 0, warm: 0, cold: 0 },
+    thresholds: {
+      hot:  leadHeatEngine.HOT_THRESHOLD,
+      warm: leadHeatEngine.WARM_THRESHOLD,
+      cold: leadHeatEngine.COLD_THRESHOLD,
+    },
+  }
+  try {
+    outreachCounts = await getOutreachCounts()
+  } catch (err) {
+    console.warn('[LeadAcquisition] Outreach counts unavailable:', err.message)
+  }
+
   return {
     scrapedToday,
     highIntentToday,
     pendingOutreach,
     processedTotal,
     totalScraped,
+    // Phase 36 — Conversion-focused headline
+    outreachCounts,
     // ── Phase 33 — MAIE headline counters ─────────────────────────────────
     nigerianTotal,
     highHeatTotal,
