@@ -793,3 +793,11 @@ export async function fetchPillars() {
 export async function fetchPlatforms() {
   return protectedFetch(`${BASE_URL}/api/content/metadata/platforms`)
 }
+
+export async function fetchContentStyles() {
+  return protectedFetch(`${BASE_URL}/api/content/metadata/styles`)
+}
+
+export async function fetchObjectives() {
+  return protectedFetch(`${BASE_URL}/api/content/metadata/objectives`)
+}

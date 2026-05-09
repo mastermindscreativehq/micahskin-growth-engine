@@ -844,8 +844,9 @@ model ContentPiece {
   painCategory   String    // acne | hyperpigmentation | dark_spots | oily_skin | stretch_marks | uneven_tone | dry_skin | sensitive | general
   platform       String    // tiktok | instagram_reel | facebook | whatsapp_status
   contentType    String    // short_form_video | carousel | caption_post | whatsapp_status | cta_hook_pack
+  contentTitle   String?   @db.Text  // Generated content title for queue display
   hook           String    @db.Text
-  body           String    @db.Text  // JSON: script scenes, carousel slides [{slideNum, heading, body}], or raw caption text
+  body           String    @db.Text  // JSON: full structured content (scenes, shot list, slides, etc.)
   cta            String    @db.Text
   telegramCta    String?   // pre-filled Telegram CTA variant
   hashtags       String?   // JSON array string: ["#acne", "#nigerianwomen"]

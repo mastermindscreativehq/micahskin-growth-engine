@@ -43,11 +43,15 @@ const contentIntelligenceController = {
         });
       }
 
+      const { contentStyle, objective } = req.body;
+
       const piece = await contentIntelligenceService.generateSinglePiece({
         painCategory: painCategory || 'general',
         platform,
         pillar: pillar || 'pain_point',
         contentType,
+        contentStyle: contentStyle || null,
+        objective: objective || null,
         generationMode: 'manual',
       });
 
@@ -271,16 +275,25 @@ const contentIntelligenceController = {
   async getPlatforms(req, res) {
     try {
       const platforms = contentIntelligenceService.getAllPlatforms();
-
-      return res.json({
-        success: true,
-        data: platforms,
-      });
+      return res.json({ success: true, data: platforms });
     } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: error.message,
-      });
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  async getContentStyles(req, res) {
+    try {
+      return res.json({ success: true, data: contentIntelligenceService.getAllContentStyles() });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  async getObjectives(req, res) {
+    try {
+      return res.json({ success: true, data: contentIntelligenceService.getAllObjectives() });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
     }
   },
 

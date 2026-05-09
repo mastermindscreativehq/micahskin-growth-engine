@@ -47,6 +47,8 @@ router.get('/metadata', controller.getMetadata);
 router.get('/categories/pain', controller.getPainCategories);
 router.get('/metadata/pillars', controller.getPillars);
 router.get('/metadata/platforms', controller.getPlatforms);
+router.get('/metadata/styles', controller.getContentStyles);
+router.get('/metadata/objectives', controller.getObjectives);
 
 // ═══════════════════════════════════════════════════════════════════════════════════
 // STATISTICS & ANALYTICS

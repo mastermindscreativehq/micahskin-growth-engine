@@ -1,14 +1,13 @@
 // Content Intelligence Service
-// Orchestrator for content generation, scheduling, and performance tracking
-// Coordinates Claude API, database, and pain point intelligence
+// Orchestrates content generation, scheduling, and performance tracking
+// Provider: OpenAI (default) or Anthropic (see CONTENT_AI_PROVIDER env)
 
 const { PrismaClient } = require('@prisma/client');
-const claudeContentClient = require('./claudeContentClient');
+const aiClient = require('./claudeContentClient');
 const painPointService = require('./painPointDatabaseService');
 
 const prisma = new PrismaClient();
 
-// Content generation strategy
 const GENERATION_STRATEGY = {
   PLATFORM_DISTRIBUTION: {
     tiktok: 3,
@@ -18,12 +17,12 @@ const GENERATION_STRATEGY = {
   },
   PILLAR_DISTRIBUTION: [
     'pain_point',
-    'pain_point', // 2 pain point pieces
+    'pain_point',
     'academy',
     'growth_os',
     'authority',
     'conversion_cta',
-    'pain_point', // Extra pain point because it converts best
+    'pain_point',
   ],
   CONTENT_TYPE_MAP: {
     tiktok: 'short_form_video',
@@ -33,100 +32,72 @@ const GENERATION_STRATEGY = {
   },
 };
 
+// ── Academy & business growth categories ─────────────────────────────────────
+
+const ACADEMY_CATEGORIES = [
+  { id: 'ai_growth_systems', label: 'AI Growth Systems', group: 'Academy & Business' },
+  { id: 'lead_generation', label: 'Lead Generation', group: 'Academy & Business' },
+  { id: 'automation', label: 'Automation', group: 'Academy & Business' },
+  { id: 'brand_positioning', label: 'Brand Positioning', group: 'Academy & Business' },
+  { id: 'customer_psychology', label: 'Customer Psychology', group: 'Academy & Business' },
+  { id: 'conversion_systems', label: 'Conversion Systems', group: 'Academy & Business' },
+  { id: 'backend_infrastructure', label: 'Backend Infrastructure', group: 'Academy & Business' },
+  { id: 'content_systems', label: 'Content Systems', group: 'Academy & Business' },
+  { id: 'skincare_business', label: 'Skincare Business', group: 'Academy & Business' },
+  { id: 'authority_building', label: 'Authority Building', group: 'Academy & Business' },
+];
+
 const contentIntelligenceService = {
-  // ═══════════════════════════════════════════════════════════════════════════════════
-  // SINGLE PIECE GENERATION
-  // ═══════════════════════════════════════════════════════════════════════════════════
+  // ── Single piece generation ─────────────────────────────────────────────────
 
   async generateSinglePiece({
     painCategory = 'general',
     platform = 'tiktok',
     pillar = 'pain_point',
-    contentType = null, // Auto-detect if null
+    contentType = null,
+    contentStyle = null,
+    objective = null,
     generationMode = 'manual',
   }) {
-    // Auto-detect content type if not provided
     const type = contentType || GENERATION_STRATEGY.CONTENT_TYPE_MAP[platform] || 'short_form_video';
-
     let generatedContent = {};
-    const claudeModel = type === 'short_form_video' ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
+    let aiModel = aiClient.PROVIDER === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4.1-mini';
 
     try {
-      // Generate content based on type
       if (type === 'short_form_video') {
-        generatedContent = await claudeContentClient.generateShortFormScript({
-          painCategory,
-          platform,
-          pillar,
-        });
+        generatedContent = await aiClient.generateShortFormScript({ painCategory, platform, pillar, contentStyle, objective });
       } else if (type === 'carousel') {
-        generatedContent = await claudeContentClient.generateCarousel({
-          painCategory,
-          platform,
-          pillar,
-        });
+        generatedContent = await aiClient.generateCarousel({ painCategory, platform, pillar, contentStyle, objective });
       } else if (type === 'whatsapp_status') {
-        generatedContent = await claudeContentClient.generateWhatsAppStatus({
-          painCategory,
-          pillar,
-        });
+        generatedContent = await aiClient.generateWhatsAppStatus({ painCategory, pillar, contentStyle, objective });
       } else if (type === 'caption_post') {
-        generatedContent = await claudeContentClient.generateCaption({
-          painCategory,
-          platform,
-          pillar,
-        });
+        generatedContent = await aiClient.generateCaption({ painCategory, platform, pillar, contentStyle, objective });
       }
 
-      // Generate CTA
-      const ctaResult = await claudeContentClient.generatePlatformCTA({
-        platform,
-        funnelTarget: pillar === 'conversion_cta' ? 'telegram' : pillar === 'academy' ? 'academy' : 'telegram',
-        painCategory,
-      });
-
-      // Generate hook variants (for admin to choose from)
-      const hookVariants = await claudeContentClient.generateHookVariants({
-        painCategory,
-        platform,
-        pillar,
-        count: 3,
-      });
-
-      // Use the first hook variant
-      const hook = hookVariants.hooks[0].text;
-
-      // Optionally localize with Naija tone (skip for Haiku to save tokens)
-      let naijaTone = null;
-      if (type === 'short_form_video' && Math.random() > 0.5) {
-        // 50% of the time, add Naija tone to scripts
-        const scriptText = generatedContent.problem_setup || generatedContent.hook || '';
-        naijaTone = await claudeContentClient.localizeWithNaijaTone(scriptText, {
-          platform,
-          urgency: pillar === 'conversion_cta' ? 'high' : 'medium',
-        });
+      if (generatedContent._aiModel) {
+        aiModel = generatedContent._aiModel;
+        delete generatedContent._aiModel;
       }
 
-      // Prepare body (JSON format depends on content type)
-      let body = {};
-      if (type === 'short_form_video') {
-        body = {
-          hook: generatedContent.hook,
-          problem_setup: generatedContent.problem_setup,
-          agitate: generatedContent.agitate,
-          solution_reveal: generatedContent.solution_reveal,
-          script_sections: generatedContent.script_sections,
-        };
-      } else if (type === 'carousel') {
-        body = generatedContent; // Already structured
-      } else if (type === 'whatsapp_status' || type === 'caption_post') {
-        body = {
-          status_text: generatedContent.status_text,
-          body: generatedContent.body,
-        };
-      }
+      const contentTitle = generatedContent.content_title || null;
 
-      // Create content piece in database
+      const hook =
+        generatedContent.hook ||
+        generatedContent.status_slides?.[0]?.slide_text ||
+        generatedContent.hook_slide?.heading ||
+        'Untitled';
+
+      const cta =
+        generatedContent.cta ||
+        generatedContent.telegram_cta ||
+        'DM START on Telegram for your free skin diagnosis';
+
+      const hashtags = generatedContent.hashtags || ['#skincare', '#nigerian', '#micahskin'];
+
+      const telegramCta =
+        generatedContent.telegram_cta ||
+        'DM START on Telegram @micahskin_academy_bot for your free diagnosis';
+
       const contentPiece = await prisma.contentPiece.create({
         data: {
           batchDate: this._getTodayWAT(),
@@ -134,13 +105,13 @@ const contentIntelligenceService = {
           painCategory,
           platform,
           contentType: type,
-          hook: generatedContent.hook || generatedContent.status_text || generatedContent.body || 'Untitled',
-          body: JSON.stringify(body),
-          cta: ctaResult.primary_cta || 'DM us on Telegram',
-          telegramCta: 'DM START on Telegram for your free diagnosis',
-          hashtags: JSON.stringify(generatedContent.hashtags || ['#skincare', '#nigerian', '#micahskin']),
-          naijaTone,
-          claudeModel,
+          contentTitle,
+          hook,
+          body: JSON.stringify({ ...generatedContent, _contentStyle: contentStyle, _objective: objective }),
+          cta,
+          telegramCta,
+          hashtags: JSON.stringify(hashtags),
+          claudeModel: aiModel,
           status: 'draft',
           generationMode,
         },
@@ -153,14 +124,11 @@ const contentIntelligenceService = {
     }
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════════
-  // DAILY BATCH GENERATION
-  // ═══════════════════════════════════════════════════════════════════════════════════
+  // ── Daily batch generation ──────────────────────────────────────────────────
 
   async generateDailyBatch({ date = null, count = 10 } = {}) {
     const batchDate = date || this._getTodayWAT();
 
-    // Check if batch already exists for today
     const existing = await prisma.contentPiece.findFirst({
       where: { batchDate, generationMode: 'auto' },
     });
@@ -176,39 +144,26 @@ const contentIntelligenceService = {
     const generatedPieces = [];
     let failureCount = 0;
 
-    // Generate pieces across platforms and pillars
     const platforms = Object.keys(GENERATION_STRATEGY.PLATFORM_DISTRIBUTION);
-    const platformCounts = GENERATION_STRATEGY.PLATFORM_DISTRIBUTION;
 
     for (const platform of platforms) {
-      const platformCount = platformCounts[platform];
+      const platformCount = GENERATION_STRATEGY.PLATFORM_DISTRIBUTION[platform];
 
       for (let i = 0; i < platformCount; i++) {
         try {
-          // Pick pillar (rotate through the strategy)
           const pillarIndex = (generatedPieces.length + i) % GENERATION_STRATEGY.PILLAR_DISTRIBUTION.length;
           const pillar = GENERATION_STRATEGY.PILLAR_DISTRIBUTION[pillarIndex];
-
-          // Pick pain category (rotate through categories for diversity)
           const categoryIndex = generatedPieces.length % allCategories.length;
           const painCategory = allCategories[categoryIndex].id;
 
           console.log(`Generating: ${platform} - ${pillar} - ${painCategory}`);
 
-          const piece = await this.generateSinglePiece({
-            painCategory,
-            platform,
-            pillar,
-            generationMode: 'auto',
-          });
-
+          const piece = await this.generateSinglePiece({ painCategory, platform, pillar, generationMode: 'auto' });
           generatedPieces.push(piece);
           console.log(`✓ Generated piece ${generatedPieces.length}/${count}`);
         } catch (error) {
           failureCount++;
           console.error(`✗ Failed to generate ${platform} piece:`, error.message);
-
-          // Continue with next piece instead of failing the entire batch
           if (failureCount > 3) {
             console.warn('Too many failures, stopping batch generation');
             break;
@@ -217,62 +172,37 @@ const contentIntelligenceService = {
       }
     }
 
-    return {
-      success: true,
-      batchDate,
-      generated: generatedPieces.length,
-      failed: failureCount,
-      pieces: generatedPieces,
-    };
+    return { success: true, batchDate, generated: generatedPieces.length, failed: failureCount, pieces: generatedPieces };
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════════
-  // QUEUE & RETRIEVAL
-  // ═══════════════════════════════════════════════════════════════════════════════════
+  // ── Queue & retrieval ───────────────────────────────────────────────────────
 
   async getDailyQueue({ date = null } = {}) {
     const batchDate = date || this._getTodayWAT();
-
-    const queue = await prisma.contentPiece.findMany({
+    return prisma.contentPiece.findMany({
       where: { batchDate },
       orderBy: [{ pillar: 'asc' }, { createdAt: 'desc' }],
     });
-
-    return queue;
   },
 
   async getContentPiece(pieceId) {
-    return prisma.contentPiece.findUnique({
-      where: { id: pieceId },
-    });
+    return prisma.contentPiece.findUnique({ where: { id: pieceId } });
   },
 
   async listContentPieces({ status = null, platform = null, limit = 50, offset = 0 } = {}) {
     const where = {};
     if (status) where.status = status;
     if (platform) where.platform = platform;
-
-    return prisma.contentPiece.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-      skip: offset,
-    });
+    return prisma.contentPiece.findMany({ where, orderBy: { createdAt: 'desc' }, take: limit, skip: offset });
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════════
-  // STATUS & PERFORMANCE TRACKING
-  // ═══════════════════════════════════════════════════════════════════════════════════
+  // ── Status & performance ────────────────────────────────────────────────────
 
   async updateContentStatus(pieceId, newStatus) {
     if (!['draft', 'approved', 'scheduled', 'posted', 'archived'].includes(newStatus)) {
       throw new Error(`Invalid status: ${newStatus}`);
     }
-
-    return prisma.contentPiece.update({
-      where: { id: pieceId },
-      data: { status: newStatus, updatedAt: new Date() },
-    });
+    return prisma.contentPiece.update({ where: { id: pieceId }, data: { status: newStatus, updatedAt: new Date() } });
   },
 
   async updateContentPerformance(pieceId, { views, leads, conversions }) {
@@ -288,11 +218,7 @@ const contentIntelligenceService = {
   },
 
   async markAsWinning(pieceId, performanceNote = null) {
-    const piece = await prisma.contentPiece.update({
-      where: { id: pieceId },
-      data: { isWinning: true },
-    });
-
+    const piece = await prisma.contentPiece.update({ where: { id: pieceId }, data: { isWinning: true } });
     const hookService = require('./hookLibraryService');
     await hookService.saveHook({
       hook: piece.hook,
@@ -302,23 +228,16 @@ const contentIntelligenceService = {
       hookType: 'statement',
       performanceNote: performanceNote || `Saved from ContentPiece ${pieceId}`,
     });
-
     return piece;
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════════
-  // STATISTICS & ANALYTICS
-  // ═══════════════════════════════════════════════════════════════════════════════════
+  // ── Analytics ──────────────────────────────────────────────────────────────
 
   async getContentStats({ days = 30 } = {}) {
     const sinceDate = new Date();
     sinceDate.setDate(sinceDate.getDate() - days);
 
-    const pieces = await prisma.contentPiece.findMany({
-      where: {
-        createdAt: { gte: sinceDate },
-      },
-    });
+    const pieces = await prisma.contentPiece.findMany({ where: { createdAt: { gte: sinceDate } } });
 
     const stats = {
       totalPieces: pieces.length,
@@ -335,13 +254,11 @@ const contentIntelligenceService = {
       stats.totalViews += piece.views;
       stats.totalLeads += piece.leads;
       stats.totalConversions += piece.conversions;
-
       stats.byPlatform[piece.platform] = (stats.byPlatform[piece.platform] || 0) + 1;
       stats.byPillar[piece.pillar] = (stats.byPillar[piece.pillar] || 0) + 1;
       stats.byStatus[piece.status] = (stats.byStatus[piece.status] || 0) + 1;
     });
 
-    // Top performers by views
     stats.topPerformers = pieces
       .sort((a, b) => b.views - a.views)
       .slice(0, 10)
@@ -362,35 +279,13 @@ const contentIntelligenceService = {
     return stats;
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════════════
-  // UTILITY FUNCTIONS
-  // ═══════════════════════════════════════════════════════════════════════════════════
+  // ── Metadata ────────────────────────────────────────────────────────────────
 
-  // Get today's date in WAT (West Africa Time = UTC+1)
-  _getTodayWAT() {
-    const now = new Date();
-    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-    const wat = new Date(utc + 1 * 60 * 60000); // UTC+1
-
-    // Return as YYYY-MM-DD string
-    const year = wat.getFullYear();
-    const month = String(wat.getMonth() + 1).padStart(2, '0');
-    const day = String(wat.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  },
-
-  // Utility: Get random pain category
-  getRandomPainCategory() {
-    const categories = painPointService.getAllCategories();
-    return categories[Math.floor(Math.random() * categories.length)].id;
-  },
-
-  // Utility: Get all pain categories for dropdown options
   getAllPainCategories() {
-    return painPointService.getAllCategories();
+    const skincare = painPointService.getAllCategories().map(c => ({ ...c, group: 'Skincare' }));
+    return [...skincare, ...ACADEMY_CATEGORIES];
   },
 
-  // Utility: Get all pillars
   getAllPillars() {
     return [
       { id: 'pain_point', label: 'Pain Point' },
@@ -401,7 +296,6 @@ const contentIntelligenceService = {
     ];
   },
 
-  // Utility: Get all platforms
   getAllPlatforms() {
     return [
       { id: 'tiktok', label: 'TikTok' },
@@ -409,6 +303,51 @@ const contentIntelligenceService = {
       { id: 'facebook', label: 'Facebook' },
       { id: 'whatsapp_status', label: 'WhatsApp Status' },
     ];
+  },
+
+  getAllContentStyles() {
+    return [
+      { id: 'auto', label: 'Auto (AI decides)' },
+      { id: 'Cinematic', label: 'Cinematic' },
+      { id: 'Luxury', label: 'Luxury' },
+      { id: 'Authority', label: 'Authority' },
+      { id: 'Emotional', label: 'Emotional' },
+      { id: 'Educational', label: 'Educational' },
+      { id: 'Viral', label: 'Viral' },
+      { id: 'Documentary', label: 'Documentary' },
+      { id: 'Founder Story', label: 'Founder Story' },
+      { id: 'Direct Response', label: 'Direct Response' },
+    ];
+  },
+
+  getAllObjectives() {
+    return [
+      { id: 'auto', label: 'Auto (AI decides)' },
+      { id: 'Lead Generation', label: 'Lead Generation' },
+      { id: 'Telegram Conversion', label: 'Telegram Conversion' },
+      { id: 'Academy Sales', label: 'Academy Sales' },
+      { id: 'Product Sales', label: 'Product Sales' },
+      { id: 'Brand Awareness', label: 'Brand Awareness' },
+      { id: 'Engagement', label: 'Engagement' },
+      { id: 'Authority Positioning', label: 'Authority Positioning' },
+    ];
+  },
+
+  // ── Utilities ───────────────────────────────────────────────────────────────
+
+  _getTodayWAT() {
+    const now = new Date();
+    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+    const wat = new Date(utc + 1 * 60 * 60000);
+    const year = wat.getFullYear();
+    const month = String(wat.getMonth() + 1).padStart(2, '0');
+    const day = String(wat.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  },
+
+  getRandomPainCategory() {
+    const categories = painPointService.getAllCategories();
+    return categories[Math.floor(Math.random() * categories.length)].id;
   },
 };
 
