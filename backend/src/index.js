@@ -12,6 +12,7 @@ const { startAcademyExperience } = require('./services/academyExperienceService'
 const { startAutoFollowUpService }     = require('./services/autoFollowUpService')
 const { startLeadAcquisitionEngine }   = require('./services/leadAcquisitionService')
 const { startMceFollowUpService }      = require('./services/mce/mceFollowUpService')
+const { startContentDailyPoller }      = require('./services/contentSchedulerService')
 
 const PORT = Number(process.env.PORT) || 4000
 const HOST = '0.0.0.0'
@@ -58,6 +59,8 @@ function startBackgroundServices() {
   // kept (it logs the mode) but performs no scheduling or auto-trigger.
   safeStartService('Lead Acquisition Engine (manual mode)', startLeadAcquisitionEngine)
   safeStartService('MCE Follow-Up Engine', startMceFollowUpService)
+  // Phase 38+ — Content Intelligence Engine daily batch generation (6am WAT)
+  safeStartService('Content Daily Poller', startContentDailyPoller)
 }
 
 async function start() {

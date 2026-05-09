@@ -1,4 +1,5 @@
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+console.log('[API] BASE_URL =', BASE_URL)
 
 // ── Protected fetch helper ────────────────────────────────────────────────────
 //
@@ -670,4 +671,125 @@ export async function pauseMceFollowUps() {
 
 export async function resumeMceFollowUps() {
   return protectedFetch(`${BASE_URL}/api/mce/follow-ups/resume`, { method: 'POST' })
+}
+
+// ── Content Intelligence Engine ───────────────────────────────────────────────────
+
+/**
+ * Get daily content queue for a specific date
+ */
+export async function fetchContentQueue(date = null) {
+  const url = date
+    ? `${BASE_URL}/api/content/queue?date=${date}`
+    : `${BASE_URL}/api/content/queue`
+  return protectedFetch(url)
+}
+
+/**
+ * Generate a batch of 10 content pieces for today
+ */
+export async function generateContentBatch({ date = null, count = 10 } = {}) {
+  return protectedFetch(`${BASE_URL}/api/content/generate-batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, count }),
+  })
+}
+
+/**
+ * Generate a single content piece
+ */
+export async function generateContentPiece(opts) {
+  return protectedFetch(`${BASE_URL}/api/content/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+}
+
+/**
+ * Update content piece status (draft, approved, scheduled, posted, archived)
+ */
+export async function updateContentStatus(pieceId, status) {
+  return protectedFetch(`${BASE_URL}/api/content/${encodeURIComponent(pieceId)}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
+}
+
+/**
+ * Update content piece performance metrics (views, leads, conversions)
+ */
+export async function updateContentPerformance(pieceId, data) {
+  return protectedFetch(`${BASE_URL}/api/content/${encodeURIComponent(pieceId)}/performance`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+/**
+ * Save a content piece as a winning hook
+ */
+export async function saveContentHook(pieceId, performanceNote = null) {
+  return protectedFetch(`${BASE_URL}/api/content/${encodeURIComponent(pieceId)}/save-hook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ performanceNote }),
+  })
+}
+
+/**
+ * Get winning hooks library with optional filters
+ */
+export async function fetchHookLibrary(filters = {}) {
+  const params = new URLSearchParams()
+  if (filters.platform) params.append('platform', filters.platform)
+  if (filters.pillar) params.append('pillar', filters.pillar)
+  if (filters.painCategory) params.append('painCategory', filters.painCategory)
+  if (filters.limit) params.append('limit', filters.limit)
+
+  const url = params.toString()
+    ? `${BASE_URL}/api/content/hooks?${params.toString()}`
+    : `${BASE_URL}/api/content/hooks`
+
+  return protectedFetch(url)
+}
+
+/**
+ * Deactivate a saved hook
+ */
+export async function deactivateHook(hookId) {
+  return protectedFetch(`${BASE_URL}/api/content/hooks/${encodeURIComponent(hookId)}`, {
+    method: 'DELETE',
+  })
+}
+
+/**
+ * Get content performance statistics
+ */
+export async function fetchContentStats({ days = 30 } = {}) {
+  return protectedFetch(`${BASE_URL}/api/content/stats?days=${days}`)
+}
+
+/**
+ * Get pain point categories
+ */
+export async function fetchPainCategories() {
+  return protectedFetch(`${BASE_URL}/api/content/categories/pain`)
+}
+
+/**
+ * Get content pillars
+ */
+export async function fetchPillars() {
+  return protectedFetch(`${BASE_URL}/api/content/metadata/pillars`)
+}
+
+/**
+ * Get content platforms
+ */
+export async function fetchPlatforms() {
+  return protectedFetch(`${BASE_URL}/api/content/metadata/platforms`)
 }

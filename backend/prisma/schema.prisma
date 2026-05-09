@@ -833,3 +833,58 @@ model quiz_sessions {
   @@index([chat_id], map: "idx_quiz_sessions_chat_id")
   @@index([state], map: "idx_quiz_sessions_state")
 }
+
+// Phase 33+ — Content Intelligence Engine (CIE)
+// Auto-generated Nigerian skincare content for TikTok, Instagram, Facebook, WhatsApp.
+// Content is generated daily, manually approved by admin, then scheduled/posted.
+model ContentPiece {
+  id             String    @id @default(cuid())
+  batchDate      String    // "2026-05-08" WAT date — groups daily batch
+  pillar         String    // pain_point | academy | growth_os | authority | conversion_cta
+  painCategory   String    // acne | hyperpigmentation | dark_spots | oily_skin | stretch_marks | uneven_tone | dry_skin | sensitive | general
+  platform       String    // tiktok | instagram_reel | facebook | whatsapp_status
+  contentType    String    // short_form_video | carousel | caption_post | whatsapp_status | cta_hook_pack
+  hook           String    @db.Text
+  body           String    @db.Text  // JSON: script scenes, carousel slides [{slideNum, heading, body}], or raw caption text
+  cta            String    @db.Text
+  telegramCta    String?   // pre-filled Telegram CTA variant
+  hashtags       String?   // JSON array string: ["#acne", "#nigerianwomen"]
+  naijaTone      String?   @db.Text  // Naija-localized overlay/alternative phrasing
+  claudeModel    String?   // "haiku-4-5" | "sonnet-4-6" — which model generated this
+  status         String    @default("draft") // draft | approved | scheduled | posted | archived
+  isWinning      Boolean   @default(false)
+  views          Int       @default(0)
+  leads          Int       @default(0)
+  conversions    Int       @default(0)
+  generationMode String    @default("auto") // auto | manual
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([batchDate])
+  @@index([platform])
+  @@index([pillar])
+  @@index([painCategory])
+  @@index([status])
+  @@index([isWinning])
+  @@map("content_pieces")
+}
+
+// Winning hooks library — saves high-performing hooks for reuse across multiple pieces.
+model WinningHook {
+  id             String   @id @default(cuid())
+  hook           String   @db.Text
+  platform       String   // tiktok | instagram_reel | facebook | whatsapp_status | all
+  pillar         String   // pain_point | academy | growth_os | authority | conversion_cta
+  painCategory   String   // acne | hyperpigmentation | ... | general
+  hookType       String   // question | statement | shock | story | contrarian
+  performanceNote String? // "3.2k views, 47 leads" — admin notes on past performance
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([platform])
+  @@index([pillar])
+  @@index([painCategory])
+  @@index([isActive])
+  @@map("winning_hooks")
+}

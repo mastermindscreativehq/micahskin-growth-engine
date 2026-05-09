@@ -34,6 +34,7 @@ import SkinImagesPanel from './SkinImagesPanel.jsx'
 import DeepConsultPanel from './DeepConsultPanel.jsx'
 import CommandCenterPanel from './CommandCenterPanel.jsx'
 import OutreachQueuePanel from './OutreachQueuePanel.jsx'
+import ContentIntelligencePanel from './ContentIntelligencePanel.jsx'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -3683,6 +3684,7 @@ const TABS = [
   { id: 'academy',   label: 'Academy' },
   { id: 'scraping',  label: 'Scraping' },
   { id: 'products',  label: 'Products' },
+  { id: 'content',   label: 'Content Intel' },
 ]
 
 export default function AdminDashboard({ onBack, onLogout }) {
@@ -3742,6 +3744,7 @@ export default function AdminDashboard({ onBack, onLogout }) {
         {activeTab === 'academy'   && <AcademyTab />}
         {activeTab === 'scraping'  && <ScrapingTab />}
         {activeTab === 'products'  && <ProductsTab />}
+        {activeTab === 'content'   && <ContentIntelligencePanel />}
       </main>
     </div>
   )

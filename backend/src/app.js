@@ -20,6 +20,7 @@ const paymentsRouter     = require('./routes/payments')
 const fulfillmentRouter  = require('./routes/fulfillment')
 const adminRouter        = require('./routes/admin')
 const mceRouter          = require('./routes/mce')
+const contentIntelligenceRouter = require('./routes/contentIntelligence')
 
 const app = express()
 
@@ -190,6 +191,9 @@ app.use('/api/admin', adminRouter)
 
 // MICAHSKIN Conversion Engine (Phase 34) — public WhatsApp redirect + protected admin endpoints
 app.use('/api/mce', mceRouter)
+
+// Content Intelligence Engine — Nigerian skincare content generation
+app.use('/api/content', contentIntelligenceRouter)
 
 // ─────────────────────────────────────────────────────────────
 // 404
