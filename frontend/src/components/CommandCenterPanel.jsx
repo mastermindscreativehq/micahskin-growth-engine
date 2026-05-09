@@ -1,5 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
-import { fetchCommandCenter, pauseFollowUps, resumeFollowUps, triggerAcquisitionRun } from '../api/index.js'
+﻿import { useState, useEffect, useCallback } from 'react'
+import {
+  fetchCommandCenter, pauseFollowUps, resumeFollowUps,
+  triggerAcquisitionRun, previewAcquisitionRun, stopAcquisitionRun,
+} from '../api/index.js'
 import FunnelConversionPanel from './mce/FunnelConversionPanel.jsx'
 import WhatsAppClickPanel    from './mce/WhatsAppClickPanel.jsx'
 import TopObjectionsPanel    from './mce/TopObjectionsPanel.jsx'
@@ -292,196 +295,317 @@ function MAIEBreakdownCard({ title, items, keyField, barColor, emptyLabel }) {
   )
 }
 
-// ── Lead Sources section ──────────────────────────────────────────────────────
+// ── Market Acquisition — Safe Mode panel ─────────────────────────────────────
+
+const RISK_STYLE = {
+  low:    'border-emerald-200 bg-emerald-50 text-emerald-700',
+  medium: 'border-amber-200  bg-amber-50  text-amber-700',
+  high:   'border-red-200    bg-red-50    text-red-700',
+}
+
+function RunLogRow({ run }) {
+  const statusColor =
+    run.status === 'completed' ? 'text-emerald-700' :
+    run.status === 'stopped'   ? 'text-amber-700'   :
+    run.status === 'timeout'   ? 'text-amber-600'   : 'text-red-700'
+
+  const ts = run.completedAt || run.loggedAt
+  return (
+    <div className="flex items-center gap-2 text-[11px] py-1 border-b border-gray-100 last:border-0 flex-wrap">
+      <span className={`font-bold w-16 shrink-0 ${statusColor}`}>{run.status}</span>
+      <span className="text-gray-500 tabular-nums shrink-0">{run.country ?? '—'}</span>
+      <span className="text-gray-600 tabular-nums">
+        {run.accepted ?? 0} accepted &middot; {run.itemsFound ?? 0} items
+        {run.durationMs != null ? ` · ${Math.round(run.durationMs / 1000)}s` : ''}
+      </span>
+      {run.estimatedCU?.total != null && (
+        <span className="text-gray-400 tabular-nums ml-auto shrink-0">~{run.estimatedCU.total} CU</span>
+      )}
+      <span className="text-gray-400 tabular-nums shrink-0 ml-1">{ts ? fmtDT(ts) : '—'}</span>
+    </div>
+  )
+}
 
 function LeadSourcesSection({ leadSources, onRefresh }) {
-  const [acquiring, setAcquiring] = useState(false)
-  const [triggered, setTriggered] = useState(false)
-  const [country, setCountry] = useState(
-    leadSources?.acquisitionStatus?.selectedCountry || 'NG'
-  )
-
-  const trigger = async () => {
-    setAcquiring(true)
-    try {
-      await triggerAcquisitionRun(country)
-      setTriggered(true)
-      setTimeout(() => setTriggered(false), 6000)
-      onRefresh()
-    } catch {
-      // swallow — stale state, refresh fixes it
-    } finally {
-      setAcquiring(false)
-    }
-  }
-
-  // Default to idle — never infer "running" from a lingering pendingRunId alone.
-  const status = leadSources?.acquisitionStatus ?? {
-    state: 'idle', running: false, pendingRunId: null,
-    runStartedAt: null, lastRunAt: null, lastRunFinishedAt: null,
-    lastStatus: null, stale: false,
-    mode: 'manual', manualMode: true,
-    selectedCountry: 'NG', countryLabel: 'Nigeria',
-    supportedCountries: [
-      { code: 'NG', label: 'Nigeria' }, { code: 'GH', label: 'Ghana' },
-      { code: 'KE', label: 'Kenya' },   { code: 'ZA', label: 'South Africa' },
-    ],
-    maxVideosPerQuery: 3, maxCommentsPerVideo: 10, maxAcceptedLeads: 15,
-    injectThreshold: { buyer: 45, pain: 35 },
-    nextRunAt: null, itemsThisCycle: 0, acceptedThisCycle: 0,
-    acceptanceCapReached: false,
-    lastBatch: null, lastVerification: null, recentBatchesBlocked: 0,
-  }
-  const isRunning = status.running === true || !!status.pendingRunId
-
-  // ── Phase 37 — Manual mode + Africa-first display ────────────────────────
+  const status = leadSources?.acquisitionStatus ?? {}
   const supportedCountries = status.supportedCountries?.length
     ? status.supportedCountries
     : [
         { code: 'NG', label: 'Nigeria' }, { code: 'GH', label: 'Ghana' },
         { code: 'KE', label: 'Kenya' },   { code: 'ZA', label: 'South Africa' },
       ]
-  const maxVideos        = status.maxVideosPerQuery   ?? 3
-  const maxComments      = status.maxCommentsPerVideo ?? 10
-  const maxAccepted      = status.maxAcceptedLeads    ?? 15
-  const injectBuyer      = status.injectThreshold?.buyer ?? 45
-  const injectPain       = status.injectThreshold?.pain  ?? 35
-  const itemsThisCycle   = status.itemsThisCycle ?? 0
-  const acceptedThisCycle = status.acceptedThisCycle ?? 0
-  const recentBlocked    = status.recentBatchesBlocked ?? 0
-  const lastBatch        = status.lastBatch
-  const lastBatchPhrases = lastBatch?.phrases?.length
-    ? lastBatch.phrases
-    : (lastBatch?.hashtags || [])
-  const lastVerif        = status.lastVerification
 
-  const dotClass = isRunning
-    ? 'bg-amber-400 animate-pulse'
-    : status.state === 'failed'
-      ? 'bg-red-400'
-      : status.state === 'completed'
-        ? 'bg-emerald-400'
-        : 'bg-teal-400'
+  const [country,        setCountry]        = useState(status.selectedCountry || 'NG')
+  const [preview,        setPreview]        = useState(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError,   setPreviewError]   = useState(null)
+  const [acquiring,      setAcquiring]      = useState(false)
+  const [stopping,       setStopping]       = useState(false)
+  const [notice,         setNotice]         = useState(null)
 
-  const stateLabel = isRunning
-    ? 'Scrape in progress…'
-    : status.state === 'failed'
-      ? `Last run failed${status.lastStatus ? ` (${status.lastStatus})` : ''}`
-      : status.state === 'completed'
-        ? 'Last run completed'
-        : 'Engine idle'
-
-  // ── Phase 36 — Conversion-focused headline ───────────────────────────────
-  const oc = leadSources?.outreachCounts || {
-    readyToReply: 0, replied: 0, converted: 0, skipped: 0,
-    pendingByTemperature: { hot: 0, warm: 0, cold: 0 },
+  const showNotice = (msg) => {
+    setNotice(msg)
+    setTimeout(() => setNotice(null), 6000)
   }
-  const stats = [
-    { label: 'Ready to reply', value: oc.readyToReply, color: 'amber'   },
-    { label: 'Replied',        value: oc.replied,      color: 'teal'    },
-    { label: 'Converted',      value: oc.converted,    color: 'violet'  },
-    { label: 'Hot pending',    value: oc.pendingByTemperature?.hot ?? 0, color: 'indigo' },
-  ]
+
+  useEffect(() => { setPreview(null); setPreviewError(null) }, [country])
+
+  const loadPreview = async () => {
+    setPreviewLoading(true)
+    setPreviewError(null)
+    try {
+      const res = await previewAcquisitionRun(country)
+      setPreview(res.data)
+    } catch (err) {
+      setPreviewError(err.message || 'Preview failed')
+    }
+    setPreviewLoading(false)
+  }
+
+  const trigger = async () => {
+    if (!preview) return
+    setAcquiring(true)
+    try {
+      await triggerAcquisitionRun(country)
+      showNotice('Run started — refresh in ~2 min to see results.')
+      setPreview(null)
+      onRefresh()
+    } catch (err) {
+      showNotice(`Error: ${err.message || 'trigger failed'}`)
+    }
+    setAcquiring(false)
+  }
+
+  const stop = async () => {
+    setStopping(true)
+    try {
+      await stopAcquisitionRun()
+      showNotice('Run stopped and reset to idle.')
+      onRefresh()
+    } catch { /* swallow */ }
+    setStopping(false)
+  }
+
+  const isRunning  = status.running === true || !!status.pendingRunId
+  const oc         = leadSources?.outreachCounts || {}
+  const runLog     = status.runLog || []
+  const injectBuyer = status.injectThreshold?.buyer ?? 45
+  const injectPain  = status.injectThreshold?.pain  ?? 35
+  const lastVerif   = status.lastVerification
+
+  const dotClass =
+    isRunning                    ? 'bg-amber-400 animate-pulse' :
+    status.state === 'failed'    ? 'bg-red-400'                 :
+    status.state === 'completed' ? 'bg-emerald-400'             : 'bg-gray-300'
+
+  const stateLabel =
+    isRunning                    ? `In progress — stage: ${status.stage || 'video'} · ${status.itemsThisCycle ?? 0} items` :
+    status.state === 'failed'    ? `Failed${status.lastStatus ? ` (${status.lastStatus})` : ''}` :
+    status.state === 'completed' ? 'Last run completed' : 'Idle'
 
   return (
-    <SectionBox title="Lead Sources — Africa-First Buyer Intent" color="teal">
-      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <div className="flex items-center gap-3">
+    <SectionBox title="Market Acquisition" color="teal">
+
+      {/* Status + Safe Mode badge */}
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
           <span className={`h-2.5 w-2.5 rounded-full shrink-0 transition-colors ${dotClass}`} />
           <span className="text-xs font-semibold text-gray-700">{stateLabel}</span>
           <span className="text-xs text-gray-400 tabular-nums">
             {(leadSources?.totalScraped ?? 0).toLocaleString()} total scraped
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-[11px] text-gray-500 font-semibold">Country:</label>
-          <select
-            value={country}
-            onChange={(e) => setCountry(e.target.value)}
-            disabled={isRunning || acquiring}
-            className="rounded-lg border border-gray-200 bg-white text-gray-700 px-2 py-1 text-xs font-semibold disabled:opacity-50"
-          >
-            {supportedCountries.map(c => (
-              <option key={c.code} value={c.code}>{c.label}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={trigger}
-            disabled={acquiring || isRunning}
-            className="shrink-0 rounded-lg border border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-100 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
-          >
-            {acquiring ? '…' : '▶ Run Now'}
-          </button>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            SAFE MODE ACTIVE
+          </span>
+          <span className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-mono text-gray-500 tabular-nums">
+            {status.maxSearchQueries ?? 3}q &middot; {status.maxVideosPerQuery ?? 5}p &middot; {status.maxCommentsPerVideo ?? 10}c
+          </span>
         </div>
       </div>
 
-      <div className="mb-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-gray-500 sm:grid-cols-4">
+      {notice && (
+        <div className="mb-3 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-700">
+          {notice}
+        </div>
+      )}
+
+      {/* Step 1: Dry Run Preview */}
+      <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+        <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
+            Step 1 — Dry Run Preview
+          </span>
+          <div className="flex items-center gap-2">
+            <select
+              value={country}
+              onChange={e => setCountry(e.target.value)}
+              disabled={isRunning || previewLoading}
+              className="rounded-lg border border-gray-200 bg-white text-gray-700 px-2 py-1 text-xs font-semibold disabled:opacity-50"
+            >
+              {supportedCountries.map(c => (
+                <option key={c.code} value={c.code}>{c.label}</option>
+              ))}
+            </select>
+            <button
+              onClick={loadPreview}
+              disabled={isRunning || previewLoading}
+              className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-50"
+            >
+              {previewLoading ? '...' : 'Preview Run'}
+            </button>
+          </div>
+        </div>
+
+        {previewError && (
+          <p className="text-xs text-red-600 mb-1">{previewError}</p>
+        )}
+
+        {!preview && !previewLoading && !previewError && (
+          <p className="text-[11px] text-gray-400">
+            Click Preview to see planned queries and estimated credit cost. No Apify call is made.
+          </p>
+        )}
+
+        {preview && (
+          <div className="space-y-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+                Planned queries ({preview.queries?.length ?? 0} / {preview.limits?.maxSearchQueries ?? 3} max)
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {(preview.queries || []).map((q, i) => (
+                  <span key={i} className="rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-mono text-gray-700">
+                    #{q}
+                  </span>
+                ))}
+              </div>
+              {preview.phrases?.length > 0 && (
+                <p className="text-[10px] text-gray-400 mt-1">
+                  {preview.phrases.join(' · ')}
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-gray-200 bg-white px-2 py-2 text-center">
+                <p className="text-sm font-bold text-gray-800 tabular-nums">{preview.estimatedPosts ?? 0}</p>
+                <p className="text-[10px] text-gray-400">posts max</p>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-white px-2 py-2 text-center">
+                <p className="text-sm font-bold text-gray-800 tabular-nums">{preview.estimatedComments ?? 0}</p>
+                <p className="text-[10px] text-gray-400">comments max</p>
+              </div>
+              <div className={`rounded-lg border px-2 py-2 text-center ${RISK_STYLE[preview.riskLevel] || RISK_STYLE.low}`}>
+                <p className="text-sm font-bold tabular-nums">~{preview.estimatedCU?.total ?? 0} CU</p>
+                <p className="text-[10px] font-semibold capitalize">{preview.riskLevel ?? 'low'} risk</p>
+              </div>
+            </div>
+
+            {preview.riskLevel === 'high' && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                Estimated usage is high. Reduce limits in config before running.
+              </div>
+            )}
+            {!preview.wouldRun && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                A run is already in progress. Stop it first.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Step 2: Execute */}
+      <div className="mb-4 rounded-lg border border-gray-200 bg-white px-4 py-3">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-3">
+          Step 2 — Execute
+        </p>
+        <div className="flex items-center gap-3 flex-wrap">
+          {isRunning ? (
+            <>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] text-amber-700 font-medium">
+                  Run in progress — {status.acceptedThisCycle ?? 0} accepted of {status.maxAcceptedLeads ?? 15} max
+                </p>
+              </div>
+              <button
+                onClick={stop}
+                disabled={stopping}
+                className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50 shrink-0"
+              >
+                {stopping ? '...' : 'Stop Run'}
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="flex-1 min-w-0">
+                {preview ? (
+                  <p className="text-[11px] text-emerald-700 font-medium">
+                    Ready — {preview.queries?.length ?? 0} queries, ~{preview.estimatedCU?.total ?? 0} CU estimated
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-gray-400">Preview the run first, then click Run.</p>
+                )}
+              </div>
+              <button
+                onClick={trigger}
+                disabled={!preview || acquiring || !preview.wouldRun}
+                title={!preview ? 'Click Preview Run first' : undefined}
+                className="rounded-lg border border-teal-200 bg-teal-50 px-4 py-1.5 text-xs font-bold text-teal-700 hover:bg-teal-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              >
+                {acquiring ? '...' : 'Run Now'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Run metadata */}
+      <div className="mb-4 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-gray-500 sm:grid-cols-4">
         <span>Last run: <span className="text-gray-700 tabular-nums">{status.lastRunAt ? fmtDT(status.lastRunAt) : '—'}</span></span>
         <span>Finished: <span className="text-gray-700 tabular-nums">{status.lastRunFinishedAt ? fmtDT(status.lastRunFinishedAt) : '—'}</span></span>
         <span>Last status: <span className="text-gray-700">{status.lastStatus ?? '—'}</span></span>
         <span>Total injected: <span className="text-gray-700 tabular-nums">{(leadSources?.processedTotal ?? 0).toLocaleString()}</span></span>
       </div>
 
-      {/* ── Phase 37 — Manual-mode panel ────────────────────────────────── */}
-      <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3">
-        <div className="flex flex-wrap items-center gap-2 mb-2">
-          <span className="inline-flex items-center rounded-full border border-emerald-300 bg-white text-emerald-700 px-2 py-0.5 text-[11px] font-bold">
-            Manual Mode Enabled
-          </span>
-          <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold">
-            Country: {status.countryLabel || 'Nigeria'}
-          </span>
-          <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums">
-            ≤ {maxVideos} videos / query
-          </span>
-          <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums">
-            ≤ {maxComments} comments / video
-          </span>
-          <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums">
-            Stop after {maxAccepted} accepted
-          </span>
-          <span className="inline-flex items-center rounded-full border border-gray-200 bg-white text-gray-700 px-2 py-0.5 text-[11px] font-semibold tabular-nums">
-            Inject if buyer ≥ {injectBuyer} OR pain ≥ {injectPain}
-          </span>
+      {status.stale && (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          Last run exceeded the 10-minute timeout and was auto-reset to idle.
         </div>
+      )}
 
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-emerald-800/80 sm:grid-cols-4">
-          <span>Items this cycle: <span className="text-emerald-900 tabular-nums">{itemsThisCycle}</span></span>
-          <span>Accepted this cycle: <span className="text-emerald-900 tabular-nums">{acceptedThisCycle}</span></span>
-          <span>24h blocked batches: <span className="text-emerald-900 tabular-nums">{recentBlocked}</span></span>
-          <span>Acceptance cap reached: <span className="text-emerald-900">{status.acceptanceCapReached ? 'yes' : 'no'}</span></span>
+      {/* Recent Runs */}
+      {runLog.length > 0 && (
+        <div className="mb-4 rounded-lg border border-gray-200 bg-white px-3 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-2">Recent Runs</p>
+          <div>
+            {runLog.slice(0, 5).map((run, i) => (
+              <RunLogRow key={i} run={run} />
+            ))}
+          </div>
         </div>
+      )}
 
-        <div className="mt-2 text-[11px] text-emerald-800/80">
-          Last query batch:{' '}
-          {lastBatchPhrases.length === 0 ? (
-            <span className="text-emerald-700/60">— (no run yet)</span>
-          ) : (
-            <span className="text-emerald-900">{lastBatchPhrases.slice(0, 10).join(' · ')}</span>
-          )}
-        </div>
-      </div>
-
-      {/* ── Phase 37 — Last-run verification (accepted/rejected samples) ── */}
+      {/* Last-run verification */}
       {lastVerif && (lastVerif.accepted_samples?.length || lastVerif.rejected_samples?.length) ? (
         <div className="mb-4 rounded-lg border border-gray-200 bg-white px-3 py-3">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
-              Last-run verification
-            </span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Last-run verification</span>
             <span className="text-[10px] text-gray-400 tabular-nums">
-              accepted={lastVerif.accepted ?? 0} · rejected={lastVerif.rejected ?? 0}
+              accepted={lastVerif.accepted ?? 0} &middot; rejected={lastVerif.rejected ?? 0}
             </span>
           </div>
           {lastVerif.accepted_samples?.length > 0 && (
             <div className="mb-2">
-              <div className="text-[11px] font-semibold text-emerald-700 mb-1">Accepted (passed filters)</div>
+              <div className="text-[11px] font-semibold text-emerald-700 mb-1">Accepted</div>
               <ul className="space-y-1">
-                {lastVerif.accepted_samples.slice(0, 6).map((s, i) => (
+                {lastVerif.accepted_samples.slice(0, 4).map((s, i) => (
                   <li key={i} className="text-[11px] text-gray-700 leading-snug">
                     <span className="font-mono text-emerald-700">@{s.username || 'unknown'}</span>{' '}
-                    <span className="tabular-nums text-gray-500">[buyer={s.buyer} pain={s.pain} heat={s.heat}{s.city ? ` ${s.city}` : ''}{s.country ? ` ${s.country}` : ''}{s.isHot ? ' HOT' : ''}]</span>{' '}
+                    <span className="tabular-nums text-gray-500">[b={s.buyer} p={s.pain} h={s.heat}{s.city ? ` ${s.city}` : ''}{s.isHot ? ' HOT' : ''}]</span>{' '}
                     <span className="text-gray-600">"{s.text}"</span>
                   </li>
                 ))}
@@ -490,9 +614,9 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
           )}
           {lastVerif.rejected_samples?.length > 0 && (
             <div>
-              <div className="text-[11px] font-semibold text-rose-700 mb-1">Rejected (filter reasons)</div>
+              <div className="text-[11px] font-semibold text-rose-700 mb-1">Rejected</div>
               <ul className="space-y-1">
-                {lastVerif.rejected_samples.slice(0, 6).map((s, i) => (
+                {lastVerif.rejected_samples.slice(0, 4).map((s, i) => (
                   <li key={i} className="text-[11px] text-gray-700 leading-snug">
                     <span className="font-mono text-rose-700">@{s.username || 'unknown'}</span>{' '}
                     <span className="tabular-nums text-gray-500">[{s.reason}]</span>{' '}
@@ -505,82 +629,27 @@ function LeadSourcesSection({ leadSources, onRefresh }) {
         </div>
       ) : null}
 
-      {status.stale && (
-        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-          Last run exceeded the 15-minute failsafe and was auto-reset to idle.
-        </div>
-      )}
-
-      {triggered && (
-        <div className="mb-3 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2 text-xs text-teal-700">
-          Scrape cycle triggered — results will appear on next refresh.
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {stats.map(({ label, value, color }) => (
-          <RevStat key={label} label={label} value={value} color={color} />
-        ))}
-      </div>
-
-      <p className="mt-3 text-[11px] text-gray-500 leading-snug">
-        ▸ Open the <span className="font-semibold text-brand-600">Outreach Queue</span> tab to reply.
-      </p>
-
-      {/* ── Phase 37 — Conversion-focused tiles only ──────────────────────── */}
-      <div className="mt-5 pt-5 border-t border-dashed border-gray-200">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">
-            Conversion Focus
-          </span>
-        </div>
+      {/* Extracted Signals Summary */}
+      <div className="mt-4 pt-4 border-t border-dashed border-gray-200">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 mb-3">
+          Extracted Signals Summary
+        </p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <MAIEStatCard
-            label="Ready to reply"
-            value={(oc.readyToReply ?? 0).toLocaleString()}
-            color="amber"
-            sub="awaiting first DM"
-          />
-          <MAIEStatCard
-            label="Nigerian leads"
-            value={(leadSources?.nigerianTotal ?? 0).toLocaleString()}
-            color="emerald"
-            sub="confidence ≥ 30"
-          />
-          <MAIEStatCard
-            label="Buyer intent"
-            value={(leadSources?.buyerReadyLeads ?? 0).toLocaleString()}
-            color="teal"
-            sub={`readiness ≥ ${injectBuyer}`}
-          />
-          <MAIEStatCard
-            label="WhatsApp CTA clicks"
-            value={(leadSources?.outreachCounts?.whatsappClicks ?? 0).toLocaleString()}
-            color="sky"
-            sub="from outreach replies"
-          />
-          <MAIEStatCard
-            label="Replied"
-            value={(oc.replied ?? 0).toLocaleString()}
-            color="indigo"
-            sub="lead responded"
-          />
-          <MAIEStatCard
-            label="Converted"
-            value={(oc.converted ?? 0).toLocaleString()}
-            color="violet"
-            sub="paid / academy"
-          />
+          <MAIEStatCard label="Ready to reply"  value={(oc.readyToReply ?? 0).toLocaleString()}                  color="amber"   sub="awaiting first DM" />
+          <MAIEStatCard label="Nigerian leads"  value={(leadSources?.nigerianTotal ?? 0).toLocaleString()}       color="emerald" sub="confidence &ge; 30" />
+          <MAIEStatCard label="Buyer intent"    value={(leadSources?.buyerReadyLeads ?? 0).toLocaleString()}     color="teal"    sub={`readiness &ge; ${injectBuyer}`} />
+          <MAIEStatCard label="WhatsApp CTA"    value={(oc.whatsappClicks ?? 0).toLocaleString()}                color="sky"     sub="clicks from replies" />
+          <MAIEStatCard label="Replied"         value={(oc.replied ?? 0).toLocaleString()}                       color="indigo"  sub="lead responded" />
+          <MAIEStatCard label="Converted"       value={(oc.converted ?? 0).toLocaleString()}                     color="violet"  sub="paid / academy" />
         </div>
-        <p className="mt-3 text-[11px] text-gray-500 leading-snug">
-          Phase 37 — strict Africa-first manual mode. Only leads with buyer intent ≥ {injectBuyer} or
-          pain signal ≥ {injectPain} reach the Outreach Queue; everything else is stored silently.
+        <p className="mt-3 text-[11px] text-gray-400 leading-snug">
+          Manual-only &middot; Africa-first &middot; buyer intent &ge; {injectBuyer} or pain &ge; {injectPain} required to enter Outreach Queue
         </p>
       </div>
+
     </SectionBox>
   )
 }
-
 // ── Main panel ────────────────────────────────────────────────────────────────
 
 function FollowUpControlSection({ followUps, onToggle }) {

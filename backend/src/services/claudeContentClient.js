@@ -62,8 +62,9 @@ Micahskin operates three interconnected arms:
    A complete business operating system for skincare entrepreneurs who want to scale beyond personal effort. The full-stack system for brand owners.
 
 PRIMARY FUNNEL:
-- Telegram bot: @micahskin_academy_bot — DM START for free skin diagnosis
-- All content ultimately drives toward: Telegram diagnosis, Academy enrollment, or Growth OS
+- All content drives to the bio/profile link — the central hub for diagnosis, Academy enrollment, and Growth OS
+- NEVER instruct viewers to DM a bot directly in the content — CTAs should always point to the link in bio
+- Bio CTA examples: "Link in bio", "Check the bio", "It's in the bio", "Profile link", "Bio has everything"
 
 AUDIENCE SEGMENTS:
 - Skincare consumers: Nigerian/African women 18–45 with real skin pain points
@@ -215,14 +216,31 @@ const STYLE_PROMPTS = {
 };
 
 const OBJECTIVE_PROMPTS = {
-  'Lead Generation': 'Objective — Lead Generation: Drive cold audience to discover the brand. Prioritize hook and awareness. Secondary CTA to Telegram.',
-  'Telegram Conversion': 'Objective — Telegram Conversion: Move warm audience to DM START on @micahskin_academy_bot. Primary CTA is the Telegram bot.',
-  'Academy Sales': 'Objective — Academy Sales: Drive enrollment for Micahskin Academy (₦50k–₦60k). Lead with transformation and business outcome. CTA is Academy enrollment.',
-  'Product Sales': 'Objective — Product Sales: Drive direct product purchase. Feature the product transformation. CTA is product link.',
-  'Brand Awareness': 'Objective — Brand Awareness: Build brand recognition and affinity. Prioritize relatability and brand storytelling. Soft CTA.',
-  Engagement: 'Objective — Engagement: Maximize saves, shares, comments, and watch time. Ask a question or create a "save this" moment. Loose CTA.',
-  'Authority Positioning': 'Objective — Authority Positioning: Position Micahskin as THE expert authority. Educate first, mention brand as proof. CTA is consultation or Telegram.',
+  'Lead Generation': 'Objective — Lead Generation: Drive cold audience to discover the brand. Prioritize hook and awareness. CTA points to bio link.',
+  'Bio Link Conversion': 'Objective — Bio Link Conversion: Move warm audience to click the link in bio. Primary CTA is a natural, compelling bio reference.',
+  'Academy Sales': 'Objective — Academy Sales: Drive enrollment for Micahskin Academy (₦50k–₦60k). Lead with transformation and business outcome. CTA points to bio link for enrollment.',
+  'Product Sales': 'Objective — Product Sales: Drive direct product purchase. Feature the product transformation. CTA is the bio link for product details.',
+  'Brand Awareness': 'Objective — Brand Awareness: Build brand recognition and affinity. Prioritize relatability and brand storytelling. Soft bio CTA.',
+  Engagement: 'Objective — Engagement: Maximize saves, shares, comments, and watch time. Ask a question or create a "save this" moment. Soft CTA.',
+  'Authority Positioning': 'Objective — Authority Positioning: Position Micahskin as THE expert authority. Educate first, mention brand as proof. CTA points to bio.',
 };
+
+// ── Live signal injection ─────────────────────────────────────────────────────
+// Builds a "REAL AUDIENCE SIGNALS" block from analyzed MarketSignal phrases.
+// Injected into every generation prompt so AI uses authentic audience language.
+
+function buildLiveSignalsBlock(liveSignals = []) {
+  if (!liveSignals || liveSignals.length === 0) return '';
+
+  const lines = liveSignals
+    .slice(0, 10)
+    .map(s => `  • [${s.type}] "${s.phrase}" — seen ${s.frequency}× (emotion ${s.emotionalIntensity}/100)`)
+    .join('\n');
+
+  return `\nREAL AUDIENCE SIGNALS (use these exact phrases or adapt them naturally into the content):
+${lines}
+Use at least 1–2 of these real phrases verbatim where they fit naturally. They come directly from your audience.\n`;
+}
 
 // ── Main generation function ──────────────────────────────────────────────────
 
@@ -233,6 +251,7 @@ async function generateShortFormScript({
   durationSeconds = 60,
   contentStyle = null,
   objective = null,
+  liveSignals = [],
 }) {
   const isAcademy = pillar === 'academy' || pillar === 'growth_os';
   const isPremiumStyle = contentStyle && ['Cinematic', 'Documentary', 'Founder Story', 'Luxury'].includes(contentStyle);
@@ -263,11 +282,13 @@ async function generateShortFormScript({
   const styleNote = contentStyle && STYLE_PROMPTS[contentStyle] ? STYLE_PROMPTS[contentStyle] : 'Style: Authentic Nigerian creator energy — real, warm, strategic.';
   const objectiveNote = objective && OBJECTIVE_PROMPTS[objective] ? OBJECTIVE_PROMPTS[objective] : 'Objective: Drive awareness and move viewer toward Telegram diagnosis or Academy enrollment.';
 
+  const liveSignalsBlock = buildLiveSignalsBlock(liveSignals);
+
   const prompt = `Generate a COMPLETE production-ready ${platform} video script for Micahskin.
 
 CATEGORY CONTEXT:
 ${categoryContext}
-
+${liveSignalsBlock}
 CONTENT PARAMETERS:
 Platform: ${platformNotes[platform] || platformNotes.tiktok}
 Pillar: ${pillarContext[pillar] || pillarContext.pain_point}
@@ -306,16 +327,16 @@ Return ONLY valid JSON (no markdown, no code blocks):
   ],
   "voiceover_script": "The complete spoken script as one continuous read — clean, natural, production-ready.",
   "caption": "Full post caption ready to paste. Hook first. 2–4 sentences. 2–3 natural emojis. CTA. Hashtag placeholder.",
-  "cta": "The primary call to action — one direct, warm sentence.",
+  "cta": "The primary call to action — one direct, warm sentence pointing to the bio link. Platform-native tone. Examples: 'Link in bio before you waste more money.' / 'The system that fixed this is already in the bio.' / 'Check the bio — everything is there.'",
+  "bio_cta": "A natural, conversational bio reference that doesn't feel like an ad. Under 12 words.",
   "hashtags": ["#micahskin", "#nigerianwomen", "#africanskincare", "#skincareadvice", "#growthmindset"],
   "props_needed": ["List of specific props or items needed to film this"],
   "suggested_music_mood": "Specific vibe: genre, energy, tempo. Should fit ${platform} trending audio for Nigerian content in 2025.",
   "filming_instructions": "3–4 practical sentences: camera setup, lighting, location, pacing, wardrobe.",
   "editing_instructions": "3–4 practical sentences: cut timing, text overlay style, audio, transitions, effects.",
   "posting_angle": "The strategic angle and why this specific approach will convert Nigerian viewers in 2025.",
-  "telegram_cta": "DM START on Telegram @micahskin_academy_bot for your FREE personalized skin diagnosis",
-  "academy_cta": ${isAcademy ? '"Join Micahskin Academy — limited enrollment. Build the skincare business and AI growth systems that work while you sleep. (₦50k–₦60k)"' : 'null'},
-  "growth_os_cta": ${pillar === 'growth_os' ? '"Get the full Growth OS system — the complete stack for scaling your skincare brand"' : 'null'}
+  "academy_cta": ${isAcademy ? '"Join Micahskin Academy — limited enrollment. Build the skincare business and AI growth systems that work while you sleep. (₦50k–₦60k) — Link in bio."' : 'null'},
+  "growth_os_cta": ${pillar === 'growth_os' ? '"Get the full Growth OS system — the complete stack for scaling your skincare brand. Link in bio."' : 'null'}
 }`;
 
   const { text, model } = await callAI(prompt, { isPremium });
@@ -323,7 +344,7 @@ Return ONLY valid JSON (no markdown, no code blocks):
   return { ...parsed, _aiModel: model };
 }
 
-async function generateWhatsAppStatus({ painCategory = 'general', pillar = 'pain_point', contentStyle = null, objective = null }) {
+async function generateWhatsAppStatus({ painCategory = 'general', pillar = 'pain_point', contentStyle = null, objective = null, liveSignals = [] }) {
   const isAcademy = pillar === 'academy' || pillar === 'growth_os';
   let categoryContext = ACADEMY_CATEGORY_CONTEXT[painCategory] || painPointService.buildCategoryContext(painCategory);
 
@@ -338,11 +359,13 @@ async function generateWhatsAppStatus({ painCategory = 'general', pillar = 'pain
     conversion_cta: 'Lead with urgency or limited offer. End with direct action step.',
   };
 
+  const liveSignalsBlock = buildLiveSignalsBlock(liveSignals);
+
   const prompt = `Generate a WhatsApp Status campaign (5 slides) for Micahskin.
 
 CATEGORY CONTEXT:
 ${categoryContext}
-
+${liveSignalsBlock}
 Pillar: ${pillarNote[pillar] || pillarNote.pain_point}
 ${styleNote}
 ${objectiveNote}
@@ -380,14 +403,14 @@ Return ONLY valid JSON:
     },
     {
       "slide_number": 5,
-      "slide_text": "CTA slide — clear, warm, direct action. Tell them exactly where to go and what to expect.",
-      "image_video_idea": "Brand logo, Telegram screenshot, or clean CTA graphic.",
-      "cta": "DM START on Telegram @micahskin_academy_bot"
+      "slide_text": "CTA slide — clear, warm, direct action. Tell them exactly where to go. Reference the bio link naturally.",
+      "image_video_idea": "Brand logo or clean CTA graphic with bio arrow.",
+      "cta": "Link in bio — everything is already there."
     }
   ],
   "posting_angle": "Why this WhatsApp sequence will convert Nigerian viewers who see it.",
-  "telegram_cta": "DM START on Telegram @micahskin_academy_bot for your FREE personalized skin diagnosis",
-  "academy_cta": ${isAcademy ? '"Join Micahskin Academy — build your skincare business with AI growth systems (₦50k–₦60k)"' : 'null'}
+  "bio_cta": "Natural bio reference — under 10 words, platform-native, no hard sell.",
+  "academy_cta": ${isAcademy ? '"Join Micahskin Academy — build your skincare business with AI growth systems (₦50k–₦60k). Link in bio."' : 'null'}
 }`;
 
   const { text, model } = await callAI(prompt, { isPremium: isAcademy });
@@ -395,18 +418,20 @@ Return ONLY valid JSON:
   return { ...parsed, _aiModel: model };
 }
 
-async function generateCaption({ painCategory = 'general', platform = 'facebook', pillar = 'pain_point', contentStyle = null, objective = null }) {
+async function generateCaption({ painCategory = 'general', platform = 'facebook', pillar = 'pain_point', contentStyle = null, objective = null, liveSignals = [] }) {
   const isAcademy = pillar === 'academy' || pillar === 'growth_os';
   let categoryContext = ACADEMY_CATEGORY_CONTEXT[painCategory] || painPointService.buildCategoryContext(painCategory);
 
   const styleNote = contentStyle && STYLE_PROMPTS[contentStyle] ? STYLE_PROMPTS[contentStyle] : '';
   const objectiveNote = objective && OBJECTIVE_PROMPTS[objective] ? OBJECTIVE_PROMPTS[objective] : '';
   const isFacebook = platform === 'facebook';
+  const liveSignalsBlock = buildLiveSignalsBlock(liveSignals);
 
   const prompt = `Generate a ${isFacebook ? 'full educational Facebook post' : 'short caption'} for Micahskin.
 
 CATEGORY CONTEXT:
 ${categoryContext}
+${liveSignalsBlock}
 
 Platform: ${isFacebook ? 'Facebook — Educational storytelling, 150–250 words. Nigerian women 25–45. Community-feel, not salesy.' : 'Short caption — 30–50 words. Hook-focused. Instagram or Twitter style.'}
 Pillar: ${pillar}
@@ -428,12 +453,12 @@ Return ONLY valid JSON:
     "conclusion": "Closing paragraph (1–2 sentences). Soft but clear invitation."
   },` : ''}
   "caption": "Full formatted post text with natural line breaks. 2–3 natural emojis. Ready to paste.",
-  "cta": "Primary call to action — one clear, direct sentence.",
+  "cta": "Primary call to action pointing to bio link — warm, natural, platform-native. Under 12 words.",
+  "bio_cta": "Natural bio reference — feels like a friend recommending something. No hard sell.",
   "hashtags": ["#micahskin", "#nigerianwomen", "#africanskincare", "#skincarenigeria"],
   "posting_angle": "Why this post will resonate and drive action.",
-  "telegram_cta": "Comment DIAGNOSIS below or DM START on Telegram @micahskin_academy_bot",
-  "academy_cta": ${isAcademy ? '"Join Micahskin Academy — build your skincare brand with AI growth systems (₦50k–₦60k)"' : 'null'},
-  "growth_os_cta": ${pillar === 'growth_os' ? '"Get the full Growth OS — the complete system for scaling your skincare brand"' : 'null'}
+  "academy_cta": ${isAcademy ? '"Join Micahskin Academy — build your skincare brand with AI growth systems (₦50k–₦60k). Link in bio."' : 'null'},
+  "growth_os_cta": ${pillar === 'growth_os' ? '"Get the full Growth OS — the complete system for scaling your skincare brand. Link in bio."' : 'null'}
 }`;
 
   const { text, model } = await callAI(prompt, { isPremium: isAcademy });
@@ -441,17 +466,19 @@ Return ONLY valid JSON:
   return { ...parsed, _aiModel: model };
 }
 
-async function generateCarousel({ painCategory = 'general', platform = 'instagram_reel', pillar = 'pain_point', slideCount = 5, contentStyle = null, objective = null }) {
+async function generateCarousel({ painCategory = 'general', platform = 'instagram_reel', pillar = 'pain_point', slideCount = 5, contentStyle = null, objective = null, liveSignals = [] }) {
   const isAcademy = pillar === 'academy' || pillar === 'growth_os';
   let categoryContext = ACADEMY_CATEGORY_CONTEXT[painCategory] || painPointService.buildCategoryContext(painCategory);
 
   const styleNote = contentStyle && STYLE_PROMPTS[contentStyle] ? STYLE_PROMPTS[contentStyle] : '';
   const objectiveNote = objective && OBJECTIVE_PROMPTS[objective] ? OBJECTIVE_PROMPTS[objective] : '';
+  const liveSignalsBlock = buildLiveSignalsBlock(liveSignals);
 
   const prompt = `Generate a ${slideCount}-slide carousel for Micahskin on ${platform}.
 
 CATEGORY CONTEXT:
 ${categoryContext}
+${liveSignalsBlock}
 
 Pillar: ${pillar}
 ${styleNote}
@@ -480,10 +507,10 @@ Return ONLY valid JSON:
     "cta_text": "Exact action text"
   },
   "caption": "Full post caption ready to paste — hook + context + CTA.",
-  "cta": "Primary CTA text",
+  "cta": "Primary CTA text — natural bio reference, platform-native, warm and direct.",
+  "bio_cta": "Short bio reference for the caption. Under 10 words.",
   "hashtags": ["#micahskin", "#nigerianwomen", "#africanskincare", "#skincarenigeria"],
-  "posting_angle": "Why this carousel will convert Nigerian viewers on ${platform}.",
-  "telegram_cta": "DM START on Telegram @micahskin_academy_bot for your FREE skin diagnosis"
+  "posting_angle": "Why this carousel will convert Nigerian viewers on ${platform}."
 }`;
 
   const { text, model } = await callAI(prompt, { isPremium: isAcademy });

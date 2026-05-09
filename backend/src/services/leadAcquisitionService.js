@@ -45,11 +45,20 @@ const leadQualityGate      = require('./leadQualityGateService')
 
 const { getOutreachCounts } = require('./outreachQueueService')
 
-// ── Phase 37 — Manual-mode + Africa-first config ────────────────────────────
+// ── Safe Mode — all limits from centralized config ────────────────────────────
 
-const MAX_VIDEOS_PER_QUERY  = 3
-const MAX_COMMENTS_PER_VIDEO = 10
-const MAX_ACCEPTED_LEADS    = 15
+const {
+  SAFE_MODE,
+  MAX_SEARCH_QUERIES,
+  MAX_POSTS_PER_RUN,
+  MAX_COMMENTS_PER_POST,
+  MAX_ACCEPTED_LEADS,
+  RUN_TIMEOUT_MS,
+  RUN_LOG_SIZE,
+} = require('../config/acquisitionSafeMode')
+
+const MAX_VIDEOS_PER_QUERY   = MAX_POSTS_PER_RUN
+const MAX_COMMENTS_PER_VIDEO = MAX_COMMENTS_PER_POST
 
 // Inject thresholds: lead enters Outreach Queue ONLY when one of these fires.
 const INJECT_BUYER_THRESHOLD = 45  // buyerReadinessScore
@@ -61,10 +70,11 @@ const AFRICAN_COUNTRY_CODES = new Set(['NG', 'GH', 'KE', 'ZA'])
 const HARD_REJECT_COUNTRIES = new Set(['US', 'UK', 'IN', 'PH', 'CA'])
 
 console.log(
-  `[LeadAcquisition] Phase 37 — manual mode only.` +
-  ` videos/query<=${MAX_VIDEOS_PER_QUERY}` +
-  ` comments/video<=${MAX_COMMENTS_PER_VIDEO}` +
-  ` accept-stop=${MAX_ACCEPTED_LEADS}`,
+  `[LeadAcquisition] SAFE MODE=${SAFE_MODE}` +
+  ` maxQueries=${MAX_SEARCH_QUERIES}` +
+  ` maxPosts=${MAX_VIDEOS_PER_QUERY}` +
+  ` maxComments=${MAX_COMMENTS_PER_VIDEO}` +
+  ` acceptStop=${MAX_ACCEPTED_LEADS}`,
 )
 
 // ── In-memory run state ─────────────────────────────────────────────────────
@@ -74,62 +84,102 @@ const STATE = {
   running:           false,
   pendingRunId:      null,
   runStartedAt:      null,
+  runStartMs:        null,   // epoch ms — for duration tracking
   lastRunAt:         null,
   lastRunFinishedAt: null,
   lastStatus:        null,
   lastStale:         false,
   lastBatch:         null,
   itemsThisCycle:    0,
-  // Manual mode — no scheduled next-run. Always null until UI re-triggers.
   nextRunAt:         null,
   stage:             'video',
   commentsRunId:     null,
   pendingPostUrls:   [],
   selectedCountry:   DEFAULT_COUNTRY,
-  acceptedThisCycle: 0,   // hard stop at MAX_ACCEPTED_LEADS
+  acceptedThisCycle: 0,
   acceptanceCapReached: false,
-  // Phase 37 — last-run verification summary (filter pass/reject reasons)
   lastVerification:  null,
+  _previewCU:        null,   // CU estimate stored from last dry run
 }
 
-const STALE_TIMEOUT_MS = 15 * 60 * 1000
+// ── In-memory run log (ring buffer) ─────────────────────────────────────────
+
+const RUN_LOG = []
+
+function _logRun(entry) {
+  RUN_LOG.unshift({ ...entry, loggedAt: new Date().toISOString() })
+  if (RUN_LOG.length > RUN_LOG_SIZE) RUN_LOG.pop()
+}
+
+function getRunLog() { return RUN_LOG.slice() }
+
+const STALE_TIMEOUT_MS = RUN_TIMEOUT_MS
 
 function _resetIdle({ stale = false } = {}) {
   STATE.state             = 'idle'
   STATE.running           = false
   STATE.pendingRunId      = null
   STATE.runStartedAt      = null
+  STATE.runStartMs        = null
   STATE.lastRunFinishedAt = new Date()
   STATE.lastStale         = stale
   STATE.stage             = 'video'
   STATE.commentsRunId     = null
   STATE.pendingPostUrls   = []
+  STATE._previewCU        = null
 }
 
 function _markCompleted() {
+  _logRun({
+    country:     STATE.selectedCountry,
+    status:      'completed',
+    source:      'tiktok',
+    hashtags:    STATE.lastBatch?.hashtags || [],
+    itemsFound:  STATE.itemsThisCycle,
+    accepted:    STATE.acceptedThisCycle,
+    durationMs:  STATE.runStartMs ? Date.now() - STATE.runStartMs : null,
+    estimatedCU: STATE._previewCU || null,
+    completedAt: new Date().toISOString(),
+  })
   STATE.state             = 'completed'
   STATE.running           = false
   STATE.pendingRunId      = null
   STATE.runStartedAt      = null
+  STATE.runStartMs        = null
   STATE.lastRunFinishedAt = new Date()
   STATE.lastStatus        = 'SUCCEEDED'
   STATE.lastStale         = false
   STATE.stage             = 'video'
   STATE.commentsRunId     = null
   STATE.pendingPostUrls   = []
+  STATE._previewCU        = null
 }
 
 function _markFailed(status) {
+  _logRun({
+    country:     STATE.selectedCountry,
+    status:      'failed',
+    source:      'tiktok',
+    hashtags:    STATE.lastBatch?.hashtags || [],
+    itemsFound:  STATE.itemsThisCycle,
+    accepted:    STATE.acceptedThisCycle,
+    durationMs:  STATE.runStartMs ? Date.now() - STATE.runStartMs : null,
+    estimatedCU: STATE._previewCU || null,
+    failReason:  status || 'FAILED',
+    completedAt: new Date().toISOString(),
+  })
   STATE.state             = 'failed'
   STATE.running           = false
   STATE.pendingRunId      = null
   STATE.runStartedAt      = null
+  STATE.runStartMs        = null
   STATE.lastRunFinishedAt = new Date()
   STATE.lastStatus        = status || 'FAILED'
   STATE.lastStale         = false
   STATE.stage             = 'video'
   STATE.commentsRunId     = null
   STATE.pendingPostUrls   = []
+  STATE._previewCU        = null
 }
 
 function _checkStale() {
@@ -137,9 +187,20 @@ function _checkStale() {
   const age = Date.now() - STATE.runStartedAt.getTime()
   if (age > STALE_TIMEOUT_MS) {
     console.warn(
-      `[LeadAcquisition] Failsafe — run flagged running for ${Math.round(age / 60000)} min` +
-      ` without updates; force-reset to idle (stale=true) runId=${STATE.pendingRunId}`,
+      `[LeadAcquisition] Failsafe — run stale for ${Math.round(age / 60000)} min` +
+      ` (timeout=${STALE_TIMEOUT_MS / 60000}min); force-reset runId=${STATE.pendingRunId}`,
     )
+    _logRun({
+      country:     STATE.selectedCountry,
+      status:      'timeout',
+      source:      'tiktok',
+      hashtags:    STATE.lastBatch?.hashtags || [],
+      itemsFound:  STATE.itemsThisCycle,
+      accepted:    STATE.acceptedThisCycle,
+      durationMs:  STATE.runStartMs ? Date.now() - STATE.runStartMs : null,
+      estimatedCU: STATE._previewCU || null,
+      completedAt: new Date().toISOString(),
+    })
     _resetIdle({ stale: true })
     return true
   }
@@ -771,18 +832,19 @@ async function runAcquisitionCycle(opts = {}) {
 
     // Trigger a fresh manual run
     const painPicked = getNextPainBatch({ country: STATE.selectedCountry })
-    const triggerArg = painPicked.batch
+    // Safe Mode: cap hashtags to MAX_SEARCH_QUERIES
+    const triggerArg = painPicked.batch.slice(0, MAX_SEARCH_QUERIES)
     const modeLabel  = `pain_point_first_${painPicked.country}`
     console.log(
       `[LeadAcquisition] Manual cycle triggered — country=${painPicked.country} (${painPicked.countryLabel})` +
-      ` batch (${painPicked.batch.length}): [${painPicked.phrases.join(' | ')}]` +
+      ` queries=${triggerArg.length}/${MAX_SEARCH_QUERIES} posts<=${MAX_VIDEOS_PER_QUERY} comments<=${MAX_COMMENTS_PER_VIDEO}` +
+      ` batch: [${triggerArg.join(' | ')}]` +
       (painPicked.forced ? ' (forced — all batches recently used)' : ''),
     )
 
-    const totalItems = MAX_VIDEOS_PER_QUERY * Math.max(1, triggerArg.length)
     const { runId, hashtags, maxItems, runMode } = await triggerTiktokHashtagScrape(
       triggerArg,
-      { maxItems: totalItems, perTagItems: MAX_VIDEOS_PER_QUERY, modeLabel },
+      { maxItems: MAX_VIDEOS_PER_QUERY, perTagItems: MAX_VIDEOS_PER_QUERY, modeLabel },
     )
 
     const now = new Date()
@@ -793,6 +855,7 @@ async function runAcquisitionCycle(opts = {}) {
     STATE.pendingPostUrls = []
     STATE.pendingRunId    = runId
     STATE.runStartedAt    = now
+    STATE.runStartMs      = Date.now()
     STATE.lastRunAt       = now
     STATE.lastStale       = false
     STATE.itemsThisCycle  = 0
@@ -848,15 +911,75 @@ function _buildVerification(captionStats, commentStats) {
   }
 }
 
+// ── Emergency stop ─────────────────────────────────────────────────────────
+
+function stopAcquisition() {
+  if (STATE.running) {
+    console.log(`[LeadAcquisition] Emergency stop — runId=${STATE.pendingRunId} stage=${STATE.stage}`)
+    _logRun({
+      country:     STATE.selectedCountry,
+      status:      'stopped',
+      source:      'tiktok',
+      hashtags:    STATE.lastBatch?.hashtags || [],
+      itemsFound:  STATE.itemsThisCycle,
+      accepted:    STATE.acceptedThisCycle,
+      durationMs:  STATE.runStartMs ? Date.now() - STATE.runStartMs : null,
+      estimatedCU: STATE._previewCU || null,
+      completedAt: new Date().toISOString(),
+    })
+  }
+  _resetIdle()
+}
+
+// ── Dry run preview (no Apify call) ─────────────────────────────────────────
+
+function previewAcquisitionRun(opts = {}) {
+  const country = opts.country
+    ? getCountryProfile(opts.country).code
+    : STATE.selectedCountry || DEFAULT_COUNTRY
+
+  const painPicked  = getNextPainBatch({ country, peek: true })
+  const queries     = painPicked.batch.slice(0, MAX_SEARCH_QUERIES)
+  const phrases     = painPicked.phrases.slice(0, MAX_SEARCH_QUERIES)
+
+  const maxPosts    = MAX_VIDEOS_PER_QUERY
+  const maxComments = MAX_COMMENTS_PER_VIDEO
+  const estimatedPosts    = Math.min(queries.length * Math.ceil(maxPosts / Math.max(1, queries.length)), maxPosts)
+  const estimatedComments = maxPosts * maxComments
+
+  // Conservative CU estimate per Apify pricing
+  const postCU    = estimatedPosts    * 4    // ~4 CU / TikTok video
+  const commentCU = estimatedComments * 0.8  // ~0.8 CU / comment
+  const totalCU   = Math.round(postCU + commentCU)
+  const riskLevel = totalCU <= 30 ? 'low' : totalCU <= 80 ? 'medium' : 'high'
+
+  return {
+    country,
+    countryLabel:        painPicked.countryLabel,
+    queries,
+    phrases,
+    estimatedPosts,
+    estimatedComments,
+    estimatedCU:         { posts: Math.round(postCU), comments: Math.round(commentCU), total: totalCU },
+    riskLevel,
+    safeModeActive:      SAFE_MODE,
+    limits: {
+      maxSearchQueries:   MAX_SEARCH_QUERIES,
+      maxPostsPerRun:     MAX_VIDEOS_PER_QUERY,
+      maxCommentsPerPost: MAX_COMMENTS_PER_VIDEO,
+      maxAcceptedLeads:   MAX_ACCEPTED_LEADS,
+      maxApifyRuns:       1,
+    },
+    wouldRun:    !STATE.running,
+    currentState: STATE.state,
+  }
+}
+
 // ── Manual mode startup (no-op) ─────────────────────────────────────────────
-//
-// Phase 37 — auto-scrape interval, startup auto-trigger, and 6-hour scheduler
-// are all removed. The function is preserved so callers in index.js still
-// work, but it intentionally does nothing other than log.
 
 function startLeadAcquisitionEngine() {
   console.log(
-    '[LeadAcquisition] Manual Mode Enabled — automatic scraping is disabled.' +
+    '[LeadAcquisition] SAFE MODE — automatic scraping is disabled.' +
     ' Operator triggers runs from the Command Center "Run Now" button or' +
     ' POST /api/admin/acquisition/trigger.',
   )
@@ -914,15 +1037,16 @@ async function getAcquisitionStats() {
     lastStatus:        STATE.lastStatus,
     stale:             STATE.lastStale,
 
-    // Phase 37 — manual mode visibility
     mode:                'manual',
     manualMode:          true,
+    safeModeActive:      SAFE_MODE,
     selectedCountry:     STATE.selectedCountry,
     countryLabel:        getCountryProfile(STATE.selectedCountry).label,
     supportedCountries:  listSupportedCountries(),
     maxVideosPerQuery:   MAX_VIDEOS_PER_QUERY,
     maxCommentsPerVideo: MAX_COMMENTS_PER_VIDEO,
     maxAcceptedLeads:    MAX_ACCEPTED_LEADS,
+    maxSearchQueries:    MAX_SEARCH_QUERIES,
     injectThreshold:     { buyer: INJECT_BUYER_THRESHOLD, pain: INJECT_PAIN_THRESHOLD },
     nextRunAt:           null,
     itemsThisCycle:      STATE.itemsThisCycle ?? 0,
@@ -931,6 +1055,7 @@ async function getAcquisitionStats() {
     lastBatch:           STATE.lastBatch,
     lastVerification:    STATE.lastVerification,
     recentBatchesBlocked: getRecentBatchSnapshot().length,
+    runLog:              getRunLog(),
   }
 
   let outreachCounts = {
@@ -971,4 +1096,7 @@ module.exports = {
   runAcquisitionCycle,
   getAcquisitionStats,
   processRawItems,
+  previewAcquisitionRun,
+  stopAcquisition,
+  getRunLog,
 }

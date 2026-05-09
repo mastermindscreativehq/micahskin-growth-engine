@@ -5,6 +5,9 @@
 const { PrismaClient } = require('@prisma/client');
 const aiClient = require('./claudeContentClient');
 const painPointService = require('./painPointDatabaseService');
+const ctaEngine = require('./ctaEngineService');
+const scoringService = require('./contentScoringService');
+const marketSignalService = require('./marketSignalService');
 
 const prisma = new PrismaClient();
 
@@ -58,20 +61,31 @@ const contentIntelligenceService = {
     contentStyle = null,
     objective = null,
     generationMode = 'manual',
+    // Phase 40 — Lineage tracking
+    generationSessionId = null,
+    generationType = null,
+    generationReason = null,
+    generationBatchLabel = null,
   }) {
     const type = contentType || GENERATION_STRATEGY.CONTENT_TYPE_MAP[platform] || 'short_form_video';
     let generatedContent = {};
     let aiModel = aiClient.PROVIDER === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4.1-mini';
 
     try {
+      // Pull real audience signals to inject into AI prompts
+      let liveSignals = [];
+      try {
+        liveSignals = await marketSignalService.getSignalsForGeneration(painCategory);
+      } catch (_) { /* signals are optional — generation proceeds without them */ }
+
       if (type === 'short_form_video') {
-        generatedContent = await aiClient.generateShortFormScript({ painCategory, platform, pillar, contentStyle, objective });
+        generatedContent = await aiClient.generateShortFormScript({ painCategory, platform, pillar, contentStyle, objective, liveSignals });
       } else if (type === 'carousel') {
-        generatedContent = await aiClient.generateCarousel({ painCategory, platform, pillar, contentStyle, objective });
+        generatedContent = await aiClient.generateCarousel({ painCategory, platform, pillar, contentStyle, objective, liveSignals });
       } else if (type === 'whatsapp_status') {
-        generatedContent = await aiClient.generateWhatsAppStatus({ painCategory, pillar, contentStyle, objective });
+        generatedContent = await aiClient.generateWhatsAppStatus({ painCategory, pillar, contentStyle, objective, liveSignals });
       } else if (type === 'caption_post') {
-        generatedContent = await aiClient.generateCaption({ painCategory, platform, pillar, contentStyle, objective });
+        generatedContent = await aiClient.generateCaption({ painCategory, platform, pillar, contentStyle, objective, liveSignals });
       }
 
       if (generatedContent._aiModel) {
@@ -87,16 +101,44 @@ const contentIntelligenceService = {
         generatedContent.hook_slide?.heading ||
         'Untitled';
 
+      // Dynamic CTA — platform-native bio link, no direct bot DM references
+      const { text: dynamicCta, style: ctaStyle } = ctaEngine.getCTA({ pillar, platform });
+
       const cta =
         generatedContent.cta ||
-        generatedContent.telegram_cta ||
-        'DM START on Telegram for your free skin diagnosis';
+        dynamicCta;
 
       const hashtags = generatedContent.hashtags || ['#skincare', '#nigerian', '#micahskin'];
 
-      const telegramCta =
-        generatedContent.telegram_cta ||
-        'DM START on Telegram @micahskin_academy_bot for your free diagnosis';
+      const bioLinkedCta =
+        generatedContent.bio_cta ||
+        dynamicCta;
+
+      // Score the piece
+      const scores = scoringService.scorePiece({
+        hook,
+        body: JSON.stringify(generatedContent),
+        pillar,
+        painCategory,
+        platform,
+        cta,
+        claudeModel: aiModel,
+      });
+
+      // Phase 40 — Lineage fields
+      const signalInfluenceScore = Math.min(100, Math.round((liveSignals.length / 12) * 100));
+      const effectiveGenerationType = generationType || (liveSignals.length > 0 ? 'signal-driven' : 'manual');
+
+      // Auto-create a session if one wasn't injected by batch generation
+      let effectiveSessionId = generationSessionId;
+      if (!effectiveSessionId) {
+        const autoSession = await this.createGenerationSession({
+          triggerType: 'manual',
+          triggerSource: 'admin_ui',
+          batchLabel: this._getTodayWAT(),
+        });
+        effectiveSessionId = autoSession.id;
+      }
 
       const contentPiece = await prisma.contentPiece.create({
         data: {
@@ -109,13 +151,48 @@ const contentIntelligenceService = {
           hook,
           body: JSON.stringify({ ...generatedContent, _contentStyle: contentStyle, _objective: objective }),
           cta,
-          telegramCta,
+          ctaStyle,
+          telegramCta: bioLinkedCta,
           hashtags: JSON.stringify(hashtags),
           claudeModel: aiModel,
           status: 'draft',
           generationMode,
+          hookScore:       scores.hookScore,
+          emotionalScore:  scores.emotionalScore,
+          viralityScore:   scores.viralityScore,
+          conversionScore: scores.conversionScore,
+          authorityScore:  scores.authorityScore,
+          overallScore:    scores.overallScore,
+          estimatedReach:  scores.estimatedReach,
+          // Phase 40
+          generationSessionId: effectiveSessionId || null,
+          generatedAt:         new Date(),
+          generationType:      effectiveGenerationType,
+          generatedFromSignals: liveSignals.length > 0 ? liveSignals : null,
+          freshnessState:      'new',
+          signalInfluenceScore,
+          generationReason:    generationReason || null,
+          generationBatchLabel: generationBatchLabel || null,
         },
       });
+
+      // Update single-piece session count
+      if (!generationSessionId && effectiveSessionId) {
+        await prisma.generationSession.update({
+          where: { id: effectiveSessionId },
+          data: {
+            contentCount: 1,
+            signalCount: signalInfluenceScore > 0 ? 1 : 0,
+            averageScores: {
+              hook: contentPiece.hookScore,
+              virality: contentPiece.viralityScore,
+              conversion: contentPiece.conversionScore,
+              overall: contentPiece.overallScore,
+            },
+            dominantNiche: painCategory,
+          },
+        }).catch(() => {});
+      }
 
       return contentPiece;
     } catch (error) {
@@ -140,6 +217,13 @@ const contentIntelligenceService = {
 
     console.log(`Generating daily batch for ${batchDate}...`);
 
+    // Phase 40 — Create generation session for this batch
+    const session = await this.createGenerationSession({
+      triggerType: 'batch',
+      triggerSource: 'admin_ui',
+      batchLabel: batchDate,
+    });
+
     const allCategories = painPointService.getAllCategories();
     const generatedPieces = [];
     let failureCount = 0;
@@ -158,7 +242,11 @@ const contentIntelligenceService = {
 
           console.log(`Generating: ${platform} - ${pillar} - ${painCategory}`);
 
-          const piece = await this.generateSinglePiece({ painCategory, platform, pillar, generationMode: 'auto' });
+          const piece = await this.generateSinglePiece({
+            painCategory, platform, pillar, generationMode: 'auto',
+            generationSessionId: session.id,
+            generationBatchLabel: batchDate,
+          });
           generatedPieces.push(piece);
           console.log(`✓ Generated piece ${generatedPieces.length}/${count}`);
         } catch (error) {
@@ -172,7 +260,25 @@ const contentIntelligenceService = {
       }
     }
 
-    return { success: true, batchDate, generated: generatedPieces.length, failed: failureCount, pieces: generatedPieces };
+    // Phase 40 — Update session with final stats
+    if (generatedPieces.length > 0) {
+      const niches = generatedPieces.map(p => p.painCategory);
+      const nicheFreq = niches.reduce((acc, n) => { acc[n] = (acc[n] || 0) + 1; return acc; }, {});
+      const dominantNiche = Object.entries(nicheFreq).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+      const signalCount = generatedPieces.reduce((s, p) => s + (p.signalInfluenceScore > 0 ? 1 : 0), 0);
+      const avgScores = {
+        hook:       Math.round(generatedPieces.reduce((s, p) => s + p.hookScore, 0) / generatedPieces.length),
+        virality:   Math.round(generatedPieces.reduce((s, p) => s + p.viralityScore, 0) / generatedPieces.length),
+        conversion: Math.round(generatedPieces.reduce((s, p) => s + p.conversionScore, 0) / generatedPieces.length),
+        overall:    Math.round(generatedPieces.reduce((s, p) => s + p.overallScore, 0) / generatedPieces.length),
+      };
+      await prisma.generationSession.update({
+        where: { id: session.id },
+        data: { contentCount: generatedPieces.length, signalCount, averageScores: avgScores, dominantNiche },
+      });
+    }
+
+    return { success: true, batchDate, sessionId: session.id, generated: generatedPieces.length, failed: failureCount, pieces: generatedPieces };
   },
 
   // ── Queue & retrieval ───────────────────────────────────────────────────────
@@ -181,7 +287,7 @@ const contentIntelligenceService = {
     const batchDate = date || this._getTodayWAT();
     return prisma.contentPiece.findMany({
       where: { batchDate },
-      orderBy: [{ pillar: 'asc' }, { createdAt: 'desc' }],
+      orderBy: { createdAt: 'desc' },
     });
   },
 
@@ -202,16 +308,24 @@ const contentIntelligenceService = {
     if (!['draft', 'approved', 'scheduled', 'posted', 'archived'].includes(newStatus)) {
       throw new Error(`Invalid status: ${newStatus}`);
     }
-    return prisma.contentPiece.update({ where: { id: pieceId }, data: { status: newStatus, updatedAt: new Date() } });
+    const data = { status: newStatus, updatedAt: new Date() };
+    if (newStatus === 'posted') data.freshnessState = 'posted';
+    return prisma.contentPiece.update({ where: { id: pieceId }, data });
   },
 
-  async updateContentPerformance(pieceId, { views, leads, conversions }) {
+  async updateContentPerformance(pieceId, metrics) {
+    const { views, saves, comments, replies, ctaClicks, leads, conversions, watchRetention } = metrics;
     return prisma.contentPiece.update({
       where: { id: pieceId },
       data: {
-        views: views !== undefined ? views : undefined,
-        leads: leads !== undefined ? leads : undefined,
-        conversions: conversions !== undefined ? conversions : undefined,
+        ...(views          !== undefined && { views }),
+        ...(saves          !== undefined && { saves }),
+        ...(comments       !== undefined && { comments }),
+        ...(replies        !== undefined && { replies }),
+        ...(ctaClicks      !== undefined && { ctaClicks }),
+        ...(leads          !== undefined && { leads }),
+        ...(conversions    !== undefined && { conversions }),
+        ...(watchRetention !== undefined && { watchRetention: parseFloat(watchRetention) }),
         updatedAt: new Date(),
       },
     });
@@ -242,34 +356,67 @@ const contentIntelligenceService = {
     const stats = {
       totalPieces: pieces.length,
       totalViews: 0,
+      totalSaves: 0,
       totalLeads: 0,
       totalConversions: 0,
       byPlatform: {},
       byPillar: {},
       byStatus: {},
+      byCtaStyle: {},
+      byEstimatedReach: {},
+      avgScores: { hook: 0, emotional: 0, virality: 0, conversion: 0, authority: 0, overall: 0 },
       topPerformers: [],
+      topScoredPieces: [],
     };
 
     pieces.forEach(piece => {
-      stats.totalViews += piece.views;
-      stats.totalLeads += piece.leads;
+      stats.totalViews       += piece.views;
+      stats.totalSaves       += piece.saves || 0;
+      stats.totalLeads       += piece.leads;
       stats.totalConversions += piece.conversions;
       stats.byPlatform[piece.platform] = (stats.byPlatform[piece.platform] || 0) + 1;
-      stats.byPillar[piece.pillar] = (stats.byPillar[piece.pillar] || 0) + 1;
-      stats.byStatus[piece.status] = (stats.byStatus[piece.status] || 0) + 1;
+      stats.byPillar[piece.pillar]     = (stats.byPillar[piece.pillar] || 0) + 1;
+      stats.byStatus[piece.status]     = (stats.byStatus[piece.status] || 0) + 1;
+      if (piece.ctaStyle) stats.byCtaStyle[piece.ctaStyle] = (stats.byCtaStyle[piece.ctaStyle] || 0) + 1;
+      if (piece.estimatedReach) stats.byEstimatedReach[piece.estimatedReach] = (stats.byEstimatedReach[piece.estimatedReach] || 0) + 1;
+
+      stats.avgScores.hook       += piece.hookScore       || 0;
+      stats.avgScores.emotional  += piece.emotionalScore  || 0;
+      stats.avgScores.virality   += piece.viralityScore   || 0;
+      stats.avgScores.conversion += piece.conversionScore || 0;
+      stats.avgScores.authority  += piece.authorityScore  || 0;
+      stats.avgScores.overall    += piece.overallScore    || 0;
     });
+
+    if (pieces.length > 0) {
+      Object.keys(stats.avgScores).forEach(k => {
+        stats.avgScores[k] = Math.round(stats.avgScores[k] / pieces.length);
+      });
+    }
 
     stats.topPerformers = pieces
       .sort((a, b) => b.views - a.views)
       .slice(0, 10)
       .map(p => ({
         id: p.id,
-        hook: p.hook.substring(0, 50),
+        hook: p.hook.substring(0, 60),
         platform: p.platform,
         views: p.views,
         leads: p.leads,
         conversions: p.conversions,
+        overallScore: p.overallScore,
         conversionRate: p.views > 0 ? ((p.conversions / p.views) * 100).toFixed(2) : 0,
+      }));
+
+    stats.topScoredPieces = pieces
+      .sort((a, b) => b.overallScore - a.overallScore)
+      .slice(0, 5)
+      .map(p => ({
+        id: p.id,
+        hook: p.hook.substring(0, 60),
+        platform: p.platform,
+        overallScore: p.overallScore,
+        estimatedReach: p.estimatedReach,
       }));
 
     if (stats.totalViews > 0) {
@@ -277,6 +424,54 @@ const contentIntelligenceService = {
     }
 
     return stats;
+  },
+
+  // ── Pain Signal Database ────────────────────────────────────────────────────
+
+  async addPainSignal({ signal, signalType, painCategory, source = 'manual', notes = null }) {
+    // Check for existing signal to increment frequency instead of duplicate
+    const existing = await prisma.painSignalEntry.findFirst({
+      where: { signal: { equals: signal }, painCategory, signalType },
+    });
+
+    if (existing) {
+      return prisma.painSignalEntry.update({
+        where: { id: existing.id },
+        data: { frequency: { increment: 1 }, updatedAt: new Date() },
+      });
+    }
+
+    return prisma.painSignalEntry.create({
+      data: { signal, signalType, painCategory, source, notes },
+    });
+  },
+
+  async getPainSignals({ painCategory = null, signalType = null, source = null, limit = 100 } = {}) {
+    const where = { isActive: true };
+    if (painCategory) where.painCategory = painCategory;
+    if (signalType)   where.signalType   = signalType;
+    if (source)       where.source       = source;
+
+    return prisma.painSignalEntry.findMany({
+      where,
+      orderBy: [{ frequency: 'desc' }, { createdAt: 'desc' }],
+      take: limit,
+    });
+  },
+
+  async deletePainSignal(signalId) {
+    return prisma.painSignalEntry.update({
+      where: { id: signalId },
+      data: { isActive: false, updatedAt: new Date() },
+    });
+  },
+
+  async getTopPainSignals({ limit = 20 } = {}) {
+    return prisma.painSignalEntry.findMany({
+      where: { isActive: true },
+      orderBy: { frequency: 'desc' },
+      take: limit,
+    });
   },
 
   // ── Metadata ────────────────────────────────────────────────────────────────
@@ -324,13 +519,87 @@ const contentIntelligenceService = {
     return [
       { id: 'auto', label: 'Auto (AI decides)' },
       { id: 'Lead Generation', label: 'Lead Generation' },
-      { id: 'Telegram Conversion', label: 'Telegram Conversion' },
+      { id: 'Bio Link Conversion', label: 'Bio Link Conversion' },
       { id: 'Academy Sales', label: 'Academy Sales' },
       { id: 'Product Sales', label: 'Product Sales' },
       { id: 'Brand Awareness', label: 'Brand Awareness' },
       { id: 'Engagement', label: 'Engagement' },
       { id: 'Authority Positioning', label: 'Authority Positioning' },
     ];
+  },
+
+  getAllCtaStyles() {
+    return ctaEngine.CTA_STYLES.map(id => ({
+      id,
+      label: id.charAt(0).toUpperCase() + id.slice(1).replace(/_/g, ' '),
+    }));
+  },
+
+  getPainSignalTypes() {
+    return [
+      { id: 'pain_point',       label: 'Pain Point' },
+      { id: 'emotional_phrase', label: 'Emotional Phrase' },
+      { id: 'frustration',      label: 'Frustration' },
+      { id: 'objection',        label: 'Objection' },
+      { id: 'desire',           label: 'Desire' },
+      { id: 'trending_concern', label: 'Trending Concern' },
+      { id: 'question',         label: 'Audience Question' },
+    ];
+  },
+
+  getPainSignalSources() {
+    return [
+      { id: 'manual',   label: 'Manual Entry' },
+      { id: 'comment',  label: 'Comment' },
+      { id: 'lead',     label: 'Lead Conversation' },
+      { id: 'academy',  label: 'Academy Question' },
+      { id: 'crm',      label: 'CRM Note' },
+      { id: 'scraping', label: 'Scraping' },
+      { id: 'content',  label: 'Content Performance' },
+    ];
+  },
+
+  // ── Generation Sessions (Phase 40) ─────────────────────────────────────────
+
+  async createGenerationSession({ triggerType = 'manual', triggerSource = null, batchLabel = null, notes = null } = {}) {
+    return prisma.generationSession.create({
+      data: { triggerType, triggerSource, batchLabel, notes },
+    });
+  },
+
+  async listGenerationSessions({ limit = 20, offset = 0 } = {}) {
+    const sessions = await prisma.generationSession.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip: offset,
+      include: { _count: { select: { contentPieces: true } } },
+    });
+    return sessions.map(s => ({ ...s, contentCount: s._count.contentPieces }));
+  },
+
+  async getGenerationSession(sessionId) {
+    return prisma.generationSession.findUnique({
+      where: { id: sessionId },
+      include: {
+        contentPieces: {
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true, hook: true, platform: true, pillar: true,
+            painCategory: true, status: true, freshnessState: true,
+            overallScore: true, generationType: true, signalInfluenceScore: true,
+          },
+        },
+      },
+    });
+  },
+
+  async markContentViewed(pieceId) {
+    const piece = await prisma.contentPiece.findUnique({ where: { id: pieceId }, select: { id: true, freshnessState: true } });
+    if (!piece || piece.freshnessState !== 'new') return piece;
+    return prisma.contentPiece.update({
+      where: { id: pieceId },
+      data: { freshnessState: 'viewed', updatedAt: new Date() },
+    });
   },
 
   // ── Utilities ───────────────────────────────────────────────────────────────

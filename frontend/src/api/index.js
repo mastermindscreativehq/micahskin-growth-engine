@@ -573,6 +573,18 @@ export async function triggerAcquisitionRun(country = 'NG') {
   })
 }
 
+export async function previewAcquisitionRun(country = 'NG') {
+  return protectedFetch(`${BASE_URL}/api/admin/acquisition/preview?country=${encodeURIComponent(country)}`)
+}
+
+export async function stopAcquisitionRun() {
+  return protectedFetch(`${BASE_URL}/api/admin/acquisition/stop`, { method: 'POST' })
+}
+
+export async function fetchAcquisitionRunLog() {
+  return protectedFetch(`${BASE_URL}/api/admin/acquisition/run-log`)
+}
+
 // ── Phase 36 — Human-Assisted Outreach Queue ─────────────────────────────────
 
 export async function fetchOutreachQueue({
@@ -800,4 +812,115 @@ export async function fetchContentStyles() {
 
 export async function fetchObjectives() {
   return protectedFetch(`${BASE_URL}/api/content/metadata/objectives`)
+}
+
+export async function fetchCtaStyles() {
+  return protectedFetch(`${BASE_URL}/api/content/metadata/cta-styles`)
+}
+
+// Pain Signal Database
+export async function fetchPainSignals(filters = {}) {
+  const params = new URLSearchParams()
+  if (filters.painCategory) params.append('painCategory', filters.painCategory)
+  if (filters.signalType)   params.append('signalType',   filters.signalType)
+  if (filters.source)       params.append('source',       filters.source)
+  if (filters.limit)        params.append('limit',        filters.limit)
+  const qs = params.toString()
+  return protectedFetch(`${BASE_URL}/api/content/signals${qs ? `?${qs}` : ''}`)
+}
+
+export async function addPainSignal(data) {
+  return protectedFetch(`${BASE_URL}/api/content/signals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function deletePainSignal(signalId) {
+  return protectedFetch(`${BASE_URL}/api/content/signals/${encodeURIComponent(signalId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function fetchTopPainSignals(limit = 20) {
+  return protectedFetch(`${BASE_URL}/api/content/signals/top?limit=${limit}`)
+}
+
+export async function fetchSignalTypes() {
+  return protectedFetch(`${BASE_URL}/api/content/metadata/signal-types`)
+}
+
+export async function fetchSignalSources() {
+  return protectedFetch(`${BASE_URL}/api/content/metadata/signal-sources`)
+}
+
+// Phase 40 — Generation Sessions & Lineage
+export async function fetchGenerationSessions({ limit = 20, offset = 0 } = {}) {
+  return protectedFetch(`${BASE_URL}/api/content/sessions?limit=${limit}&offset=${offset}`)
+}
+
+export async function fetchGenerationSession(sessionId) {
+  return protectedFetch(`${BASE_URL}/api/content/sessions/${encodeURIComponent(sessionId)}`)
+}
+
+export async function markContentViewed(pieceId) {
+  return protectedFetch(`${BASE_URL}/api/content/${encodeURIComponent(pieceId)}/viewed`, {
+    method: 'POST',
+  })
+}
+
+// ── Market Signal API (Comment Intelligence Pipeline) ─────────────────────────
+
+export async function ingestMarketSignal(data) {
+  return protectedFetch(`${BASE_URL}/api/market-signals/ingest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function analyzePendingSignals(limit = 10) {
+  return protectedFetch(`${BASE_URL}/api/market-signals/analyze-pending`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ limit }),
+  })
+}
+
+export async function analyzeMarketSignal(id) {
+  return protectedFetch(`${BASE_URL}/api/market-signals/${encodeURIComponent(id)}/analyze`, {
+    method: 'POST',
+  })
+}
+
+export async function fetchMarketSignals(filters = {}) {
+  const params = new URLSearchParams()
+  if (filters.source)         params.append('source', filters.source)
+  if (filters.status)         params.append('status', filters.status)
+  if (filters.nicheCategory)  params.append('nicheCategory', filters.nicheCategory)
+  if (filters.audienceSegment) params.append('audienceSegment', filters.audienceSegment)
+  if (filters.limit)          params.append('limit', filters.limit)
+  const qs = params.toString()
+  return protectedFetch(`${BASE_URL}/api/market-signals${qs ? `?${qs}` : ''}`)
+}
+
+export async function fetchMarketInsights() {
+  return protectedFetch(`${BASE_URL}/api/market-signals/insights`)
+}
+
+export async function fetchMarketHeatmap() {
+  return protectedFetch(`${BASE_URL}/api/market-signals/heatmap`)
+}
+
+export async function fetchMarketTimeline(hours = 72) {
+  return protectedFetch(`${BASE_URL}/api/market-signals/timeline?hours=${hours}`)
+}
+
+export async function fetchMarketStats() {
+  return protectedFetch(`${BASE_URL}/api/market-signals/stats`)
+}
+
+export async function fetchTopPhrases(type = 'pain_point', limit = 20) {
+  return protectedFetch(`${BASE_URL}/api/market-signals/phrases?type=${type}&limit=${limit}`)
 }

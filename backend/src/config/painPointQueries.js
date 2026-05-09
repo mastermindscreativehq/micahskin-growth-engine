@@ -208,7 +208,16 @@ function _normaliseCountry(country) {
  * the last 24h. Manual mode — the rotation block protects against operator
  * accidentally re-running the same batch back to back.
  */
-function getNextPainBatch({ country = DEFAULT_COUNTRY } = {}) {
+/**
+ * getNextPainBatch
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.country]  Country code (default DEFAULT_COUNTRY)
+ * @param {boolean} [opts.peek]   If true, returns the next batch WITHOUT advancing
+ *                                 the cursor or marking it as recently used.
+ *                                 Safe to call from dry-run / preview endpoints.
+ */
+function getNextPainBatch({ country = DEFAULT_COUNTRY, peek = false } = {}) {
   const code     = _normaliseCountry(country)
   const profile  = COUNTRY_PROFILES[code]
 
@@ -233,10 +242,12 @@ function getNextPainBatch({ country = DEFAULT_COUNTRY } = {}) {
     const batch  = [...pain, ...loc, ...intent].filter(Boolean)
     const key    = `${code}|${_canon(batch)}`
     if (!_wasUsedRecently(key)) {
-      cursors.pain   = painRef.value
-      cursors.loc    = locRef.value
-      cursors.intent = intentRef.value
-      _markUsed(key)
+      if (!peek) {
+        cursors.pain   = painRef.value
+        cursors.loc    = locRef.value
+        cursors.intent = intentRef.value
+        _markUsed(key)
+      }
       return {
         mode:    'pain_point_first',
         country: code,
@@ -249,23 +260,27 @@ function getNextPainBatch({ country = DEFAULT_COUNTRY } = {}) {
   }
 
   // Force-rotate fallback — overwrite the LRU reservation.
-  const pain   = _pick(painPool,   painRef,   PAIN_PER_BATCH)
-  const loc    = _pick(locPool,    locRef,    LOC_PER_BATCH)
-  const intent = _pick(intentPool, intentRef, INTENT_PER_BATCH)
-  const batch  = [...pain, ...loc, ...intent].filter(Boolean)
-  cursors.pain   = painRef.value
-  cursors.loc    = locRef.value
-  cursors.intent = intentRef.value
-  const key = `${code}|${_canon(batch)}`
-  _markUsed(key)
-  return {
-    mode:    'pain_point_first',
-    country: code,
-    countryLabel: profile.label,
-    batch,
-    key,
-    phrases: batch.map(h => _phraseForHashtag(h)),
-    forced:  true,
+  {
+    const pain   = _pick(painPool,   painRef,   PAIN_PER_BATCH)
+    const loc    = _pick(locPool,    locRef,    LOC_PER_BATCH)
+    const intent = _pick(intentPool, intentRef, INTENT_PER_BATCH)
+    const batch  = [...pain, ...loc, ...intent].filter(Boolean)
+    const key    = `${code}|${_canon(batch)}`
+    if (!peek) {
+      cursors.pain   = painRef.value
+      cursors.loc    = locRef.value
+      cursors.intent = intentRef.value
+      _markUsed(key)
+    }
+    return {
+      mode:    'pain_point_first',
+      country: code,
+      countryLabel: profile.label,
+      batch,
+      key,
+      phrases: batch.map(h => _phraseForHashtag(h)),
+      forced:  true,
+    }
   }
 }
 

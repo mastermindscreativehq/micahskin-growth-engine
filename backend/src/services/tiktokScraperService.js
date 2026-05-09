@@ -7,23 +7,29 @@
  * ENV:
  *   APIFY_API_TOKEN         — required
  *   APIFY_TIKTOK_ACTOR_ID   — defaults to clockworks/tiktok-hashtag-scraper
+ *
+ * Hard limits are loaded from acquisitionSafeMode.js — never bypass them here.
  */
 
 const { getHashtagsForRun } = require('../config/micahskinTikTokHashtags')
+const {
+  MAX_SEARCH_QUERIES,
+  MAX_POSTS_PER_RUN,
+  MAX_COMMENTS_PER_POST,
+} = require('../config/acquisitionSafeMode')
 
 const APIFY_BASE = 'https://api.apify.com/v2'
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
-// Phase 37 — strict Apify credit caps. Manual mode + Africa-first means we
-// keep batches small. Default budget = 3 videos × 10-tag batch = 30 items.
-const MAX_ITEMS_HARD_CEILING = 60
-const MAX_ITEMS_DEFAULT      = 30
-const PER_TAG_HARD_CEILING   = 3   // ≤ 3 videos per query / hashtag
+// Safe Mode ceilings — all values sourced from centralized config.
+const MAX_ITEMS_HARD_CEILING = MAX_POSTS_PER_RUN                               // 5
+const MAX_ITEMS_DEFAULT      = MAX_POSTS_PER_RUN                               // 5
+const PER_TAG_HARD_CEILING   = Math.max(1, Math.ceil(MAX_POSTS_PER_RUN / Math.max(1, MAX_SEARCH_QUERIES)))
 function _resolveMaxItems(override) {
-  const raw = Number(override ?? process.env.APIFY_MAX_ITEMS_PER_RUN ?? MAX_ITEMS_DEFAULT)
+  const raw = Number(override ?? MAX_ITEMS_DEFAULT)
   if (!Number.isFinite(raw) || raw <= 0) return MAX_ITEMS_DEFAULT
-  return Math.min(MAX_ITEMS_HARD_CEILING, Math.max(10, Math.round(raw)))
+  return Math.min(MAX_ITEMS_HARD_CEILING, Math.max(1, Math.round(raw)))
 }
 
 /**
@@ -44,12 +50,12 @@ async function triggerTiktokHashtagScrape(hashtagsOrMode = 'priority', opts = {}
   let selectedHashtags, runMode
 
   if (Array.isArray(hashtagsOrMode)) {
-    // Caller passed explicit list — clamp to 12 to stay within safe batch window
-    selectedHashtags = hashtagsOrMode.slice(0, 12).map(h => h.replace(/^#/, ''))
+    // Safe Mode: cap to MAX_SEARCH_QUERIES regardless of what the caller sends
+    selectedHashtags = hashtagsOrMode.slice(0, MAX_SEARCH_QUERIES).map(h => h.replace(/^#/, ''))
     runMode = opts.modeLabel || 'custom'
   } else {
     runMode = hashtagsOrMode || 'priority'
-    selectedHashtags = getHashtagsForRun(runMode)
+    selectedHashtags = getHashtagsForRun(runMode).slice(0, MAX_SEARCH_QUERIES)
   }
 
   const actorId   = process.env.APIFY_TIKTOK_ACTOR_ID || 'clockworks/tiktok-hashtag-scraper'
@@ -308,11 +314,10 @@ function _err(msg, status) {
 // Default actor: clockworks/tiktok-comments-scraper. Takes a list of TikTok
 // post URLs and returns top-level comments. Override via APIFY_TIKTOK_COMMENTS_ACTOR_ID.
 
-// Phase 37 — strict caps. Operator's rule: ≤ 3 videos × ≤ 10 comments per
-// video = 30 comments per cycle max.
+// Safe Mode: comment limits from centralized config.
 const COMMENTS_ACTOR_DEFAULT     = 'clockworks/tiktok-comments-scraper'
-const COMMENTS_PER_VIDEO_DEFAULT = 10
-const COMMENTS_HARD_CEILING      = 10
+const COMMENTS_PER_VIDEO_DEFAULT = MAX_COMMENTS_PER_POST
+const COMMENTS_HARD_CEILING      = MAX_COMMENTS_PER_POST
 
 function _resolveCommentsPerVideo(override) {
   const raw = Number(override ?? process.env.APIFY_COMMENTS_PER_VIDEO ?? COMMENTS_PER_VIDEO_DEFAULT)
@@ -337,8 +342,8 @@ async function triggerTiktokCommentsScrape(postUrls, opts = {}) {
     throw _err('triggerTiktokCommentsScrape requires a non-empty postUrls array', 400)
   }
 
-  // Phase 37 — operator-enforced cap: at most 3 videos per cycle.
-  const VIDEO_HARD_CAP = 3
+  // Safe Mode — hard post cap from centralized config.
+  const VIDEO_HARD_CAP = MAX_POSTS_PER_RUN
   const cleanedUrls = postUrls
     .map(u => (typeof u === 'string' ? u.trim() : ''))
     .filter(u => u && /^https?:\/\/(www\.)?tiktok\.com\//i.test(u))

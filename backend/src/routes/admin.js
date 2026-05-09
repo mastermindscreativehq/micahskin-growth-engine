@@ -12,6 +12,9 @@ const {
 const {
   runAcquisitionCycle,
   getAcquisitionStats,
+  previewAcquisitionRun,
+  stopAcquisition,
+  getRunLog,
 } = require('../services/leadAcquisitionService')
 const {
   listOutreachQueue,
@@ -96,6 +99,19 @@ router.post('/follow-ups/resume', (req, res) => {
   res.json({ success: true, paused: false })
 })
 
+// GET /api/admin/acquisition/preview — dry run, no Apify call
+// Returns the planned queries and estimated credit cost for the next run.
+router.get('/acquisition/preview', (req, res) => {
+  try {
+    const country = req.query?.country || 'NG'
+    const preview = previewAcquisitionRun({ country })
+    res.json({ success: true, data: preview })
+  } catch (err) {
+    console.error('[Admin] GET /acquisition/preview:', err.message)
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
 // POST /api/admin/acquisition/trigger — manual one-off scrape cycle
 // Body / query: { country: 'NG' | 'GH' | 'KE' | 'ZA' }  (default NG)
 router.post('/acquisition/trigger', async (req, res) => {
@@ -108,6 +124,27 @@ router.post('/acquisition/trigger', async (req, res) => {
     res.json({ success: true, message: `Acquisition cycle triggered (country=${country})`, country })
   } catch (err) {
     console.error('[Admin] POST /acquisition/trigger:', err.message)
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+// POST /api/admin/acquisition/stop — emergency stop (resets in-memory state)
+router.post('/acquisition/stop', (req, res) => {
+  try {
+    stopAcquisition()
+    res.json({ success: true, message: 'Acquisition run stopped and reset to idle' })
+  } catch (err) {
+    console.error('[Admin] POST /acquisition/stop:', err.message)
+    res.status(500).json({ success: false, message: err.message })
+  }
+})
+
+// GET /api/admin/acquisition/run-log — last N completed runs (in-memory)
+router.get('/acquisition/run-log', (req, res) => {
+  try {
+    res.json({ success: true, data: getRunLog() })
+  } catch (err) {
+    console.error('[Admin] GET /acquisition/run-log:', err.message)
     res.status(500).json({ success: false, message: err.message })
   }
 })

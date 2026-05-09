@@ -304,20 +304,121 @@ const contentIntelligenceController = {
   async getStats(req, res) {
     try {
       const { days } = req.query;
-
-      const stats = await contentIntelligenceService.getContentStats({
-        days: days ? parseInt(days) : 30,
-      });
-
-      return res.json({
-        success: true,
-        data: stats,
-      });
+      const stats = await contentIntelligenceService.getContentStats({ days: days ? parseInt(days) : 30 });
+      return res.json({ success: true, data: stats });
     } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: error.message,
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════════
+  // PAIN SIGNAL DATABASE
+  // ═══════════════════════════════════════════════════════════════════════════════════
+
+  async getPainSignals(req, res) {
+    try {
+      const { painCategory, signalType, source, limit } = req.query;
+      const signals = await contentIntelligenceService.getPainSignals({
+        painCategory, signalType, source, limit: limit ? parseInt(limit) : 100,
       });
+      return res.json({ success: true, data: signals, count: signals.length });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  async addPainSignal(req, res) {
+    try {
+      const { signal, signalType, painCategory, source, notes } = req.body;
+      if (!signal || !signalType || !painCategory) {
+        return res.status(400).json({ success: false, message: 'signal, signalType, painCategory required' });
+      }
+      const entry = await contentIntelligenceService.addPainSignal({ signal, signalType, painCategory, source, notes });
+      return res.status(201).json({ success: true, data: entry });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  async deletePainSignal(req, res) {
+    try {
+      const { id } = req.params;
+      const entry = await contentIntelligenceService.deletePainSignal(id);
+      return res.json({ success: true, data: entry });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  async getTopPainSignals(req, res) {
+    try {
+      const { limit } = req.query;
+      const signals = await contentIntelligenceService.getTopPainSignals({ limit: limit ? parseInt(limit) : 20 });
+      return res.json({ success: true, data: signals });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  async getCtaStyles(req, res) {
+    try {
+      return res.json({ success: true, data: contentIntelligenceService.getAllCtaStyles() });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  async getSignalTypes(req, res) {
+    try {
+      return res.json({ success: true, data: contentIntelligenceService.getPainSignalTypes() });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  async getSignalSources(req, res) {
+    try {
+      return res.json({ success: true, data: contentIntelligenceService.getPainSignalSources() });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════════════
+  // GENERATION SESSIONS (Phase 40)
+  // ═══════════════════════════════════════════════════════════════════════════════════
+
+  async getGenerationSessions(req, res) {
+    try {
+      const { limit, offset } = req.query;
+      const sessions = await contentIntelligenceService.listGenerationSessions({
+        limit: limit ? parseInt(limit) : 20,
+        offset: offset ? parseInt(offset) : 0,
+      });
+      return res.json({ success: true, data: sessions, count: sessions.length });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  async getGenerationSession(req, res) {
+    try {
+      const { id } = req.params;
+      const session = await contentIntelligenceService.getGenerationSession(id);
+      if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
+      return res.json({ success: true, data: session });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  },
+
+  async markViewed(req, res) {
+    try {
+      const { id } = req.params;
+      const updated = await contentIntelligenceService.markContentViewed(id);
+      return res.json({ success: true, data: updated });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
     }
   },
 };

@@ -56,4 +56,24 @@ router.get('/metadata/objectives', controller.getObjectives);
 
 router.get('/stats', controller.getStats);
 
+// ═══════════════════════════════════════════════════════════════════════════════════
+// PAIN SIGNAL DATABASE
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+router.get('/signals', controller.getPainSignals);
+router.post('/signals', controller.addPainSignal);
+router.delete('/signals/:id', controller.deletePainSignal);
+router.get('/signals/top', controller.getTopPainSignals);
+router.get('/metadata/cta-styles', controller.getCtaStyles);
+router.get('/metadata/signal-types', controller.getSignalTypes);
+router.get('/metadata/signal-sources', controller.getSignalSources);
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// GENERATION SESSIONS (Phase 40)
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+router.get('/sessions', controller.getGenerationSessions);
+router.get('/sessions/:id', controller.getGenerationSession);
+router.post('/:id/viewed', controller.markViewed);
+
 module.exports = router;

@@ -844,22 +844,48 @@ model ContentPiece {
   painCategory   String    // acne | hyperpigmentation | dark_spots | oily_skin | stretch_marks | uneven_tone | dry_skin | sensitive | general
   platform       String    // tiktok | instagram_reel | facebook | whatsapp_status
   contentType    String    // short_form_video | carousel | caption_post | whatsapp_status | cta_hook_pack
-  contentTitle   String?   @db.Text  // Generated content title for queue display
+  contentTitle   String?   @db.Text
   hook           String    @db.Text
   body           String    @db.Text  // JSON: full structured content (scenes, shot list, slides, etc.)
   cta            String    @db.Text
-  telegramCta    String?   // pre-filled Telegram CTA variant
-  hashtags       String?   // JSON array string: ["#acne", "#nigerianwomen"]
-  naijaTone      String?   @db.Text  // Naija-localized overlay/alternative phrasing
-  claudeModel    String?   // "haiku-4-5" | "sonnet-4-6" — which model generated this
+  ctaStyle       String?   // soft | authority | curiosity | luxury | urgency | founder | educational | anti_sales
+  telegramCta    String?
+  hashtags       String?   // JSON array string
+  naijaTone      String?   @db.Text
+  claudeModel    String?
   status         String    @default("draft") // draft | approved | scheduled | posted | archived
   isWinning      Boolean   @default(false)
+  // Performance tracking
   views          Int       @default(0)
+  saves          Int       @default(0)
+  comments       Int       @default(0)
+  replies        Int       @default(0)
+  ctaClicks      Int       @default(0)
   leads          Int       @default(0)
   conversions    Int       @default(0)
+  watchRetention Float?    // 0–100 percent
+  // AI scoring dimensions (0–100 each)
+  hookScore       Int      @default(0)
+  emotionalScore  Int      @default(0)
+  viralityScore   Int      @default(0)
+  conversionScore Int      @default(0)
+  authorityScore  Int      @default(0)
+  overallScore    Int      @default(0)
+  estimatedReach  String?  // low | medium | high | viral
   generationMode String    @default("auto") // auto | manual
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+
+  // Phase 40 — Content Lineage & Generation Tracking
+  generationSessionId  String?
+  generatedAt          DateTime  @default(now())
+  generationType       String    @default("manual")  // manual | signal-driven | scheduled | academy | viral | founder-pov
+  generatedFromSignals Json?
+  freshnessState       String    @default("new")     // new | viewed | edited | posted | stale
+  signalInfluenceScore Int       @default(0)
+  generationReason     String?   @db.Text
+  generationBatchLabel String?
+  generationSession    GenerationSession? @relation(fields: [generationSessionId], references: [id])
 
   @@index([batchDate])
   @@index([platform])
@@ -867,7 +893,136 @@ model ContentPiece {
   @@index([painCategory])
   @@index([status])
   @@index([isWinning])
+  @@index([overallScore])
+  @@index([generationSessionId])
+  @@index([freshnessState])
+  @@index([generationType])
   @@map("content_pieces")
+}
+
+// Phase 40 — Generation Session
+// Groups all content pieces produced in one generation run for lineage tracking.
+model GenerationSession {
+  id                       String         @id @default(cuid())
+  createdAt                DateTime       @default(now())
+  triggerType              String         @default("manual")  // manual | batch | scheduled | signal_triggered
+  triggerSource            String?
+  signalCount              Int            @default(0)
+  contentCount             Int            @default(0)
+  averageScores            Json?
+  generatedBy              String         @default("system")
+  notes                    String?        @db.Text
+  dominantNiche            String?
+  dominantEmotionalCluster String?
+  batchLabel               String?
+  contentPieces            ContentPiece[]
+
+  @@index([triggerType])
+  @@index([createdAt])
+  @@map("generation_sessions")
+}
+
+// Pain signal database — market intelligence from audience interactions, comments, and scraping.
+model PainSignalEntry {
+  id           String   @id @default(cuid())
+  signal       String   @db.Text  // The exact phrase or insight
+  signalType   String   // pain_point | emotional_phrase | frustration | objection | desire | trending_concern | question
+  painCategory String   // acne | hyperpigmentation | general | ai_growth_systems | etc.
+  source       String   @default("manual") // content | scraping | comment | lead | academy | crm | manual
+  frequency    Int      @default(1)         // how many times this signal has been observed
+  isActive     Boolean  @default(true)
+  notes        String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([signalType])
+  @@index([painCategory])
+  @@index([source])
+  @@index([isActive])
+  @@index([frequency])
+  @@map("pain_signal_entries")
+}
+
+// Comment Intelligence Pipeline — Phase 38
+// Raw market signals ingested from TikTok, Instagram, Reddit, WhatsApp, Telegram, CRM.
+// Analyzed by AI to extract pain points, emotions, objections, desires, slang, and buying signals.
+model MarketSignal {
+  id                    String    @id @default(cuid())
+  source                String    // tiktok_comment | instagram_comment | reddit | whatsapp_reply | telegram_academy | crm_conversation | manual
+  sourceId              String?   // external ref: comment ID, lead ID, post URL, etc.
+  sourceUrl             String?
+  rawText               String    @db.Text
+  author                String?
+  postedAt              DateTime?
+
+  status                String    @default("pending") // pending | analyzed | failed | archived
+
+  // AI-extracted insights (all JSON string arrays)
+  analyzedAt            DateTime?
+  painPoints            Json?
+  emotionalLanguage     Json?
+  frustrations          Json?
+  objections            Json?
+  desires               Json?
+  urgencySignals        Json?
+  trustIssues           Json?
+  slang                 Json?
+  repeatedQuestions     Json?
+  buyingIntentDetected  Boolean   @default(false)
+  aiSummary             String?   @db.Text
+
+  // Scores (0-100)
+  emotionalIntensity    Int       @default(0)
+  conversionPotential   Int       @default(0)
+  viralityPotential     Int       @default(0)
+
+  // Classification
+  primarySignalType     String?   // pain_point | frustration | objection | desire | question | intent | neutral
+  audienceSegment       String?   // consumer | entrepreneur | brand_builder | unknown
+  nicheCategory         String?   // acne | hyperpigmentation | oily_skin | etc. | general
+
+  isActive              Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([source])
+  @@index([status])
+  @@index([primarySignalType])
+  @@index([nicheCategory])
+  @@index([audienceSegment])
+  @@index([emotionalIntensity])
+  @@index([conversionPotential])
+  @@index([createdAt])
+  @@map("market_signals")
+}
+
+// Aggregated phrase intelligence — deduped, ranked by frequency and scores.
+// Updated automatically whenever a MarketSignal is analyzed.
+model SignalPhrase {
+  id                     String   @id @default(cuid())
+  phrase                 String   @db.Text
+  normalizedPhrase       String   @db.Text
+  signalType             String   // pain_point | frustration | objection | desire | question | slang | urgency | trust_issue | emotional_language | intent
+  nicheCategory          String
+  audienceSegment        String   @default("consumer")
+  frequency              Int      @default(1)
+  avgEmotionalIntensity  Float    @default(0)
+  avgConversionPotential Float    @default(0)
+  avgViralityPotential   Float    @default(0)
+  firstSeenAt            DateTime @default(now())
+  lastSeenAt             DateTime @default(now())
+  isActive               Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@unique([normalizedPhrase, signalType, nicheCategory])
+  @@index([signalType])
+  @@index([nicheCategory])
+  @@index([audienceSegment])
+  @@index([frequency])
+  @@index([avgConversionPotential])
+  @@index([avgEmotionalIntensity])
+  @@map("signal_phrases")
 }
 
 // Winning hooks library — saves high-performing hooks for reuse across multiple pieces.

@@ -59,8 +59,9 @@ function startBackgroundServices() {
   // kept (it logs the mode) but performs no scheduling or auto-trigger.
   safeStartService('Lead Acquisition Engine (manual mode)', startLeadAcquisitionEngine)
   safeStartService('MCE Follow-Up Engine', startMceFollowUpService)
-  // Phase 38+ — Content Intelligence Engine daily batch generation (6am WAT)
   safeStartService('Content Daily Poller', startContentDailyPoller)
+  // NOTE: Orchestration poller intentionally excluded — Safe Mode requires
+  // all Apify activity to be triggered explicitly from the admin UI.
 }
 
 async function start() {

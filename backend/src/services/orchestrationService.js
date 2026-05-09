@@ -281,21 +281,13 @@ async function pollRunningOrchestrations() {
 }
 
 /**
- * Starts the background orchestration poller.
- * Polls every 30 s by default (overridable via ORCHESTRATION_POLL_INTERVAL_MS).
- * Runs once immediately on boot so any run that completed while the server was
- * down is picked up without waiting a full interval.
- *
- * When the Apify comment run SUCCEEDS, checkOrchestrationStatus() automatically
- * calls importInstagramCommentDataset() (Stage 4) and marks the run "completed".
- * On FAILED / TIMED-OUT / ABORTED it marks the run "failed". The function is
- * idempotent: once a run is in a terminal state it is never re-processed.
+ * SAFE MODE — background polling is disabled.
+ * Stage 4 (comment ingestion) is triggered by the explicit status-check
+ * route GET /api/scraping/apify/orchestration-status/:runId, which the
+ * admin UI can poll manually after triggering a run.
  */
 function startOrchestrationPoller() {
-  const intervalMs = parseInt(process.env.ORCHESTRATION_POLL_INTERVAL_MS || '30000', 10)
-  console.log(`✅ Orchestration poller started (checks every ${intervalMs / 1000}s)`)
-  pollRunningOrchestrations()
-  setInterval(pollRunningOrchestrations, intervalMs)
+  console.log('[OrchestrationPoller] DISABLED — Safe Mode active. No background Apify polling.')
 }
 
 module.exports = { runInstagramOrchestration, checkOrchestrationStatus, startOrchestrationPoller }

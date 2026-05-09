@@ -21,6 +21,7 @@ const fulfillmentRouter  = require('./routes/fulfillment')
 const adminRouter        = require('./routes/admin')
 const mceRouter          = require('./routes/mce')
 const contentIntelligenceRouter = require('./routes/contentIntelligence')
+const marketSignalsRouter = require('./routes/marketSignals')
 
 const app = express()
 
@@ -194,6 +195,9 @@ app.use('/api/mce', mceRouter)
 
 // Content Intelligence Engine — Nigerian skincare content generation
 app.use('/api/content', contentIntelligenceRouter)
+
+// Comment Intelligence Pipeline — audience psychology ingestion and analysis
+app.use('/api/market-signals', marketSignalsRouter)
 
 // ─────────────────────────────────────────────────────────────
 // 404
