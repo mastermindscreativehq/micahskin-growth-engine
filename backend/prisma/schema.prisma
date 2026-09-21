@@ -212,6 +212,8 @@ model Lead {
   deepConsultations   DeepConsultation[]
   followUpLogs        FollowUpLog[]
   timeline            LeadTimeline[]
+  assessmentSessions  AssessmentSession[]
+  funnelEvents        FunnelEvent[]
 
   @@index([funnelType])
   @@index([conversationPath])
@@ -642,24 +644,31 @@ model academy_invites {
 }
 
 model PaymentTransaction {
-  id                String            @id @default(cuid())
-  leadId            String
-  quoteId           String?
-  paystackReference String            @unique
-  amount            Float
-  currency          String            @default("NGN")
-  status            String            @default("success")
-  channel           String?
-  paidAt            DateTime?
-  rawPayload        Json?
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  lead              Lead              @relation(fields: [leadId], references: [id])
-  quote             ProductQuote?     @relation(fields: [quoteId], references: [id])
-  fulfillmentOrder  FulfillmentOrder?
+  id                  String             @id @default(cuid())
+  leadId              String
+  quoteId             String?
+  // Payment purpose — kept generic so this table can back every Paystack use case.
+  // "product_quote" preserves the historical default for existing rows.
+  // skin_assessment | product_quote (add new purposes here, never repurpose an existing value)
+  type                String             @default("product_quote")
+  assessmentSessionId String?
+  paystackReference   String             @unique
+  amount              Float
+  currency            String             @default("NGN")
+  status              String             @default("success")
+  channel             String?
+  paidAt              DateTime?
+  rawPayload          Json?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  lead                Lead               @relation(fields: [leadId], references: [id])
+  quote               ProductQuote?      @relation(fields: [quoteId], references: [id])
+  assessmentSession   AssessmentSession? @relation(fields: [assessmentSessionId], references: [id])
+  fulfillmentOrder    FulfillmentOrder?
 
   @@index([leadId])
   @@index([quoteId])
+  @@index([assessmentSessionId])
   @@map("payment_transactions")
 }
 
@@ -688,6 +697,43 @@ model FulfillmentOrder {
   @@map("fulfillment_orders")
 }
 
+// Paid Personalized Skin Assessment — ₦10,000 (config: backend/src/config/assessmentConfig.js).
+// This fee is a standalone commercial transaction. It has no relationship to product
+// pricing/credit — never derive a discount or credit from it.
+//
+// status lifecycle:
+// started -> intake_in_progress -> intake_completed -> payment_required ->
+// payment_initialized -> payment_success -> unlocked -> analysis_processing -> results_ready
+// (failure/abandonment: payment_failed | abandoned — never reachable from unlocked/results_ready)
+model AssessmentSession {
+  id                   String               @id @default(cuid())
+  // Opaque, unguessable identifier used in the public results URL — never expose `id` itself.
+  accessToken          String               @unique @default(uuid())
+  leadId               String?
+  fullName             String?
+  email                String?
+  phone                String?
+  status               String               @default("started")
+  intakeAnswers        Json?
+  intakeCompletedAt    DateTime?
+  paystackReference    String?              @unique
+  paymentInitializedAt DateTime?
+  paidAt               DateTime?
+  unlockedAt           DateTime?
+  analysisStartedAt    DateTime?
+  resultsReadyAt       DateTime?
+  abandonedAt          DateTime?
+  failureReason        String?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  lead                 Lead?                @relation(fields: [leadId], references: [id])
+  paymentTransactions  PaymentTransaction[]
+
+  @@index([leadId])
+  @@index([status])
+  @@map("assessment_sessions")
+}
+
 model FlowEventLog {
   id        String   @id @default(cuid())
   leadId    String
@@ -701,6 +747,27 @@ model FlowEventLog {
   @@index([leadId])
   @@index([eventType])
   @@map("flow_event_logs")
+}
+
+// Append-only funnel/analytics event log for the paid assessment + bundle features.
+// Unlike conversionService's single-row Lead mutation, every event is its own row —
+// leadId is nullable because assessment_started/bundle_viewed fire before a Lead exists.
+model FunnelEvent {
+  id        String   @id @default(cuid())
+  eventType String
+  leadId    String?
+  sessionId String?
+  bundleId  String?
+  value     Float?
+  metadata  Json?
+  createdAt DateTime @default(now())
+  lead      Lead?    @relation(fields: [leadId], references: [id])
+
+  @@index([eventType])
+  @@index([leadId])
+  @@index([sessionId])
+  @@index([bundleId])
+  @@map("funnel_events")
 }
 
 model FollowUpLog {
@@ -791,15 +858,15 @@ model ScrapedLead {
   // ── Phase 36 — Human-Assisted Outreach Queue ────────────────────────────
   // Distinguishes commenters from creators, captures the source video, and
   // stores all four CTA variants so the operator can copy whichever fits.
-  isComment       Boolean @default(true)        // commenter (true) vs creator caption (false)
-  sourceVideoUrl  String?                       // video the comment was posted under
-  whatsappCta     String?                       // WhatsApp opener line
-  consultCta      String?                       // free-diagnosis / consult CTA
-  academyCta      String?                       // academy / reseller CTA (when applicable)
-  ctaType         String?                       // chosen primary CTA: product|consult|academy|reseller|nurture
-  outreachStatus  String  @default("pending")   // pending|replied|converted|skipped
+  isComment               Boolean   @default(true) // commenter (true) vs creator caption (false)
+  sourceVideoUrl          String? // video the comment was posted under
+  whatsappCta             String? // WhatsApp opener line
+  consultCta              String? // free-diagnosis / consult CTA
+  academyCta              String? // academy / reseller CTA (when applicable)
+  ctaType                 String? // chosen primary CTA: product|consult|academy|reseller|nurture
+  outreachStatus          String    @default("pending") // pending|replied|converted|skipped
   outreachStatusUpdatedAt DateTime?
-  outreachOperator String?                      // optional who-marked-it audit
+  outreachOperator        String? // optional who-marked-it audit
 
   @@index([platform])
   @@index([processed])
@@ -838,32 +905,32 @@ model quiz_sessions {
 // Auto-generated Nigerian skincare content for TikTok, Instagram, Facebook, WhatsApp.
 // Content is generated daily, manually approved by admin, then scheduled/posted.
 model ContentPiece {
-  id             String    @id @default(cuid())
-  batchDate      String    // "2026-05-08" WAT date — groups daily batch
-  pillar         String    // pain_point | academy | growth_os | authority | conversion_cta
-  painCategory   String    // acne | hyperpigmentation | dark_spots | oily_skin | stretch_marks | uneven_tone | dry_skin | sensitive | general
-  platform       String    // tiktok | instagram_reel | facebook | whatsapp_status
-  contentType    String    // short_form_video | carousel | caption_post | whatsapp_status | cta_hook_pack
-  contentTitle   String?   @db.Text
-  hook           String    @db.Text
-  body           String    @db.Text  // JSON: full structured content (scenes, shot list, slides, etc.)
-  cta            String    @db.Text
-  ctaStyle       String?   // soft | authority | curiosity | luxury | urgency | founder | educational | anti_sales
-  telegramCta    String?
-  hashtags       String?   // JSON array string
-  naijaTone      String?   @db.Text
-  claudeModel    String?
-  status         String    @default("draft") // draft | approved | scheduled | posted | archived
-  isWinning      Boolean   @default(false)
+  id              String   @id @default(cuid())
+  batchDate       String // "2026-05-08" WAT date — groups daily batch
+  pillar          String // pain_point | academy | growth_os | authority | conversion_cta
+  painCategory    String // acne | hyperpigmentation | dark_spots | oily_skin | stretch_marks | uneven_tone | dry_skin | sensitive | general
+  platform        String // tiktok | instagram_reel | facebook | whatsapp_status
+  contentType     String // short_form_video | carousel | caption_post | whatsapp_status | cta_hook_pack
+  contentTitle    String?  @db.Text
+  hook            String   @db.Text
+  body            String   @db.Text // JSON: full structured content (scenes, shot list, slides, etc.)
+  cta             String   @db.Text
+  ctaStyle        String? // soft | authority | curiosity | luxury | urgency | founder | educational | anti_sales
+  telegramCta     String?
+  hashtags        String? // JSON array string
+  naijaTone       String?  @db.Text
+  claudeModel     String?
+  status          String   @default("draft") // draft | approved | scheduled | posted | archived
+  isWinning       Boolean  @default(false)
   // Performance tracking
-  views          Int       @default(0)
-  saves          Int       @default(0)
-  comments       Int       @default(0)
-  replies        Int       @default(0)
-  ctaClicks      Int       @default(0)
-  leads          Int       @default(0)
-  conversions    Int       @default(0)
-  watchRetention Float?    // 0–100 percent
+  views           Int      @default(0)
+  saves           Int      @default(0)
+  comments        Int      @default(0)
+  replies         Int      @default(0)
+  ctaClicks       Int      @default(0)
+  leads           Int      @default(0)
+  conversions     Int      @default(0)
+  watchRetention  Float? // 0–100 percent
   // AI scoring dimensions (0–100 each)
   hookScore       Int      @default(0)
   emotionalScore  Int      @default(0)
@@ -871,19 +938,19 @@ model ContentPiece {
   conversionScore Int      @default(0)
   authorityScore  Int      @default(0)
   overallScore    Int      @default(0)
-  estimatedReach  String?  // low | medium | high | viral
-  generationMode String    @default("auto") // auto | manual
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  estimatedReach  String? // low | medium | high | viral
+  generationMode  String   @default("auto") // auto | manual
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   // Phase 40 — Content Lineage & Generation Tracking
   generationSessionId  String?
-  generatedAt          DateTime  @default(now())
-  generationType       String    @default("manual")  // manual | signal-driven | scheduled | academy | viral | founder-pov
+  generatedAt          DateTime           @default(now())
+  generationType       String             @default("manual") // manual | signal-driven | scheduled | academy | viral | founder-pov
   generatedFromSignals Json?
-  freshnessState       String    @default("new")     // new | viewed | edited | posted | stale
-  signalInfluenceScore Int       @default(0)
-  generationReason     String?   @db.Text
+  freshnessState       String             @default("new") // new | viewed | edited | posted | stale
+  signalInfluenceScore Int                @default(0)
+  generationReason     String?            @db.Text
   generationBatchLabel String?
   generationSession    GenerationSession? @relation(fields: [generationSessionId], references: [id])
 
@@ -905,7 +972,7 @@ model ContentPiece {
 model GenerationSession {
   id                       String         @id @default(cuid())
   createdAt                DateTime       @default(now())
-  triggerType              String         @default("manual")  // manual | batch | scheduled | signal_triggered
+  triggerType              String         @default("manual") // manual | batch | scheduled | signal_triggered
   triggerSource            String?
   signalCount              Int            @default(0)
   contentCount             Int            @default(0)
@@ -925,11 +992,11 @@ model GenerationSession {
 // Pain signal database — market intelligence from audience interactions, comments, and scraping.
 model PainSignalEntry {
   id           String   @id @default(cuid())
-  signal       String   @db.Text  // The exact phrase or insight
-  signalType   String   // pain_point | emotional_phrase | frustration | objection | desire | trending_concern | question
-  painCategory String   // acne | hyperpigmentation | general | ai_growth_systems | etc.
+  signal       String   @db.Text // The exact phrase or insight
+  signalType   String // pain_point | emotional_phrase | frustration | objection | desire | trending_concern | question
+  painCategory String // acne | hyperpigmentation | general | ai_growth_systems | etc.
   source       String   @default("manual") // content | scraping | comment | lead | academy | crm | manual
-  frequency    Int      @default(1)         // how many times this signal has been observed
+  frequency    Int      @default(1) // how many times this signal has been observed
   isActive     Boolean  @default(true)
   notes        String?  @db.Text
   createdAt    DateTime @default(now())
@@ -947,43 +1014,43 @@ model PainSignalEntry {
 // Raw market signals ingested from TikTok, Instagram, Reddit, WhatsApp, Telegram, CRM.
 // Analyzed by AI to extract pain points, emotions, objections, desires, slang, and buying signals.
 model MarketSignal {
-  id                    String    @id @default(cuid())
-  source                String    // tiktok_comment | instagram_comment | reddit | whatsapp_reply | telegram_academy | crm_conversation | manual
-  sourceId              String?   // external ref: comment ID, lead ID, post URL, etc.
-  sourceUrl             String?
-  rawText               String    @db.Text
-  author                String?
-  postedAt              DateTime?
+  id        String    @id @default(cuid())
+  source    String // tiktok_comment | instagram_comment | reddit | whatsapp_reply | telegram_academy | crm_conversation | manual
+  sourceId  String? // external ref: comment ID, lead ID, post URL, etc.
+  sourceUrl String?
+  rawText   String    @db.Text
+  author    String?
+  postedAt  DateTime?
 
-  status                String    @default("pending") // pending | analyzed | failed | archived
+  status String @default("pending") // pending | analyzed | failed | archived
 
   // AI-extracted insights (all JSON string arrays)
-  analyzedAt            DateTime?
-  painPoints            Json?
-  emotionalLanguage     Json?
-  frustrations          Json?
-  objections            Json?
-  desires               Json?
-  urgencySignals        Json?
-  trustIssues           Json?
-  slang                 Json?
-  repeatedQuestions     Json?
-  buyingIntentDetected  Boolean   @default(false)
-  aiSummary             String?   @db.Text
+  analyzedAt           DateTime?
+  painPoints           Json?
+  emotionalLanguage    Json?
+  frustrations         Json?
+  objections           Json?
+  desires              Json?
+  urgencySignals       Json?
+  trustIssues          Json?
+  slang                Json?
+  repeatedQuestions    Json?
+  buyingIntentDetected Boolean   @default(false)
+  aiSummary            String?   @db.Text
 
   // Scores (0-100)
-  emotionalIntensity    Int       @default(0)
-  conversionPotential   Int       @default(0)
-  viralityPotential     Int       @default(0)
+  emotionalIntensity  Int @default(0)
+  conversionPotential Int @default(0)
+  viralityPotential   Int @default(0)
 
   // Classification
-  primarySignalType     String?   // pain_point | frustration | objection | desire | question | intent | neutral
-  audienceSegment       String?   // consumer | entrepreneur | brand_builder | unknown
-  nicheCategory         String?   // acne | hyperpigmentation | oily_skin | etc. | general
+  primarySignalType String? // pain_point | frustration | objection | desire | question | intent | neutral
+  audienceSegment   String? // consumer | entrepreneur | brand_builder | unknown
+  nicheCategory     String? // acne | hyperpigmentation | oily_skin | etc. | general
 
-  isActive              Boolean   @default(true)
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([source])
   @@index([status])
@@ -1002,7 +1069,7 @@ model SignalPhrase {
   id                     String   @id @default(cuid())
   phrase                 String   @db.Text
   normalizedPhrase       String   @db.Text
-  signalType             String   // pain_point | frustration | objection | desire | question | slang | urgency | trust_issue | emotional_language | intent
+  signalType             String // pain_point | frustration | objection | desire | question | slang | urgency | trust_issue | emotional_language | intent
   nicheCategory          String
   audienceSegment        String   @default("consumer")
   frequency              Int      @default(1)
@@ -1027,16 +1094,16 @@ model SignalPhrase {
 
 // Winning hooks library — saves high-performing hooks for reuse across multiple pieces.
 model WinningHook {
-  id             String   @id @default(cuid())
-  hook           String   @db.Text
-  platform       String   // tiktok | instagram_reel | facebook | whatsapp_status | all
-  pillar         String   // pain_point | academy | growth_os | authority | conversion_cta
-  painCategory   String   // acne | hyperpigmentation | ... | general
-  hookType       String   // question | statement | shock | story | contrarian
+  id              String   @id @default(cuid())
+  hook            String   @db.Text
+  platform        String // tiktok | instagram_reel | facebook | whatsapp_status | all
+  pillar          String // pain_point | academy | growth_os | authority | conversion_cta
+  painCategory    String // acne | hyperpigmentation | ... | general
+  hookType        String // question | statement | shock | story | contrarian
   performanceNote String? // "3.2k views, 47 leads" — admin notes on past performance
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([platform])
   @@index([pillar])
