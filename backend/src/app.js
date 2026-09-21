@@ -24,6 +24,7 @@ const contentIntelligenceRouter = require('./routes/contentIntelligence')
 const marketSignalsRouter = require('./routes/marketSignals')
 const assessmentRouter = require('./routes/assessment')
 const funnelEventsRouter = require('./routes/funnelEvents')
+const bundlesRouter = require('./routes/bundles')
 
 const app = express()
 
@@ -206,6 +207,9 @@ app.use('/api/assessment', assessmentRouter)
 
 // Funnel analytics — assessment + bundle event log
 app.use('/api/funnel', funnelEventsRouter)
+
+// Product bundles — public read, admin CRUD
+app.use('/api/bundles', bundlesRouter)
 
 // ─────────────────────────────────────────────────────────────
 // 404

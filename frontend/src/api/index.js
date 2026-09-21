@@ -1032,3 +1032,72 @@ export async function trackFunnelEvent(eventType, { leadId, sessionId, bundleId,
     // Analytics is non-blocking — swallow network errors silently
   }
 }
+
+// ── Product Bundles ────────────────────────────────────────────────────────────
+// Admin CRUD (protected) + one public read. A Bundle is a curated collection of
+// EXISTING SkincareProduct rows — the admin UI reuses fetchProducts() (already
+// defined above) as the product selector; there is no second product API.
+
+export async function fetchBundles(params = {}) {
+  return protectedFetch(`${BASE_URL}/api/bundles${buildQuery(params)}`)
+}
+
+export async function fetchBundle(id) {
+  return protectedFetch(`${BASE_URL}/api/bundles/${encodeURIComponent(id)}`)
+}
+
+export async function createBundle(payload) {
+  return protectedFetch(`${BASE_URL}/api/bundles`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updateBundle(id, payload) {
+  return protectedFetch(`${BASE_URL}/api/bundles/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function setBundleStatus(id, status) {
+  return protectedFetch(`${BASE_URL}/api/bundles/${encodeURIComponent(id)}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
+}
+
+export async function addBundleItem(id, productId) {
+  return protectedFetch(`${BASE_URL}/api/bundles/${encodeURIComponent(id)}/items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ productId }),
+  })
+}
+
+export async function removeBundleItem(id, itemId) {
+  return protectedFetch(`${BASE_URL}/api/bundles/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function reorderBundleItems(id, itemIds) {
+  return protectedFetch(`${BASE_URL}/api/bundles/${encodeURIComponent(id)}/items/reorder`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itemIds }),
+  })
+}
+
+/**
+ * Public — no auth cookie needed. Only ever returns a published bundle.
+ */
+export async function fetchPublicBundle(slug) {
+  const res = await fetch(`${BASE_URL}/api/bundles/public/${encodeURIComponent(slug)}`)
+  const data = await res.json()
+  if (!res.ok) throw data
+  return data
+}

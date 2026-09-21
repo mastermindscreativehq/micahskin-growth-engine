@@ -32,6 +32,7 @@ const ALLOWED_EVENT_TYPES = new Set([
   'bundle_contact_clicked',
   'bundle_checkout_started',
   'bundle_purchase_completed',
+  'bundle_assessment_clicked',
 ])
 
 async function logFunnelEvent({ eventType, leadId, sessionId, bundleId, value, metadata } = {}) {

@@ -258,7 +258,7 @@ model LeadSkinImage {
 }
 
 model SkincareProduct {
-  id                  String    @id @default(cuid())
+  id                  String       @id @default(cuid())
   productName         String
   normalizedName      String
   brand               String
@@ -267,33 +267,78 @@ model SkincareProduct {
   subcategory         String?
   concernsSupported   String[]
   skinTypesSupported  String[]
-  sensitivityFriendly Boolean   @default(false)
+  sensitivityFriendly Boolean      @default(false)
   routineStep         String
   description         String?
   keyIngredients      String[]
   contraindications   String[]
   price               Float?
-  currency            String    @default("NGN")
+  currency            String       @default("NGN")
   priceBand           String?
   purchaseUrl         String?
   imageUrl            String?
-  sourceStore         String    @default("manual")
-  sourceType          String    @default("manual")
-  country             String    @default("NG")
-  market              String    @default("nigeria")
-  availabilityStatus  String    @default("available")
-  stockStatus         String    @default("in_stock")
-  confidenceScore     Float?    @default(1.0)
+  sourceStore         String       @default("manual")
+  sourceType          String       @default("manual")
+  country             String       @default("NG")
+  market              String       @default("nigeria")
+  availabilityStatus  String       @default("available")
+  stockStatus         String       @default("in_stock")
+  confidenceScore     Float?       @default(1.0)
   lastCheckedAt       DateTime?
-  isActive            Boolean   @default(true)
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  isActive            Boolean      @default(true)
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  bundleItems         BundleItem[]
 
   @@unique([normalizedName, normalizedBrand, sourceStore])
   @@index([category])
   @@index([priceBand])
   @@index([isActive])
   @@map("skincare_products")
+}
+
+// Product Bundle System (Phase 2) — a Bundle is a curated collection of EXISTING
+// SkincareProduct rows. It is never a second product catalog: BundleItem only
+// stores a productId FK + display position, never denormalized product data.
+// Bundle.price is fixed and admin-set — never calculated from item prices.
+model Bundle {
+  id             String       @id @default(cuid())
+  title          String
+  slug           String       @unique
+  description    String?
+  concern        String?
+  skinTypes      String[]     @default([])
+  price          Float
+  compareAtPrice Float?
+  currency       String       @default("NGN")
+  // draft | published | archived
+  status         String       @default("draft")
+  heroImageUrl   String?
+  ctaText        String?
+  contactCtaText String?
+  seoTitle       String?
+  seoDescription String?
+  publishedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  items          BundleItem[]
+
+  @@index([status])
+  @@map("bundles")
+}
+
+model BundleItem {
+  id        String          @id @default(cuid())
+  bundleId  String
+  productId String
+  position  Int             @default(0)
+  bundle    Bundle          @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  product   SkincareProduct @relation(fields: [productId], references: [id])
+
+  @@unique([bundleId, productId])
+  @@index([bundleId])
+  @@index([productId])
+  @@map("bundle_items")
 }
 
 model ProductIngestionLog {

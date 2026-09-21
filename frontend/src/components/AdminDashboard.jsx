@@ -36,6 +36,7 @@ import CommandCenterPanel from './CommandCenterPanel.jsx'
 import OutreachQueuePanel from './OutreachQueuePanel.jsx'
 import ContentIntelligencePanel from './ContentIntelligencePanel.jsx'
 import MarketSignalsPanel from './MarketSignalsPanel.jsx'
+import BundlesPanel from './BundlesPanel.jsx'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -3685,6 +3686,7 @@ const TABS = [
   { id: 'academy',   label: 'Academy' },
   { id: 'scraping',  label: 'Scraping' },
   { id: 'products',  label: 'Products' },
+  { id: 'bundles',   label: 'Bundles' },
   { id: 'content',   label: 'Content Intel' },
   { id: 'market',    label: 'Market Signals' },
 ]
@@ -3746,6 +3748,7 @@ export default function AdminDashboard({ onBack, onLogout }) {
         {activeTab === 'academy'   && <AcademyTab />}
         {activeTab === 'scraping'  && <ScrapingTab />}
         {activeTab === 'products'  && <ProductsTab />}
+        {activeTab === 'bundles'   && <BundlesPanel />}
         {activeTab === 'content'   && <ContentIntelligencePanel />}
         {activeTab === 'market'    && <MarketSignalsPanel />}
       </main>
