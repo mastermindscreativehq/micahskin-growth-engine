@@ -2,15 +2,14 @@
 
 const prisma = require("../lib/prisma");
 const { sendTelegramToUser } = require("./telegramService");
+const { requireAssessmentPayment } = require("./assessmentPaymentService");
 
 const LEAD_BOT_TOKEN = process.env.TELEGRAM_LEAD_BOT_TOKEN;
 const MAX_IMAGES = 5;
 
 const REVIEW_IN_PROGRESS_MSG =
   "Thank you for sharing your details and photos.\n\n" +
-  "Our skincare specialist is reviewing your skin condition carefully.\n" +
-  "We take this step seriously to avoid recommending the wrong treatment.\n\n" +
-  "You will receive your personalized diagnosis shortly.";
+  "One last step — check the next message to unlock your personalized skin assessment.";
 
 /**
  * Resolves a Telegram file_id to a downloadable URL via the getFile API.
@@ -118,12 +117,13 @@ async function handleIncomingPhoto(message, lead, chatId) {
     await sendTelegramToUser(chatId, REVIEW_IN_PROGRESS_MSG, LEAD_BOT_TOKEN)
       .catch(function(err) { console.error("[ImageUpload] max confirmation send failed:", err.message); });
 
-    // Build diagnosis data async — Action Engine sends it later after the delay
-    console.log("[Diagnosis] waiting_for_image_review | leadId=" + lead.id);
-    const { diagnoseLead } = require("./diagnosisEngineService");
+    // Intake is complete — a ₦10,000 payment gate now sits between here and
+    // diagnoseLead(). requireAssessmentPayment() sends the Paystack link; the
+    // webhook calls diagnoseLead() unchanged once payment is verified.
+    console.log("[Diagnosis] awaiting_assessment_payment | leadId=" + lead.id);
     setImmediate(function() {
-      diagnoseLead(lead.id).catch(function(err) {
-        console.error("[ImageUpload] diagnoseLead failed for lead " + lead.id + ":", err.message);
+      requireAssessmentPayment(lead.id, chatId).catch(function(err) {
+        console.error("[ImageUpload] assessment payment gate failed for lead " + lead.id + ":", err.message);
       });
     });
 

@@ -925,97 +925,10 @@ export async function fetchTopPhrases(type = 'pain_point', limit = 20) {
   return protectedFetch(`${BASE_URL}/api/market-signals/phrases?type=${type}&limit=${limit}`)
 }
 
-// ── Paid Personalized Skin Assessment ─────────────────────────────────────────
-// All public — no auth cookie needed. Identity is scoped by sessionId (only
-// handed to the browser that created it) for in-progress steps, and by the
-// unguessable accessToken for reading results.
-
-export async function fetchAssessmentConfig() {
-  const res = await fetch(`${BASE_URL}/api/assessment/config`)
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
-}
-
-export async function startAssessment() {
-  const res = await fetch(`${BASE_URL}/api/assessment/start`, { method: 'POST' })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
-}
-
-export async function fetchAssessmentSession(sessionId) {
-  const res = await fetch(`${BASE_URL}/api/assessment/session/${encodeURIComponent(sessionId)}`)
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
-}
-
-export async function saveAssessmentIntake(sessionId, answers) {
-  const res = await fetch(`${BASE_URL}/api/assessment/${encodeURIComponent(sessionId)}/intake`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers }),
-  })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
-}
-
-export async function completeAssessmentIntake(sessionId, { fullName, email, phone, answers }) {
-  const res = await fetch(`${BASE_URL}/api/assessment/${encodeURIComponent(sessionId)}/complete-intake`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fullName, email, phone, answers }),
-  })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
-}
-
-export async function initializeAssessmentPayment(sessionId) {
-  const res = await fetch(`${BASE_URL}/api/assessment/${encodeURIComponent(sessionId)}/pay`, { method: 'POST' })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
-}
-
-export async function retryAssessmentPayment(sessionId) {
-  const res = await fetch(`${BASE_URL}/api/assessment/${encodeURIComponent(sessionId)}/retry-payment`, { method: 'POST' })
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
-}
-
-/**
- * Best-effort — never throws. Lets the frontend explicitly record a
- * cancelled/failed checkout when it knows the sessionId (same-browser resume).
- */
-export async function reportAssessmentPaymentFailed(sessionId, reason) {
-  try {
-    await fetch(`${BASE_URL}/api/assessment/${encodeURIComponent(sessionId)}/payment-failed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason }),
-    })
-  } catch {
-    // Best-effort — swallow network errors silently
-  }
-}
-
-/**
- * Public, accessToken-gated read of assessment status/results.
- * Only ever returns full results once the backend has verified payment and
- * finished analysis — never trust a frontend "paid" flag instead of this.
- */
-export async function fetchAssessmentResult(accessToken) {
-  const res = await fetch(`${BASE_URL}/api/assessment/result/${encodeURIComponent(accessToken)}`)
-  const data = await res.json()
-  if (!res.ok) throw data
-  return data
-}
-
 // ── Funnel Analytics (assessment + bundle) ────────────────────────────────────
+// The personalized skin assessment itself lives entirely inside the existing
+// Telegram flow — there is no public web assessment API. This tracker is kept
+// dormant for future use (e.g. Phase 2 bundle pages).
 
 /**
  * Record a funnel event. Best-effort — never throws.

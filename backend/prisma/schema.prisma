@@ -212,7 +212,6 @@ model Lead {
   deepConsultations   DeepConsultation[]
   followUpLogs        FollowUpLog[]
   timeline            LeadTimeline[]
-  assessmentSessions  AssessmentSession[]
   funnelEvents        FunnelEvent[]
 
   @@index([funnelType])
@@ -689,31 +688,28 @@ model academy_invites {
 }
 
 model PaymentTransaction {
-  id                  String             @id @default(cuid())
-  leadId              String
-  quoteId             String?
+  id                String            @id @default(cuid())
+  leadId            String
+  quoteId           String?
   // Payment purpose — kept generic so this table can back every Paystack use case.
   // "product_quote" preserves the historical default for existing rows.
   // skin_assessment | product_quote (add new purposes here, never repurpose an existing value)
-  type                String             @default("product_quote")
-  assessmentSessionId String?
-  paystackReference   String             @unique
-  amount              Float
-  currency            String             @default("NGN")
-  status              String             @default("success")
-  channel             String?
-  paidAt              DateTime?
-  rawPayload          Json?
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
-  lead                Lead               @relation(fields: [leadId], references: [id])
-  quote               ProductQuote?      @relation(fields: [quoteId], references: [id])
-  assessmentSession   AssessmentSession? @relation(fields: [assessmentSessionId], references: [id])
-  fulfillmentOrder    FulfillmentOrder?
+  type              String            @default("product_quote")
+  paystackReference String            @unique
+  amount            Float
+  currency          String            @default("NGN")
+  status            String            @default("success")
+  channel           String?
+  paidAt            DateTime?
+  rawPayload        Json?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  lead              Lead              @relation(fields: [leadId], references: [id])
+  quote             ProductQuote?     @relation(fields: [quoteId], references: [id])
+  fulfillmentOrder  FulfillmentOrder?
 
   @@index([leadId])
   @@index([quoteId])
-  @@index([assessmentSessionId])
   @@map("payment_transactions")
 }
 
@@ -740,43 +736,6 @@ model FulfillmentOrder {
   @@index([leadId])
   @@index([status])
   @@map("fulfillment_orders")
-}
-
-// Paid Personalized Skin Assessment — ₦10,000 (config: backend/src/config/assessmentConfig.js).
-// This fee is a standalone commercial transaction. It has no relationship to product
-// pricing/credit — never derive a discount or credit from it.
-//
-// status lifecycle:
-// started -> intake_in_progress -> intake_completed -> payment_required ->
-// payment_initialized -> payment_success -> unlocked -> analysis_processing -> results_ready
-// (failure/abandonment: payment_failed | abandoned — never reachable from unlocked/results_ready)
-model AssessmentSession {
-  id                   String               @id @default(cuid())
-  // Opaque, unguessable identifier used in the public results URL — never expose `id` itself.
-  accessToken          String               @unique @default(uuid())
-  leadId               String?
-  fullName             String?
-  email                String?
-  phone                String?
-  status               String               @default("started")
-  intakeAnswers        Json?
-  intakeCompletedAt    DateTime?
-  paystackReference    String?              @unique
-  paymentInitializedAt DateTime?
-  paidAt               DateTime?
-  unlockedAt           DateTime?
-  analysisStartedAt    DateTime?
-  resultsReadyAt       DateTime?
-  abandonedAt          DateTime?
-  failureReason        String?
-  createdAt            DateTime             @default(now())
-  updatedAt            DateTime             @updatedAt
-  lead                 Lead?                @relation(fields: [leadId], references: [id])
-  paymentTransactions  PaymentTransaction[]
-
-  @@index([leadId])
-  @@index([status])
-  @@map("assessment_sessions")
 }
 
 model FlowEventLog {

@@ -321,7 +321,6 @@ function buildRecommendedReply(lead, primaryConcern, nextBestAction) {
 // ── Determine diagnosis source ────────────────────────────────────────────────
 
 function inferDiagnosisSource(lead) {
-  if (lead.sourceType === 'web_assessment') return 'web_assessment_paid'
   if (lead.telegramStage === 'intake_complete') return 'telegram_intake'
   if (lead.sourceType === 'comment') return 'instagram_comment'
   if (lead.telegramStarted) return 'telegram_partial'

@@ -1,7 +1,7 @@
 'use strict'
 
 const prisma = require('../lib/prisma')
-const { diagnoseLead } = require('./diagnosisEngineService')
+const { requireAssessmentPayment } = require('./assessmentPaymentService')
 
 const DIAGNOSIS_DELAY_MINUTES = parseInt(process.env.DIAGNOSIS_DELAY_MINUTES || '10', 10)
 
@@ -254,21 +254,21 @@ async function handleTelegramMessage(userId, text) {
           })
 
           console.log(`[ImageUpload] skipped | leadId=${lead.id} photosBeforeSkip=${lead.imageUploadCount || 0}`)
-          console.log(`[Diagnosis] waiting_for_image_review | leadId=${lead.id}`)
+          console.log(`[Diagnosis] awaiting_assessment_payment | leadId=${lead.id}`)
 
-          // Build diagnosis data now — Action Engine sends it after the delay
+          // Intake is complete — a ₦10,000 payment gate now sits between here and
+          // diagnoseLead(). requireAssessmentPayment() sends the Paystack link;
+          // the webhook calls diagnoseLead() unchanged once payment is verified.
           setImmediate(() => {
-            diagnoseLead(lead.id).catch(err =>
-              console.error(`[Intake] diagnosis build failed for lead ${lead.id}:`, err.message)
+            requireAssessmentPayment(lead.id, userId).catch(err =>
+              console.error(`[Intake] assessment payment gate failed for lead ${lead.id}:`, err.message)
             )
           })
         }
 
         return (
           'Thank you for sharing your details.\n\n' +
-          'Our skincare specialist is reviewing your skin condition carefully.\n' +
-          'We take this step seriously to avoid recommending the wrong treatment.\n\n' +
-          "You'll receive your personalized diagnosis shortly."
+          "One last step — check the next message to unlock your personalized skin assessment."
         )
       }
 

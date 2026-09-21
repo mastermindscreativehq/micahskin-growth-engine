@@ -12,8 +12,6 @@ import TermsOfServicePage from './pages/TermsOfServicePage.jsx'
 import ContactPage from './pages/ContactPage.jsx'
 import AcademyPage from './pages/AcademyPage.jsx'
 import AcademySuccessPage from './pages/AcademySuccessPage.jsx'
-import AssessmentPage from './pages/AssessmentPage.jsx'
-import AssessmentResultPage from './pages/AssessmentResultPage.jsx'
 import BundlePage from './pages/BundlePage.jsx'
 import { checkAdminSession, logoutAdmin } from './api/index.js'
 
@@ -181,8 +179,6 @@ export default function App() {
         <Route path="/" element={<Layout><HomeView /></Layout>} />
         <Route path="/academy" element={<Layout><AcademyPage /></Layout>} />
         <Route path="/academy/success" element={<Layout><AcademySuccessPage /></Layout>} />
-        <Route path="/assessment" element={<Layout><AssessmentPage /></Layout>} />
-        <Route path="/assessment/result" element={<Layout><AssessmentResultPage /></Layout>} />
         <Route path="/bundles/:slug" element={<Layout><BundlePage /></Layout>} />
         <Route path="/privacy-policy" element={<Layout><PrivacyPolicyPage /></Layout>} />
         <Route path="/terms-of-service" element={<Layout><TermsOfServicePage /></Layout>} />

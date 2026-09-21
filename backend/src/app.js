@@ -22,7 +22,6 @@ const adminRouter        = require('./routes/admin')
 const mceRouter          = require('./routes/mce')
 const contentIntelligenceRouter = require('./routes/contentIntelligence')
 const marketSignalsRouter = require('./routes/marketSignals')
-const assessmentRouter = require('./routes/assessment')
 const funnelEventsRouter = require('./routes/funnelEvents')
 const bundlesRouter = require('./routes/bundles')
 
@@ -201,9 +200,6 @@ app.use('/api/content', contentIntelligenceRouter)
 
 // Comment Intelligence Pipeline — audience psychology ingestion and analysis
 app.use('/api/market-signals', marketSignalsRouter)
-
-// Paid Personalized Skin Assessment — public intake + payment gate + results
-app.use('/api/assessment', assessmentRouter)
 
 // Funnel analytics — assessment + bundle event log
 app.use('/api/funnel', funnelEventsRouter)

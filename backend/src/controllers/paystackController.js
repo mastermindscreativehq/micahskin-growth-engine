@@ -5,7 +5,7 @@ const https  = require('https')
 const prisma = require('../lib/prisma')
 const { processPaidEnrollment } = require('../services/academyOnboardingService')
 const { sendTelegramToUser }    = require('../services/telegramService')
-const { handleAssessmentWebhookPayment } = require('../services/assessmentService')
+const { handleAssessmentPaymentWebhook } = require('../services/assessmentPaymentService')
 const { ASSESSMENT_PAYMENT_TYPE } = require('../config/assessmentConfig')
 
 const LEAD_BOT_TOKEN = process.env.TELEGRAM_LEAD_BOT_TOKEN
@@ -369,7 +369,7 @@ async function paystackWebhook(req, res) {
     if (type === 'product_quote') {
       await handleProductQuotePayment(event)
     } else if (type === ASSESSMENT_PAYMENT_TYPE) {
-      await handleAssessmentWebhookPayment(event)
+      await handleAssessmentPaymentWebhook(event)
     } else {
       // Academy payment — leadId here is AcademyRegistration.id
       const leadId = metadata.leadId
