@@ -285,6 +285,12 @@ model SkincareProduct {
   confidenceScore     Float?       @default(1.0)
   lastCheckedAt       DateTime?
   isActive            Boolean      @default(true)
+  // Draft/review lifecycle for ingested products (n8n/external sources).
+  // Manual admin creation continues to default straight to "approved" — no
+  // behavior change for the existing manual flow. isActive stays the single
+  // gate consumed by productMatchService.js/bundleService.js — unchanged.
+  // pending_review | approved | rejected
+  reviewStatus        String       @default("approved")
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   bundleItems         BundleItem[]
@@ -293,6 +299,7 @@ model SkincareProduct {
   @@index([category])
   @@index([priceBand])
   @@index([isActive])
+  @@index([reviewStatus])
   @@map("skincare_products")
 }
 

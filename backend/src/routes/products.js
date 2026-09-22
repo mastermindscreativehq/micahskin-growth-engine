@@ -8,6 +8,8 @@ const {
   createProduct,
   updateProduct,
   deactivateProduct,
+  reviewProduct,
+  uploadImage,
   ingestManual,
   listIngestionLogs,
   matchForLead,
@@ -44,5 +46,7 @@ router.post('/',      createProduct)
 router.get('/:id',    getProduct)
 router.patch('/:id',  updateProduct)
 router.delete('/:id', deactivateProduct)
+router.patch('/:id/review', reviewProduct)
+router.post('/:id/image',   uploadImage)
 
 module.exports = router

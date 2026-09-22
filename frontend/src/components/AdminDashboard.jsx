@@ -24,6 +24,8 @@ import {
   createProduct,
   updateProduct,
   deactivateProduct,
+  reviewProduct,
+  uploadProductImage,
   ingestManualProducts,
   fetchIngestionLogs,
   updateLeadFlow,
@@ -3283,15 +3285,21 @@ const CATEGORY_OPTIONS = [
   '', 'cleanser', 'toner', 'serum', 'moisturizer', 'sunscreen',
   'spot_treatment', 'oil', 'exfoliant', 'mask', 'body', 'other',
 ]
+// Mirrors the canonical concept list in backend/src/config/skinTaxonomy.js —
+// the centralized taxonomy module. Kept as a plain hardcoded array here to
+// match this codebase's existing convention (CATEGORY_OPTIONS etc. are all
+// hardcoded per-file, not fetched from an API).
 const CONCERN_OPTIONS = [
-  '', 'acne', 'hyperpigmentation', 'dry_skin', 'oily_skin',
-  'sensitivity', 'stretch_marks', 'body_care', 'routine_building',
+  '', 'acne', 'hyperpigmentation', 'dry_skin', 'oily_skin', 'sensitivity',
+  'eczema', 'damaged_barrier', 'fine_lines', 'wrinkles', 'dullness',
+  'uneven_texture', 'large_pores', 'blackheads', 'whiteheads', 'sun_damage',
+  'keratosis_pilaris', 'body_care', 'stretch_marks', 'routine_building',
 ]
 const PRICE_BAND_OPTIONS = ['', 'budget', 'mid-range', 'premium']
 
 const BLANK_PRODUCT = {
   productName: '', brand: '', category: '', subcategory: '',
-  concernsSupported: '', skinTypesSupported: '',
+  concernsSupported: [], skinTypesSupported: '',
   sensitivityFriendly: false, routineStep: '',
   description: '', keyIngredients: '', contraindications: '',
   price: '', currency: 'NGN', purchaseUrl: '', imageUrl: '',
@@ -3299,12 +3307,42 @@ const BLANK_PRODUCT = {
   availabilityStatus: 'available', stockStatus: 'in_stock',
 }
 
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result || ''
+      const commaIdx = result.indexOf(',')
+      resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result)
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 function ProductFormModal({ onClose, onSaved }) {
   const [form,    setForm]    = useState(BLANK_PRODUCT)
   const [saving,  setSaving]  = useState(false)
   const [err,     setErr]     = useState(null)
+  // After a successful create, offer an inline image-upload step instead of
+  // immediately closing — reuses the existing single modal, no second
+  // "edit product" screen needed.
+  const [createdProduct, setCreatedProduct] = useState(null)
+  const [imgFile, setImgFile] = useState(null)
+  const [imgPreview, setImgPreview] = useState(null)
+  const [uploadingImg, setUploadingImg] = useState(false)
+  const [imgErr, setImgErr] = useState(null)
 
   function set(key, val) { setForm(f => ({ ...f, [key]: val })) }
+
+  function toggleConcern(c) {
+    setForm(f => ({
+      ...f,
+      concernsSupported: f.concernsSupported.includes(c)
+        ? f.concernsSupported.filter(x => x !== c)
+        : [...f.concernsSupported, c],
+    }))
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -3318,18 +3356,47 @@ function ProductFormModal({ onClose, onSaved }) {
       const payload = {
         ...form,
         price:              form.price ? Number(form.price) : null,
-        concernsSupported:  form.concernsSupported.split(',').map(s => s.trim()).filter(Boolean),
+        concernsSupported:  form.concernsSupported,
         skinTypesSupported: form.skinTypesSupported.split(',').map(s => s.trim()).filter(Boolean),
         keyIngredients:     form.keyIngredients.split(',').map(s => s.trim()).filter(Boolean),
         contraindications:  form.contraindications.split(',').map(s => s.trim()).filter(Boolean),
       }
-      await createProduct(payload)
+      const res = await createProduct(payload)
       onSaved()
-      onClose()
+      // Move to the optional image-upload step instead of closing immediately.
+      setCreatedProduct(res.data)
     } catch (e) {
       setErr(e?.message || 'Save failed')
     } finally {
       setSaving(false)
+    }
+  }
+
+  function handleFileChange(e) {
+    const file = e.target.files?.[0] || null
+    setImgFile(file)
+    setImgErr(null)
+    if (file) setImgPreview(URL.createObjectURL(file))
+    else setImgPreview(null)
+  }
+
+  async function handleUploadImage(productId) {
+    if (!imgFile) return
+    setUploadingImg(true)
+    setImgErr(null)
+    try {
+      const dataBase64 = await fileToBase64(imgFile)
+      await uploadProductImage(productId, {
+        filename: imgFile.name,
+        contentType: imgFile.type,
+        dataBase64,
+      })
+      onSaved()
+      onClose()
+    } catch (e) {
+      setImgErr(e?.message || 'Image upload failed')
+    } finally {
+      setUploadingImg(false)
     }
   }
 
@@ -3354,6 +3421,42 @@ function ProductFormModal({ onClose, onSaved }) {
       )}
     </div>
   )
+
+  // Step 2 — product was created, offer an optional image upload before closing.
+  if (createdProduct) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="w-full max-w-md rounded-xl bg-white shadow-xl overflow-y-auto max-h-[90vh]">
+          <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+            <p className="font-semibold text-gray-800 text-sm">✓ {createdProduct.productName} added</p>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg">×</button>
+          </div>
+          <div className="p-4 space-y-3">
+            <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Upload Product Image (optional)</label>
+            {imgPreview && (
+              <img src={imgPreview} alt="Preview" className="h-24 w-24 rounded object-cover border border-gray-200" />
+            )}
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handleFileChange}
+              className="w-full text-xs" />
+            <p className="text-[10px] text-gray-400">Or paste an Image URL directly on the product later via Edit — the plain URL field still works too.</p>
+            {imgErr && <p className="text-xs text-red-500">{imgErr}</p>}
+            <div className="flex items-center justify-end gap-2 border-t border-gray-100 pt-3">
+              <button type="button" onClick={onClose} className="rounded border border-gray-200 px-4 py-1.5 text-xs text-gray-500 hover:bg-gray-50">
+                Skip
+              </button>
+              <button
+                type="button" disabled={!imgFile || uploadingImg}
+                onClick={() => handleUploadImage(createdProduct.id)}
+                className="rounded bg-teal-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+              >
+                {uploadingImg ? 'Uploading…' : 'Upload & Done'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
@@ -3380,9 +3483,18 @@ function ProductFormModal({ onClose, onSaved }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Concerns (comma-separated)</label>
-              <input value={form.concernsSupported} onChange={e => set('concernsSupported', e.target.value)} placeholder="acne, hyperpigmentation…" className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-teal-300" />
-              <p className="text-[10px] text-gray-400 mt-0.5">Options: acne, hyperpigmentation, dry_skin, oily_skin, sensitivity, stretch_marks, body_care</p>
+              <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Concerns</label>
+              <div className="flex flex-wrap gap-1.5">
+                {CONCERN_OPTIONS.slice(1).map(c => (
+                  <button
+                    key={c} type="button" onClick={() => toggleConcern(c)}
+                    className={`rounded px-1.5 py-0.5 text-[10px] capitalize border ${form.concernsSupported.includes(c) ? 'bg-teal-600 text-white border-teal-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+                  >
+                    {c.replace(/_/g, ' ')}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">Canonical concerns — aliases (e.g. "dark spots") normalize to these automatically elsewhere in the app.</p>
             </div>
             <div>
               <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Skin Types (comma-separated)</label>
@@ -3430,6 +3542,14 @@ function ProductFormModal({ onClose, onSaved }) {
   )
 }
 
+// Active | Drafts | Inactive — maps to the status/reviewStatus query params
+// already supported by GET /api/products.
+const VIEW_FILTERS = [
+  { id: 'active',   label: 'Active',   params: { status: 'active' } },
+  { id: 'drafts',   label: 'Drafts',   params: { status: 'all', reviewStatus: 'pending_review' } },
+  { id: 'inactive', label: 'Inactive', params: { status: 'inactive' } },
+]
+
 function ProductsTab() {
   const [products, setProducts] = useState([])
   const [logs,     setLogs]     = useState([])
@@ -3438,12 +3558,14 @@ function ProductsTab() {
   const [catFilter, setCatFilter] = useState('')
   const [concernFilter, setConcernFilter] = useState('')
   const [priceBandFilter, setPriceBandFilter] = useState('')
+  const [viewFilter, setViewFilter] = useState('active')
   const [page,     setPage]     = useState(1)
   const [total,    setTotal]    = useState(0)
   const [showForm, setShowForm] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
   const [toast,    setToast]    = useState(null)
   const [deactivating, setDeactivating] = useState(null)
+  const [reviewing, setReviewing] = useState(null)
   const LIMIT = 20
 
   function showToast(msg, ok = true) {
@@ -3453,14 +3575,15 @@ function ProductsTab() {
 
   const load = useCallback(() => {
     setLoading(true)
-    fetchProducts({ search, category: catFilter, concern: concernFilter, priceBand: priceBandFilter, page, limit: LIMIT })
+    const viewParams = VIEW_FILTERS.find(v => v.id === viewFilter)?.params || {}
+    fetchProducts({ search, category: catFilter, concern: concernFilter, priceBand: priceBandFilter, page, limit: LIMIT, ...viewParams })
       .then(res => { setProducts(res.data || []); setTotal(res.total || 0) })
       .catch(e => showToast(e?.message || 'Failed to load products', false))
       .finally(() => setLoading(false))
-  }, [search, catFilter, concernFilter, priceBandFilter, page])
+  }, [search, catFilter, concernFilter, priceBandFilter, viewFilter, page])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(1) }, [search, catFilter, concernFilter, priceBandFilter])
+  useEffect(() => { setPage(1) }, [search, catFilter, concernFilter, priceBandFilter, viewFilter])
 
   async function handleDeactivate(id, name) {
     if (!window.confirm(`Deactivate "${name}"? It will no longer appear in matches.`)) return
@@ -3473,6 +3596,19 @@ function ProductsTab() {
       showToast(e?.message || 'Deactivate failed', false)
     } finally {
       setDeactivating(null)
+    }
+  }
+
+  async function handleReview(id, name, action) {
+    setReviewing(id)
+    try {
+      await reviewProduct(id, action)
+      showToast(`${name} ${action === 'approve' ? 'approved' : 'rejected'}`)
+      load()
+    } catch (e) {
+      showToast(e?.message || 'Review action failed', false)
+    } finally {
+      setReviewing(null)
     }
   }
 
@@ -3518,6 +3654,19 @@ function ProductsTab() {
         </div>
       )}
 
+      {/* View tabs — Active / Drafts / Inactive */}
+      <div className="flex gap-1">
+        {VIEW_FILTERS.map(v => (
+          <button
+            key={v.id}
+            onClick={() => setViewFilter(v.id)}
+            className={`rounded-full px-3 py-1 text-xs font-medium ${viewFilter === v.id ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
+
       {/* Filters */}
       <div className="flex flex-wrap gap-2">
         <input
@@ -3545,6 +3694,7 @@ function ProductsTab() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+              <th className="px-4 py-3">Image</th>
               <th className="px-4 py-3">Product</th>
               <th className="px-4 py-3">Brand</th>
               <th className="px-4 py-3">Category</th>
@@ -3552,22 +3702,28 @@ function ProductsTab() {
               <th className="px-4 py-3">Price</th>
               <th className="px-4 py-3">Band</th>
               <th className="px-4 py-3">Stock</th>
+              <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3"></th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-xs text-gray-400">Loading…</td></tr>
+              <tr><td colSpan={10} className="px-4 py-8 text-center text-xs text-gray-400">Loading…</td></tr>
             )}
             {!loading && products.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">
-                  No products yet — click "+ Add Product" to add your first.
+                <td colSpan={10} className="px-4 py-8 text-center text-sm text-gray-400">
+                  {viewFilter === 'active' ? 'No products yet — click "+ Add Product" to add your first.' : `No ${viewFilter} products.`}
                 </td>
               </tr>
             )}
             {!loading && products.map(p => (
               <tr key={p.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
+                <td className="px-4 py-2.5">
+                  {p.imageUrl
+                    ? <img src={p.imageUrl} alt="" className="h-9 w-9 rounded object-cover" />
+                    : <span className="h-9 w-9 rounded bg-gray-100 inline-block" />}
+                </td>
                 <td className="px-4 py-2.5">
                   <p className="font-medium text-gray-800 text-xs">{p.productName}</p>
                   {p.sensitivityFriendly && (
@@ -3609,14 +3765,43 @@ function ProductsTab() {
                     'bg-gray-100 text-gray-500'
                   }`}>{(p.stockStatus || '').replace(/_/g, ' ')}</span>
                 </td>
-                <td className="px-4 py-2.5 text-right">
-                  <button
-                    disabled={deactivating === p.id}
-                    onClick={() => handleDeactivate(p.id, p.productName)}
-                    className="text-[10px] text-red-500 hover:underline disabled:opacity-40"
-                  >
-                    {deactivating === p.id ? '…' : 'Remove'}
-                  </button>
+                <td className="px-4 py-2.5">
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${
+                    p.reviewStatus === 'pending_review' ? 'bg-amber-50 text-amber-600' :
+                    p.reviewStatus === 'rejected' ? 'bg-red-50 text-red-600' :
+                    'bg-gray-50 text-gray-400'
+                  }`}>{(p.reviewStatus || 'approved').replace(/_/g, ' ')}</span>
+                  {!p.isActive && p.reviewStatus === 'approved' && (
+                    <span className="block text-[9px] text-gray-400 mt-0.5">deactivated</span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                  {p.reviewStatus === 'pending_review' ? (
+                    <>
+                      <button
+                        disabled={reviewing === p.id}
+                        onClick={() => handleReview(p.id, p.productName, 'approve')}
+                        className="text-[10px] text-teal-600 hover:underline disabled:opacity-40 mr-2"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        disabled={reviewing === p.id}
+                        onClick={() => handleReview(p.id, p.productName, 'reject')}
+                        className="text-[10px] text-red-500 hover:underline disabled:opacity-40"
+                      >
+                        Reject
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      disabled={deactivating === p.id}
+                      onClick={() => handleDeactivate(p.id, p.productName)}
+                      className="text-[10px] text-red-500 hover:underline disabled:opacity-40"
+                    >
+                      {deactivating === p.id ? '…' : 'Remove'}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

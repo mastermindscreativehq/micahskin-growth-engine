@@ -5,6 +5,7 @@ const { upsertProduct, runIngestion } = require('../services/productIngestionSer
 const { createManualAdapter } = require('../services/adapters/manualProductAdapter')
 const { matchProductsForLeadId } = require('../services/productMatchService')
 const { sendTelegramMessage }    = require('../services/telegramService')
+const { uploadProductImage }    = require('../services/productImageService')
 const {
   generateQuoteForLead,
   updateQuoteItem,
@@ -15,13 +16,22 @@ const {
   sendDiagnosisAndQuote,
 } = require('../services/productQuoteService')
 
+const VALID_REVIEW_STATUSES = ['pending_review', 'approved', 'rejected']
+
 // ── Catalog ────────────────────────────────────────────────────────────────────
 
 async function listProducts(req, res) {
   try {
-    const { category, concern, priceBand, market, search, page = 1, limit = 50 } = req.query
+    const { category, concern, priceBand, market, search, page = 1, limit = 50, status, reviewStatus } = req.query
 
-    const where = { isActive: true }
+    // Default behavior UNCHANGED — active-only — unless the caller explicitly
+    // asks for drafts/inactive/all (used by the new admin Drafts/Inactive tabs).
+    const where = {}
+    if (status === 'inactive') where.isActive = false
+    else if (status === 'all') { /* no isActive filter */ }
+    else where.isActive = true
+
+    if (reviewStatus && VALID_REVIEW_STATUSES.includes(reviewStatus)) where.reviewStatus = reviewStatus
     if (category) where.category = category
     if (priceBand) where.priceBand = priceBand
     if (market)   where.market = market
@@ -57,8 +67,8 @@ async function getProduct(req, res) {
 
 async function createProduct(req, res) {
   try {
-    const result = await upsertProduct(req.body)
-    res.status(201).json({ success: true, data: { result } })
+    const { status, product } = await upsertProduct(req.body)
+    res.status(201).json({ success: true, data: product, result: status })
   } catch (err) {
     console.error('[Products] createProduct:', err.message)
     res.status(400).json({ success: false, message: err.message })
@@ -86,6 +96,47 @@ async function deactivateProduct(req, res) {
     res.json({ success: true, message: 'Product deactivated' })
   } catch (err) {
     res.status(400).json({ success: false, message: err.message })
+  }
+}
+
+// ── Draft review (n8n-ingested products) ──────────────────────────────────────
+
+async function reviewProduct(req, res) {
+  try {
+    const { action } = req.body || {}
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ success: false, message: "action must be 'approve' or 'reject'" })
+    }
+
+    const product = await prisma.skincareProduct.findUnique({ where: { id: req.params.id } })
+    if (!product) return res.status(404).json({ success: false, message: 'Product not found' })
+
+    const updated = await prisma.skincareProduct.update({
+      where: { id: req.params.id },
+      data: action === 'approve'
+        ? { reviewStatus: 'approved', isActive: true }
+        : { reviewStatus: 'rejected', isActive: false },
+    })
+
+    console.log(`[Products] review | id=${updated.id} action=${action} reviewStatus=${updated.reviewStatus}`)
+    res.json({ success: true, data: updated })
+  } catch (err) {
+    console.error('[Products] reviewProduct:', err.message)
+    res.status(400).json({ success: false, message: err.message })
+  }
+}
+
+// ── Image upload ───────────────────────────────────────────────────────────────
+
+async function uploadImage(req, res) {
+  try {
+    const { filename, contentType, dataBase64 } = req.body || {}
+    const updated = await uploadProductImage(req.params.id, { filename, contentType, dataBase64 })
+    res.json({ success: true, data: updated })
+  } catch (err) {
+    const status = err.status || 500
+    if (status >= 500) console.error('[Products] uploadImage:', err.message)
+    res.status(status).json({ success: false, message: err.message })
   }
 }
 
@@ -245,6 +296,8 @@ module.exports = {
   createProduct,
   updateProduct,
   deactivateProduct,
+  reviewProduct,
+  uploadImage,
   ingestManual,
   listIngestionLogs,
   matchForLead,

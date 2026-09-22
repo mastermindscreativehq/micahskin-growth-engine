@@ -419,6 +419,30 @@ export async function deactivateProduct(id) {
   return protectedFetch(`${BASE_URL}/api/products/${id}`, { method: 'DELETE' })
 }
 
+/**
+ * Approve or reject a draft (n8n-ingested) product.
+ * action: 'approve' | 'reject'
+ */
+export async function reviewProduct(id, action) {
+  return protectedFetch(`${BASE_URL}/api/products/${id}/review`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  })
+}
+
+/**
+ * Uploads a base64-encoded product image. { filename, contentType, dataBase64 }
+ * Returns 503 if Supabase Storage isn't configured (SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY).
+ */
+export async function uploadProductImage(id, payload) {
+  return protectedFetch(`${BASE_URL}/api/products/${id}/image`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function ingestManualProducts(products) {
   return protectedFetch(`${BASE_URL}/api/products/ingest/manual`, {
     method: 'POST',

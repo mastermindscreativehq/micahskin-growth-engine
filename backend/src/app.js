@@ -16,6 +16,7 @@ const scrapingRouter = require('./routes/scraping')
 const conversionRouter = require('./routes/conversionRoutes')
 const automationRouter = require('./routes/automation')
 const productsRouter     = require('./routes/products')
+const productIngestRouter = require('./routes/productIngest')
 const paymentsRouter     = require('./routes/payments')
 const fulfillmentRouter  = require('./routes/fulfillment')
 const adminRouter        = require('./routes/admin')
@@ -96,8 +97,12 @@ app.options('*', cors(corsOptions))
 // Body parsing
 // ─────────────────────────────────────────────────────────────
 
-// Keep rawBody so Paystack signature verification still works
+// Keep rawBody so Paystack signature verification still works.
+// limit raised from the express default (100kb) to 8mb to accommodate
+// base64-encoded product image uploads (POST /api/products/:id/image) —
+// the image itself is separately capped at 5MB in productImageService.js.
 app.use(express.json({
+  limit: '8mb',
   verify: (req, _res, buf) => {
     req.rawBody = buf
   },
@@ -179,6 +184,11 @@ app.use('/api/conversion', conversionRouter)
 
 // Automation gateway — n8n webhook endpoints, protected by x-automation-secret
 app.use('/api/automation', automationRouter)
+
+// n8n-facing draft product ingestion — mounted BEFORE productsRouter so it's
+// matched first (avoids any ambiguity with productsRouter's own /:id routes).
+// Auth: x-automation-secret header (same gateway pattern as /api/automation).
+app.use('/api/products/ingest', productIngestRouter)
 
 // Product catalog, ingestion, matching, quotes
 app.use('/api/products', productsRouter)

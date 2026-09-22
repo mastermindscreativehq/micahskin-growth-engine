@@ -28,37 +28,22 @@ function normalizeCategory(raw) {
   return 'other'
 }
 
-const CONCERN_ALIASES = {
-  pimple: 'acne',
-  breakout: 'acne',
-  blemish: 'acne',
-  'dark spot': 'hyperpigmentation',
-  'dark mark': 'hyperpigmentation',
-  pigmentation: 'hyperpigmentation',
-  'uneven tone': 'hyperpigmentation',
-  melasma: 'hyperpigmentation',
-  'stretch mark': 'stretch_marks',
-  stretchmark: 'stretch_marks',
-  dehydrated: 'dry_skin',
-  dryness: 'dry_skin',
-  'oily skin': 'oily_skin',
-  oiliness: 'oily_skin',
-  'sensitive skin': 'sensitivity',
-  irritation: 'sensitivity',
-  redness: 'sensitivity',
-  'body care': 'body_care',
-  'back acne': 'body_care',
-}
-
-const VALID_CONCERNS = [
-  'acne', 'hyperpigmentation', 'dry_skin', 'oily_skin',
-  'sensitivity', 'stretch_marks', 'body_care', 'routine_building',
-]
-
+// Concern normalization now delegates to the centralized canonical taxonomy
+// (backend/src/config/skinTaxonomy.js) — that module is the single source of
+// truth for the canonical concept list + alias map. Kept as thin wrappers
+// here so every existing caller (productIngestionService.js etc.) keeps
+// working unchanged.
+//
+// Unlike skinTaxonomy.normalizeConcern() (which returns null for anything
+// unrecognized — the right behavior for strict external/n8n ingestion),
+// this wrapper preserves the ORIGINAL fallback behavior: an unrecognized tag
+// is kept as-is (lowercased/trimmed) rather than silently dropped, so no
+// existing or future manually-entered custom tag is ever lost.
 function normalizeConcernTag(tag) {
+  const { normalizeConcern } = require('../config/skinTaxonomy')
   const t = (tag || '').toLowerCase().trim()
-  if (VALID_CONCERNS.includes(t)) return t
-  return CONCERN_ALIASES[t] || t
+  if (!t) return null
+  return normalizeConcern(t) || t
 }
 
 function normalizeConcernTags(tags) {
