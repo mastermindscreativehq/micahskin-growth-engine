@@ -39,6 +39,25 @@ const bundleWithItems = {
   },
 }
 
+/**
+ * Sum of the CURRENT SkincareProduct.price for every item in the bundle.
+ * Always computed fresh at read time — never stored, so it can never go
+ * stale when a product's price changes later. Products with no price
+ * contribute 0 rather than breaking the total.
+ */
+function computeIndividualValue(items) {
+  return (items || []).reduce((sum, item) => sum + (item.product?.price || 0), 0)
+}
+
+/**
+ * Attaches the live-computed individualValue to a bundle response.
+ * Never mutates the DB — display-only.
+ */
+function attachIndividualValue(bundle) {
+  if (!bundle) return bundle
+  return { ...bundle, individualValue: computeIndividualValue(bundle.items) }
+}
+
 // ── Admin CRUD ───────────────────────────────────────────────────────────────
 
 async function listBundles({ status, search, page = 1, limit = 20 } = {}) {
@@ -59,13 +78,13 @@ async function listBundles({ status, search, page = 1, limit = 20 } = {}) {
     }),
   ])
 
-  return { data, total, page: Number(page), limit: Number(limit) }
+  return { data: data.map(attachIndividualValue), total, page: Number(page), limit: Number(limit) }
 }
 
 async function getBundleById(id) {
   const bundle = await prisma.bundle.findUnique({ where: { id }, ...bundleWithItems })
   if (!bundle) throw httpError(404, 'Bundle not found')
-  return bundle
+  return attachIndividualValue(bundle)
 }
 
 async function createBundle(payload) {
@@ -81,7 +100,7 @@ async function createBundle(payload) {
   const existing = await prisma.bundle.findUnique({ where: { slug: resolvedSlug } })
   if (existing) throw httpError(409, `Slug "${resolvedSlug}" is already in use`)
 
-  return prisma.bundle.create({
+  const bundle = await prisma.bundle.create({
     data: {
       title: title.trim(),
       slug: resolvedSlug,
@@ -99,6 +118,7 @@ async function createBundle(payload) {
     },
     ...bundleWithItems,
   })
+  return attachIndividualValue(bundle)
 }
 
 async function updateBundle(id, payload) {
@@ -137,7 +157,8 @@ async function updateBundle(id, payload) {
   if (payload.seoTitle !== undefined) data.seoTitle = payload.seoTitle || null
   if (payload.seoDescription !== undefined) data.seoDescription = payload.seoDescription || null
 
-  return prisma.bundle.update({ where: { id }, data, ...bundleWithItems })
+  const updated = await prisma.bundle.update({ where: { id }, data, ...bundleWithItems })
+  return attachIndividualValue(updated)
 }
 
 // ── Item management ───────────────────────────────────────────────────────────
@@ -226,15 +247,17 @@ async function setStatus(id, status) {
     const errors = await validateForPublish(bundle)
     if (errors.length > 0) throw httpError(422, 'Bundle cannot be published', errors)
 
-    return prisma.bundle.update({
+    const published = await prisma.bundle.update({
       where: { id },
       data: { status: 'published', publishedAt: bundle.publishedAt || new Date() },
       ...bundleWithItems,
     })
+    return attachIndividualValue(published)
   }
 
   // draft / archived — no validation required to step back
-  return prisma.bundle.update({ where: { id }, data: { status }, ...bundleWithItems })
+  const updated = await prisma.bundle.update({ where: { id }, data: { status }, ...bundleWithItems })
+  return attachIndividualValue(updated)
 }
 
 // ── Public read ────────────────────────────────────────────────────────────────
@@ -249,10 +272,8 @@ async function getPublicBundleBySlug(slug) {
   const bundle = await prisma.bundle.findUnique({ where: { slug }, ...bundleWithItems })
   if (!bundle || bundle.status !== 'published') return null
 
-  return {
-    ...bundle,
-    items: bundle.items.filter(item => item.product && item.product.isActive),
-  }
+  const activeItems = bundle.items.filter(item => item.product && item.product.isActive)
+  return attachIndividualValue({ ...bundle, items: activeItems })
 }
 
 module.exports = {

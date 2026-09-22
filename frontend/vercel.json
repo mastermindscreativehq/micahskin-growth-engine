@@ -15,6 +15,10 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://micahskin-growth-engine-production.up.railway.app/api/:path*"
+    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

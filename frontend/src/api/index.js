@@ -1,5 +1,12 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
-console.log('[API] BASE_URL =', BASE_URL)
+// Origin for all API calls.
+//   - Explicit VITE_API_URL always wins (local overrides / self-hosting).
+//   - Local dev (no VITE_API_URL): point at the local backend, as before.
+//   - Production build (no VITE_API_URL): same origin — vercel.json rewrites
+//     /api/* to the Railway backend. Same-origin requests keep the admin
+//     session cookie first-party, so it persists on mobile browsers
+//     (Safari/iOS Chrome/blocked third-party cookies reject cross-site cookies).
+const BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:4000' : '')
+console.log('[API] BASE_URL =', BASE_URL || '(same origin)')
 
 // ── Protected fetch helper ────────────────────────────────────────────────────
 //

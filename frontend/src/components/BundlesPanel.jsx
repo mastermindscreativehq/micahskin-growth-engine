@@ -25,26 +25,55 @@ const STATUS_META = {
 
 const BLANK_FORM = {
   title: '', slug: '', description: '', concern: '', skinTypes: [],
-  price: '', compareAtPrice: '', heroImageUrl: '', ctaText: '', contactCtaText: '',
+  price: '', heroImageUrl: '', ctaText: '', contactCtaText: '',
 }
 
 function slugify(input) {
   return String(input || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 }
 
+function formatNaira(n) {
+  return `₦${Number(n || 0).toLocaleString('en-NG')}`
+}
+
+/**
+ * Savings must never be misleading: only ever shown when the bundle price is
+ * strictly lower than the live individual product total.
+ */
+function computeSavings(individualValue, bundlePrice) {
+  if (!individualValue || !bundlePrice || bundlePrice >= individualValue) {
+    return { amount: 0, percent: 0, hasSavings: false, isEqual: individualValue > 0 && bundlePrice === individualValue }
+  }
+  const amount = individualValue - bundlePrice
+  const percent = (amount / individualValue) * 100
+  return { amount, percent, hasSavings: true, isEqual: false }
+}
+
+function StatusBadge({ status }) {
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${
+      status === 'in_stock' ? 'bg-green-50 text-green-700' :
+      status === 'out_of_stock' ? 'bg-red-50 text-red-600' :
+      'bg-gray-100 text-gray-500'
+    }`}>
+      {(status || 'unknown').replace(/_/g, ' ')}
+    </span>
+  )
+}
+
 // ── Product selector — reuses the existing admin product catalog API ─────────
 
-function ProductSelector({ onSelect }) {
+function ProductSelector({ onSelect, disabled }) {
   const [search, setSearch] = useState('')
   const [results, setResults] = useState([])
-  const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [adding, setAdding] = useState(null)
 
   useEffect(() => {
     if (!search.trim()) { setResults([]); return }
     setLoading(true)
     const t = setTimeout(() => {
-      fetchProducts({ search, limit: 10 })
+      fetchProducts({ search, limit: 8 })
         .then(res => setResults(res.data || []))
         .catch(() => setResults([]))
         .finally(() => setLoading(false))
@@ -52,35 +81,55 @@ function ProductSelector({ onSelect }) {
     return () => clearTimeout(t)
   }, [search])
 
+  async function handleAdd(product) {
+    setAdding(product.id)
+    try {
+      await onSelect(product)
+    } finally {
+      setAdding(null)
+    }
+  }
+
   return (
-    <div className="relative">
+    <div>
       <input
         type="text"
         placeholder="Search existing products to add…"
         value={search}
-        onChange={e => { setSearch(e.target.value); setOpen(true) }}
-        onFocus={() => setOpen(true)}
-        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-400"
+        onChange={e => setSearch(e.target.value)}
+        disabled={disabled}
+        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-400 disabled:bg-gray-50"
       />
-      {open && search.trim() && (
-        <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg max-h-64 overflow-y-auto">
-          {loading && <p className="px-3 py-2 text-xs text-gray-400">Searching…</p>}
-          {!loading && results.length === 0 && <p className="px-3 py-2 text-xs text-gray-400">No products found</p>}
+      {disabled && (
+        <p className="text-[10px] text-amber-600 mt-1">Enter a title and price above first, then search to add products.</p>
+      )}
+
+      {search.trim() && (
+        <div className="mt-2 rounded-lg border border-gray-200 divide-y divide-gray-100 max-h-72 overflow-y-auto">
+          {loading && <p className="px-3 py-3 text-xs text-gray-400">Searching…</p>}
+          {!loading && results.length === 0 && <p className="px-3 py-3 text-xs text-gray-400">No products found</p>}
           {!loading && results.map(p => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => { onSelect(p); setSearch(''); setResults([]); setOpen(false) }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-gray-50"
-            >
+            <div key={p.id} className="flex items-center gap-3 px-3 py-2.5">
               {p.imageUrl
-                ? <img src={p.imageUrl} alt="" className="h-8 w-8 rounded object-cover shrink-0" />
-                : <span className="h-8 w-8 rounded bg-gray-100 shrink-0" />}
-              <span className="flex-1">
-                <span className="block font-medium text-gray-800">{p.productName}</span>
-                <span className="block text-gray-400">{p.brand} · {p.price ? `₦${p.price.toLocaleString('en-NG')}` : 'no price'} · {p.stockStatus?.replace(/_/g, ' ')}</span>
-              </span>
-            </button>
+                ? <img src={p.imageUrl} alt="" className="h-10 w-10 rounded object-cover shrink-0" />
+                : <span className="h-10 w-10 rounded bg-gray-100 shrink-0" />}
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-gray-800 truncate">{p.productName}</p>
+                <p className="text-[10px] text-gray-400">{p.brand}</p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-xs font-semibold text-gray-700">{p.price ? formatNaira(p.price) : <span className="text-amber-500 font-normal">no price</span>}</p>
+                <StatusBadge status={p.stockStatus} />
+              </div>
+              <button
+                type="button"
+                disabled={disabled || adding === p.id}
+                onClick={() => handleAdd(p)}
+                className="shrink-0 rounded bg-teal-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+              >
+                {adding === p.id ? '…' : 'Add'}
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -91,7 +140,8 @@ function ProductSelector({ onSelect }) {
 // ── Builder — create or edit a single bundle ──────────────────────────────────
 
 function BundleBuilder({ bundleId, onClose, onSaved }) {
-  const isNew = !bundleId
+  const [id, setId] = useState(bundleId)
+  const isNew = !id
   const [bundle, setBundle] = useState(null)
   const [form, setForm] = useState(BLANK_FORM)
   const [loading, setLoading] = useState(!isNew)
@@ -101,22 +151,22 @@ function BundleBuilder({ bundleId, onClose, onSaved }) {
   const [slugTouched, setSlugTouched] = useState(!isNew)
 
   const load = useCallback(() => {
-    if (isNew) return
+    if (!id) return
     setLoading(true)
-    fetchBundle(bundleId)
+    fetchBundle(id)
       .then(res => {
         const b = res.data
         setBundle(b)
         setForm({
           title: b.title, slug: b.slug, description: b.description || '',
           concern: b.concern || '', skinTypes: b.skinTypes || [],
-          price: b.price, compareAtPrice: b.compareAtPrice ?? '',
-          heroImageUrl: b.heroImageUrl || '', ctaText: b.ctaText || '', contactCtaText: b.contactCtaText || '',
+          price: b.price, heroImageUrl: b.heroImageUrl || '',
+          ctaText: b.ctaText || '', contactCtaText: b.contactCtaText || '',
         })
       })
       .catch(e => setError(e?.message || 'Failed to load bundle'))
       .finally(() => setLoading(false))
-  }, [bundleId, isNew])
+  }, [id])
 
   useEffect(() => { load() }, [load])
 
@@ -134,6 +184,10 @@ function BundleBuilder({ bundleId, onClose, onSaved }) {
     }))
   }
 
+  function currentPayload() {
+    return { ...form, price: form.price === '' ? null : Number(form.price) }
+  }
+
   async function handleSaveDraft() {
     setError(null)
     setPublishErrors([])
@@ -141,47 +195,57 @@ function BundleBuilder({ bundleId, onClose, onSaved }) {
     if (!form.price || Number(form.price) <= 0) { setError('Price must be a positive number'); return }
     setSaving(true)
     try {
-      const payload = { ...form, price: Number(form.price), compareAtPrice: form.compareAtPrice === '' ? null : Number(form.compareAtPrice) }
       if (isNew) {
-        const res = await createBundle(payload)
-        onSaved()
-        onClose()
-        return res.data
+        const res = await createBundle(currentPayload())
+        setId(res.data.id)
+        setBundle(res.data)
       } else {
-        await updateBundle(bundleId, payload)
-        load()
-        onSaved()
+        const res = await updateBundle(id, currentPayload())
+        setBundle(res.data)
       }
+      onSaved()
     } catch (e) {
-      setError(e?.message || 'Save failed')
-      if (e?.errors) setError(e.errors.join(' · '))
+      setError(e?.errors?.length ? e.errors.join(' · ') : (e?.message || 'Save failed'))
     } finally {
       setSaving(false)
     }
   }
 
+  /**
+   * Products can be added immediately — no separate "save draft first" step.
+   * If the bundle doesn't exist yet, it's created automatically here using
+   * whatever title/price the admin has already entered.
+   */
+  async function ensureBundleExists() {
+    if (id) return id
+    if (!form.title.trim()) throw new Error('Enter a title before adding products')
+    if (!form.price || Number(form.price) <= 0) throw new Error('Enter a bundle price before adding products')
+    const res = await createBundle(currentPayload())
+    setId(res.data.id)
+    setBundle(res.data)
+    onSaved()
+    return res.data.id
+  }
+
   async function handleAddProduct(product) {
-    if (isNew) { setError('Save the bundle as a draft first, then add products'); return }
+    setError(null)
     try {
-      const res = await updateAfterItemChange(() => addBundleItem(bundleId, product.id))
-      setBundle(res)
+      const targetId = await ensureBundleExists()
+      const res = await addBundleItem(targetId, product.id)
+      setBundle(res.data)
     } catch (e) {
       setError(e?.message || 'Failed to add product')
     }
   }
 
   async function handleRemoveItem(itemId) {
+    setError(null)
     try {
-      const res = await updateAfterItemChange(() => removeBundleItem(bundleId, itemId))
-      setBundle(res)
+      const res = await removeBundleItem(id, itemId)
+      setBundle(res.data)
     } catch (e) {
       setError(e?.message || 'Failed to remove product')
     }
-  }
-
-  async function updateAfterItemChange(fn) {
-    const res = await fn()
-    return res.data
   }
 
   async function moveItem(index, direction) {
@@ -191,7 +255,7 @@ function BundleBuilder({ bundleId, onClose, onSaved }) {
     const reordered = [...items]
     ;[reordered[index], reordered[newIndex]] = [reordered[newIndex], reordered[index]]
     try {
-      const res = await reorderBundleItems(bundleId, reordered.map(i => i.id))
+      const res = await reorderBundleItems(id, reordered.map(i => i.id))
       setBundle(res.data)
     } catch (e) {
       setError(e?.message || 'Failed to reorder')
@@ -202,7 +266,7 @@ function BundleBuilder({ bundleId, onClose, onSaved }) {
     setError(null)
     setPublishErrors([])
     try {
-      const res = await setBundleStatus(bundleId, status)
+      const res = await setBundleStatus(id, status)
       setBundle(res.data)
       onSaved()
     } catch (e) {
@@ -215,6 +279,10 @@ function BundleBuilder({ bundleId, onClose, onSaved }) {
 
   const status = bundle?.status || 'draft'
   const meta = STATUS_META[status] || STATUS_META.draft
+  const items = bundle?.items || []
+  const individualValue = bundle?.individualValue ?? 0
+  const bundlePriceNum = form.price === '' ? 0 : Number(form.price)
+  const savings = computeSavings(individualValue, bundlePriceNum)
 
   return (
     <div className="space-y-5">
@@ -282,13 +350,9 @@ function BundleBuilder({ bundleId, onClose, onSaved }) {
         <div>
           <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Bundle Price (₦) *</label>
           <input type="number" value={form.price} onChange={e => set('price', e.target.value)}
+            placeholder="Your chosen selling price"
             className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-400" />
-        </div>
-        <div>
-          <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Compare-at Price (₦)</label>
-          <input type="number" value={form.compareAtPrice} onChange={e => set('compareAtPrice', e.target.value)}
-            placeholder="Optional — value of items if bought separately"
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-400" />
+          <p className="text-[10px] text-gray-400 mt-0.5">This is the actual selling price — never changed automatically.</p>
         </div>
         <div>
           <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Hero Image URL</label>
@@ -300,46 +364,91 @@ function BundleBuilder({ bundleId, onClose, onSaved }) {
           <input value={form.ctaText} onChange={e => set('ctaText', e.target.value)} placeholder="Get This Routine"
             className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-400" />
         </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Contact CTA Text</label>
+          <input value={form.contactCtaText} onChange={e => set('contactCtaText', e.target.value)} placeholder="Talk to Us"
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-400" />
+        </div>
       </div>
 
-      {!isNew && (
-        <div>
-          <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Selected Products</label>
-          <div className="rounded-lg border border-gray-200 divide-y divide-gray-100 mb-2">
-            {(bundle?.items || []).length === 0 && (
+      <div>
+        <label className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-2">Selected Products</label>
+
+        <div className="rounded-lg border border-gray-200 overflow-hidden mb-2">
+          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center bg-gray-50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+            <span>Product</span>
+            <span className="text-right">Current Price</span>
+            <span>Status</span>
+            <span></span>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {items.length === 0 && (
               <p className="px-3 py-3 text-xs text-gray-400">No products yet — search below to add some.</p>
             )}
-            {(bundle?.items || []).map((item, idx) => (
-              <div key={item.id} className="flex items-center gap-2 px-3 py-2">
-                {item.product?.imageUrl
-                  ? <img src={item.product.imageUrl} alt="" className="h-8 w-8 rounded object-cover shrink-0" />
-                  : <span className="h-8 w-8 rounded bg-gray-100 shrink-0" />}
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-gray-800 truncate">
-                    {item.product?.productName || <span className="text-red-500">Product no longer exists</span>}
-                  </p>
-                  {item.product && (
-                    <p className="text-[10px] text-gray-400">
-                      {item.product.brand} · {item.product.price ? `₦${item.product.price.toLocaleString('en-NG')}` : 'no price'}
-                      {!item.product.isActive && <span className="text-red-500"> · inactive</span>}
+            {items.map((item, idx) => (
+              <div key={item.id} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center px-3 py-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  {item.product?.imageUrl
+                    ? <img src={item.product.imageUrl} alt="" className="h-9 w-9 rounded object-cover shrink-0" />
+                    : <span className="h-9 w-9 rounded bg-gray-100 shrink-0" />}
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-gray-800 truncate">
+                      {item.product?.productName || <span className="text-red-500">Product no longer exists</span>}
                     </p>
-                  )}
+                    {item.product && <p className="text-[10px] text-gray-400">{item.product.brand}</p>}
+                  </div>
                 </div>
+                <span className="text-xs font-semibold text-gray-700 text-right">
+                  {item.product?.price ? formatNaira(item.product.price) : <span className="text-amber-500 font-normal">no price</span>}
+                </span>
+                <span>
+                  {item.product
+                    ? (item.product.isActive ? <StatusBadge status={item.product.stockStatus} /> : <span className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-50 text-red-600">inactive</span>)
+                    : <span className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-50 text-red-600">missing</span>}
+                </span>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button disabled={idx === 0} onClick={() => moveItem(idx, -1)} className="text-xs text-gray-400 hover:text-gray-700 disabled:opacity-30">↑</button>
-                  <button disabled={idx === (bundle.items.length - 1)} onClick={() => moveItem(idx, 1)} className="text-xs text-gray-400 hover:text-gray-700 disabled:opacity-30">↓</button>
+                  <button disabled={idx === 0} onClick={() => moveItem(idx, -1)} title="Move up" className="text-xs text-gray-400 hover:text-gray-700 disabled:opacity-30">↑</button>
+                  <button disabled={idx === items.length - 1} onClick={() => moveItem(idx, 1)} title="Move down" className="text-xs text-gray-400 hover:text-gray-700 disabled:opacity-30">↓</button>
                   <button onClick={() => handleRemoveItem(item.id)} className="text-[10px] text-red-500 hover:underline ml-2">Remove</button>
                 </div>
               </div>
             ))}
           </div>
-          <ProductSelector onSelect={handleAddProduct} />
         </div>
-      )}
 
-      {isNew && (
-        <p className="text-xs text-gray-400 italic">Save as a draft first — then you'll be able to add products.</p>
-      )}
+        {items.length > 0 && (
+          <div className="rounded-lg border border-teal-100 bg-teal-50/50 px-4 py-3 mb-3 space-y-1">
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">{items.length} product{items.length !== 1 ? 's' : ''} · Individual product value</span>
+              <span className="font-semibold text-gray-700">{formatNaira(individualValue)}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-500">Bundle price</span>
+              <span className="font-semibold text-gray-700">{formatNaira(bundlePriceNum)}</span>
+            </div>
+            {savings.hasSavings && (
+              <>
+                <div className="flex justify-between text-xs pt-1 border-t border-teal-100">
+                  <span className="text-green-700">Customer saves</span>
+                  <span className="font-semibold text-green-700">{formatNaira(savings.amount)}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-green-700">Savings</span>
+                  <span className="font-semibold text-green-700">{savings.percent.toFixed(1)}%</span>
+                </div>
+              </>
+            )}
+            {!savings.hasSavings && savings.isEqual && (
+              <p className="text-[10px] text-gray-400 pt-1 border-t border-teal-100">No savings — bundle price equals individual value.</p>
+            )}
+            {!savings.hasSavings && !savings.isEqual && bundlePriceNum > individualValue && individualValue > 0 && (
+              <p className="text-[10px] text-amber-600 pt-1 border-t border-teal-100">Bundle price is above the individual product value — no savings shown.</p>
+            )}
+          </div>
+        )}
+
+        <ProductSelector onSelect={handleAddProduct} disabled={isNew && (!form.title.trim() || !form.price)} />
+      </div>
 
       <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-4">
         <button onClick={handleSaveDraft} disabled={saving}
@@ -416,7 +525,7 @@ export default function BundlesPanel() {
       <BundleBuilder
         bundleId={editingId}
         onClose={() => { setView('list'); setEditingId(null) }}
-        onSaved={() => showToast(editingId ? 'Bundle updated' : 'Bundle created')}
+        onSaved={() => showToast(editingId ? 'Bundle updated' : 'Bundle saved')}
       />
     )
   }
@@ -481,7 +590,7 @@ export default function BundlesPanel() {
                   <td className="px-4 py-2.5 font-medium text-gray-800 text-xs">{b.title}</td>
                   <td className="px-4 py-2.5 text-xs text-gray-600 capitalize">{(b.concern || '—').replace(/_/g, ' ')}</td>
                   <td className="px-4 py-2.5 text-xs text-gray-600">{(b.items || []).length}</td>
-                  <td className="px-4 py-2.5 text-xs font-medium text-gray-700">₦{b.price.toLocaleString('en-NG')}</td>
+                  <td className="px-4 py-2.5 text-xs font-medium text-gray-700">{formatNaira(b.price)}</td>
                   <td className="px-4 py-2.5"><span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${meta.pill}`}>{meta.label}</span></td>
                   <td className="px-4 py-2.5 text-[10px] text-gray-400">{new Date(b.updatedAt).toLocaleDateString('en-GB')}</td>
                   <td className="px-4 py-2.5 text-right">

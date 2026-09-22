@@ -83,8 +83,13 @@ export default function BundlePage() {
   }
 
   const items = bundle.items || []
-  const hasSavings = bundle.compareAtPrice && bundle.compareAtPrice > bundle.price
-  const savings = hasSavings ? bundle.compareAtPrice - bundle.price : 0
+  // individualValue is computed server-side from the CURRENT prices of the
+  // selected products — never a stale stored snapshot. Savings only ever
+  // show when the bundle price is strictly lower than that live total.
+  const individualValue = bundle.individualValue || 0
+  const hasSavings = individualValue > bundle.price
+  const savingsAmount = hasSavings ? individualValue - bundle.price : 0
+  const savingsPercent = hasSavings ? (savingsAmount / individualValue) * 100 : 0
 
   return (
     <div className="min-h-screen bg-cream-50">
@@ -108,7 +113,9 @@ export default function BundlePage() {
           <p className="text-gray-600 leading-relaxed mb-8">{bundle.description}</p>
         )}
 
-        <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-3">Inside the routine</h2>
+        <h2 className="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-3">
+          Inside the routine · {items.length} product{items.length !== 1 ? 's' : ''}
+        </h2>
         <div className="space-y-3 mb-8">
           {items.map((item, i) => (
             <button
@@ -133,11 +140,13 @@ export default function BundlePage() {
 
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 text-center mb-6">
           {hasSavings && (
-            <p className="text-sm text-gray-400 line-through mb-1">₦{bundle.compareAtPrice.toLocaleString('en-NG')}</p>
+            <p className="text-sm text-gray-400 line-through mb-1">₦{individualValue.toLocaleString('en-NG')}</p>
           )}
           <p className="text-3xl font-bold text-gray-900 mb-1">₦{bundle.price.toLocaleString('en-NG')}</p>
           {hasSavings && (
-            <p className="text-xs font-semibold text-green-600 mb-4">Save ₦{savings.toLocaleString('en-NG')}</p>
+            <p className="text-xs font-semibold text-green-600 mb-4">
+              You save ₦{savingsAmount.toLocaleString('en-NG')} ({savingsPercent.toFixed(1)}%)
+            </p>
           )}
 
           <button onClick={() => goToContact('bundle_contact_clicked')} className="btn-primary w-full mb-3">
